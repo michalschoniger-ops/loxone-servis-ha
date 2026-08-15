@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- Neplatný přihlašovací formulář vrací bezpečnou odpověď `400 VALIDATION_ERROR` místo interní chyby 500.
+- Globální zpracování chyb se registruje před pluginy a routami, takže se do odpovědi nepropíší interní detaily frameworku.
+
 ## 0.4.3
 
 - Při krátkém výpadku CloudDNS aplikace ověří Miniserver přes naposledy úspěšně potvrzenou trasu, která není starší než 6 hodin.

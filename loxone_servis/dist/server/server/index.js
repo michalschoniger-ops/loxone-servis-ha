@@ -6,15 +6,14 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import staticFiles from "@fastify/static";
-import { ZodError } from "zod";
 import { config } from "./config.js";
 import { openDatabase } from "./database.js";
 import { registerAuth } from "./auth.js";
 import { registerApi } from "./api.js";
 import { JobQueue } from "./jobs.js";
-import { LoxoneError } from "./loxone/client.js";
 import { registerEncryptedBackup } from "./backup.js";
 import { registerCanonicalProxy } from "./proxy.js";
+import { registerApplicationErrorHandler } from "./error-handler.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -38,6 +37,10 @@ const app = Fastify({
     bodyLimit: 2 * 1024 * 1024,
     requestTimeout: 120_000,
 });
+// Fastify's root error handler must exist before awaited plugin registration.
+// Otherwise errors thrown by already-registered routes can fall back to the
+// framework's default response and expose internal validation details.
+registerApplicationErrorHandler(app);
 await app.register(cookie);
 await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
 await app.register(helmet, {
@@ -103,23 +106,6 @@ else {
         });
     }
 }
-app.setErrorHandler(async (error, request, reply) => {
-    const requestId = request.id;
-    if (error instanceof ZodError) {
-        return reply.code(400).send({
-            error: "Požadavek obsahuje neplatná data.",
-            code: "VALIDATION_ERROR",
-            issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
-            requestId,
-        });
-    }
-    if (error instanceof LoxoneError) {
-        const status = error.code === "no_access" ? 403 : error.code === "unsupported" ? 409 : 502;
-        return reply.code(status).send({ error: error.message, code: error.code, requestId });
-    }
-    request.log.error({ err: error }, "request failed");
-    return reply.code(500).send({ error: "Vnitřní chyba aplikace.", code: "INTERNAL_ERROR", requestId });
-});
 await app.listen({ host: config.host, port: config.port });
 if (config.schedulerEnabled)
     jobs?.start();

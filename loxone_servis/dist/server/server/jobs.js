@@ -58,7 +58,7 @@ function persistCheck(db, serial, result) {
        connection_resolved_at=CASE WHEN ? IS NOT NULL THEN ? ELSE connection_resolved_at END,last_latency_ms=?,
        last_success_at=CASE WHEN ?='online' THEN ? ELSE last_success_at END,
        consecutive_failures=CASE WHEN ?='online' THEN 0 ELSE consecutive_failures+1 END,
-       next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, result.state, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.connection?.baseUrl ?? null, now, result.latencyMs, result.state, now, result.state, new Date(Date.now() + config.fullCheckIntervalMinutes * 60_000).toISOString(), now, serial);
+       next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, result.state, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.state === "online" ? result.connection?.baseUrl ?? null : null, now, result.latencyMs, result.state, now, result.state, new Date(Date.now() + config.fullCheckIntervalMinutes * 60_000).toISOString(), now, serial);
         db.prepare("INSERT INTO availability_events(serial,state,error_code,latency_ms,created_at) VALUES(?,?,?,?,?)").run(serial, result.state, result.errorCode, result.latencyMs, now);
         updateDevices(db, serial, result, now);
     });

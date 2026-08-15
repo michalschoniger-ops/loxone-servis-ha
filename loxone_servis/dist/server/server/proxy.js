@@ -1,9 +1,9 @@
 import { config } from "./config.js";
+import { canonicalTargetUrl, rewriteClientLocation, rewriteClientSetCookie } from "./proxy-utils.js";
 const skippedRequestHeaders = new Set(["host", "connection", "content-length", "transfer-encoding", "accept-encoding"]);
 const skippedResponseHeaders = new Set(["connection", "content-length", "transfer-encoding", "content-encoding", "set-cookie"]);
 function targetUrl(rawUrl) {
-    const safeRelative = rawUrl.startsWith("/") ? rawUrl.slice(1) : rawUrl;
-    return new URL(safeRelative, `${config.canonicalBaseUrl}/`);
+    return canonicalTargetUrl(rawUrl, config.canonicalBaseUrl);
 }
 function requestBody(request) {
     if (["GET", "HEAD"].includes(request.method))
@@ -47,20 +47,13 @@ async function forward(request, reply) {
         if (!skippedResponseHeaders.has(name.toLowerCase()))
             reply.header(name, value);
     });
-    const setCookies = response.headers.getSetCookie();
+    const secureClient = request.headers["x-forwarded-proto"] === "https" || request.protocol === "https";
+    const setCookies = response.headers.getSetCookie().map((value) => rewriteClientSetCookie(value, config.canonicalBaseUrl, secureClient));
     if (setCookies.length)
         reply.header("set-cookie", setCookies);
     const location = response.headers.get("location");
-    if (location) {
-        try {
-            const resolved = new URL(location, config.canonicalBaseUrl);
-            const canonical = new URL(config.canonicalBaseUrl);
-            reply.header("location", resolved.origin === canonical.origin ? `${resolved.pathname}${resolved.search}${resolved.hash}` : location);
-        }
-        catch {
-            reply.header("location", location);
-        }
-    }
+    if (location)
+        reply.header("location", rewriteClientLocation(location, config.canonicalBaseUrl));
     return reply.send(Buffer.from(await response.arrayBuffer()));
 }
 export async function registerCanonicalProxy(app) {

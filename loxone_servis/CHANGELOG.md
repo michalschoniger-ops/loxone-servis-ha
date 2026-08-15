@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3
+
+- Při krátkém výpadku CloudDNS aplikace ověří Miniserver přes naposledy úspěšně potvrzenou trasu, která není starší než 6 hodin.
+- Samotná chyba CloudDNS už neoznačí Miniserver jako nedostupný; zobrazí se jako odložená kontrola a interní kód `resolver_error` nahradí srozumitelné upozornění.
+- Přidána bezpečně ohraničená veřejná cesta `/api/loxone-servis/` pro HA Práce a Tailscale Funnel.
+- HA Domov umí klientský režim i tehdy, když veřejná HTTPS adresa hlavní instalace používá cestu za názvem hostitele.
+
 ## 0.4.2
 
 - Hromadná kontrola omezuje počet souběžných cloudových resolverů na dva.

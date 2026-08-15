@@ -14,6 +14,14 @@ export class LoxoneError extends Error {
         this.status = status;
     }
 }
+const CACHED_CONNECTION_MAX_AGE_MS = 6 * 60 * 60_000;
+export function connectionStateForError(code) {
+    if (code === "no_access" || code === "credentials_missing")
+        return "no_access";
+    if (code === "resolver_error" || code === "resolver_timeout")
+        return "unknown";
+    return "unavailable";
+}
 function timeoutSignal(milliseconds) {
     return AbortSignal.timeout(milliseconds);
 }
@@ -56,6 +64,28 @@ function normalizeLocalUrl(value) {
     parsed.search = "";
     parsed.hash = "";
     return { baseUrl: parsed.toString().replace(/\/$/, ""), source: "local", websocketUrl: null };
+}
+export function cachedConnection(row, now = Date.now()) {
+    if (row.local_url || !row.connection_url || !row.connection_resolved_at)
+        return null;
+    const resolvedAt = Date.parse(row.connection_resolved_at);
+    if (!Number.isFinite(resolvedAt) || resolvedAt > now + 60_000 || now - resolvedAt > CACHED_CONNECTION_MAX_AGE_MS)
+        return null;
+    const source = row.connection_transport;
+    if (source !== "connect" && source !== "legacy")
+        return null;
+    try {
+        const parsed = new URL(row.connection_url);
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password)
+            return null;
+        parsed.search = "";
+        parsed.hash = "";
+        parsed.pathname = parsed.pathname.replace(/\/$/, "");
+        return { baseUrl: parsed.toString().replace(/\/$/, ""), source, websocketUrl: null };
+    }
+    catch {
+        return null;
+    }
 }
 async function resolveConnectionAttempt(serial, localUrl) {
     if (localUrl)
@@ -263,7 +293,7 @@ function parseFirmware(value) {
     return text.match(/\b\d+\.\d+\.\d+\.\d+\b/)?.[0] ?? null;
 }
 export async function checkMiniserver(db, serial) {
-    const row = db.prepare("SELECT local_url FROM miniservers WHERE serial=?").get(serial);
+    const row = db.prepare("SELECT local_url,connection_url,connection_transport,connection_resolved_at FROM miniservers WHERE serial=?").get(serial);
     const credentials = getStoredCredentials(db, serial);
     if (!credentials) {
         return {
@@ -281,7 +311,17 @@ export async function checkMiniserver(db, serial) {
     const started = Date.now();
     let connection = null;
     try {
-        connection = await resolveConnection(serial, row?.local_url ?? null);
+        try {
+            connection = await resolveConnection(serial, row?.local_url ?? null);
+        }
+        catch (error) {
+            const transientResolverFailure = error instanceof LoxoneError
+                && (error.code === "resolver_error" || error.code === "resolver_timeout");
+            const cached = transientResolverFailure && row ? cachedConnection(row) : null;
+            if (!cached)
+                throw error;
+            connection = cached;
+        }
         const versionValue = await requestLoxone(connection, credentials, "/dev/cfg/version");
         const firmware = parseFirmware(versionValue);
         if (!firmware)
@@ -313,7 +353,7 @@ export async function checkMiniserver(db, serial) {
     catch (error) {
         const loxoneError = error instanceof LoxoneError ? error : classifyFetchError(error);
         return {
-            state: loxoneError.code === "no_access" || loxoneError.code === "credentials_missing" ? "no_access" : "unavailable",
+            state: connectionStateForError(loxoneError.code),
             firmware: null,
             latencyMs: Date.now() - started,
             errorCode: loxoneError.code,

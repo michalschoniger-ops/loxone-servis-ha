@@ -458,11 +458,31 @@ function applyMigrations(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS home_assistant_instances (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      base_url TEXT NOT NULL UNIQUE,
+      username_encrypted TEXT,
+      password_encrypted TEXT,
+      access_token_encrypted TEXT,
+      monitoring_enabled INTEGER NOT NULL DEFAULT 1,
+      connection_state TEXT NOT NULL DEFAULT 'unknown',
+      auth_state TEXT NOT NULL DEFAULT 'not_configured',
+      version TEXT,
+      location_name TEXT,
+      last_checked_at TEXT,
+      last_success_at TEXT,
+      last_latency_ms INTEGER,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_home_assistant_state ON home_assistant_instances(connection_state);
   `);
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
     db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(4, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();

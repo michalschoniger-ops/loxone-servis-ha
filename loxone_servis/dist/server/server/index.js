@@ -29,6 +29,7 @@ const app = Fastify({
                 "body.currentPassword",
                 "body.newPassword",
                 "body.username",
+                "body.accessToken",
                 "body.secret",
             ],
             censor: "[REDACTED]",

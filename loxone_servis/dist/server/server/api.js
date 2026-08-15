@@ -9,7 +9,9 @@ import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOp
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
+import { clearHomeAssistantSecrets, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
+const homeAssistantIdSchema = z.string().uuid();
 function confirmationHeader(headers) {
     const value = headers["x-action-confirmation"];
     return typeof value === "string" ? value : undefined;
@@ -42,6 +44,175 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listProjectFolders(db) };
+    });
+    app.get("/api/home-assistant", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return { items: listHomeAssistantInstances(db) };
+    });
+    app.post("/api/home-assistant", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const input = z.object({
+            name: z.string().trim().min(1).max(120),
+            baseUrl: z.string().trim().min(1).max(500),
+            username: z.string().max(200).optional(),
+            password: z.string().max(1024).optional(),
+            accessToken: z.string().max(8192).optional(),
+            monitoringEnabled: z.boolean().default(true),
+        }).strict().parse(request.body);
+        if (Boolean(input.username) !== Boolean(input.password)) {
+            return reply.code(400).send({ error: "Uživatelské jméno a heslo musí být vyplněné společně.", code: "INCOMPLETE_CREDENTIALS" });
+        }
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        let baseUrl;
+        try {
+            baseUrl = normalizeHomeAssistantUrl(input.baseUrl);
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message, code: "INVALID_HA_URL" });
+        }
+        try {
+            db.prepare(`INSERT INTO home_assistant_instances(id,name,base_url,monitoring_enabled,created_at,updated_at)
+         VALUES(?,?,?,?,?,?)`).run(id, input.name, baseUrl, input.monitoringEnabled ? 1 : 0, now, now);
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE")) {
+                return reply.code(409).send({ error: "Tento Home Assistant už je v seznamu.", code: "DUPLICATE_HA" });
+            }
+            throw error;
+        }
+        if (input.username && input.password)
+            saveHomeAssistantSecrets(db, id, { username: input.username, password: input.password });
+        if (input.accessToken)
+            saveHomeAssistantSecrets(db, id, { accessToken: input.accessToken });
+        audit(db, "home_assistant.created", user.id, null, { id, name: input.name, baseUrl, monitoringEnabled: input.monitoringEnabled });
+        return reply.code(201).send({ item: getHomeAssistantInstance(db, id) });
+    });
+    app.patch("/api/home-assistant/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        const input = z.object({
+            name: z.string().trim().min(1).max(120).optional(),
+            baseUrl: z.string().trim().min(1).max(500).optional(),
+            monitoringEnabled: z.boolean().optional(),
+        }).strict().parse(request.body);
+        if (!getHomeAssistantInstance(db, id))
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const fields = [];
+        const values = [];
+        if (input.name !== undefined) {
+            fields.push("name=?");
+            values.push(input.name);
+        }
+        if (input.baseUrl !== undefined) {
+            try {
+                fields.push("base_url=?");
+                values.push(normalizeHomeAssistantUrl(input.baseUrl));
+            }
+            catch (error) {
+                return reply.code(400).send({ error: error.message, code: "INVALID_HA_URL" });
+            }
+        }
+        if (input.monitoringEnabled !== undefined) {
+            fields.push("monitoring_enabled=?");
+            values.push(input.monitoringEnabled ? 1 : 0);
+        }
+        if (!fields.length)
+            return reply.code(400).send({ error: "Není co změnit.", code: "EMPTY_PATCH" });
+        fields.push("updated_at=?");
+        values.push(new Date().toISOString(), id);
+        try {
+            db.prepare(`UPDATE home_assistant_instances SET ${fields.join(",")} WHERE id=?`).run(...values);
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE")) {
+                return reply.code(409).send({ error: "Tento Home Assistant už je v seznamu.", code: "DUPLICATE_HA" });
+            }
+            throw error;
+        }
+        audit(db, "home_assistant.updated", user.id, null, { id, fields: Object.keys(input) });
+        return { item: getHomeAssistantInstance(db, id) };
+    });
+    app.put("/api/home-assistant/:id/secrets", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        if (!getHomeAssistantInstance(db, id))
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const input = z.object({
+            username: z.string().max(200).optional(),
+            password: z.string().max(1024).optional(),
+            accessToken: z.string().max(8192).optional(),
+            clearCredentials: z.boolean().default(false),
+            clearAccessToken: z.boolean().default(false),
+        }).strict().parse(request.body);
+        if (Boolean(input.username) !== Boolean(input.password)) {
+            return reply.code(400).send({ error: "Uživatelské jméno a heslo musí být vyplněné společně.", code: "INCOMPLETE_CREDENTIALS" });
+        }
+        clearHomeAssistantSecrets(db, id, { credentials: input.clearCredentials, accessToken: input.clearAccessToken });
+        if (input.username && input.password)
+            saveHomeAssistantSecrets(db, id, { username: input.username, password: input.password });
+        if (input.accessToken)
+            saveHomeAssistantSecrets(db, id, { accessToken: input.accessToken });
+        audit(db, "home_assistant.secrets_updated", user.id, null, {
+            id,
+            credentialsChanged: Boolean(input.username) || input.clearCredentials,
+            accessTokenChanged: Boolean(input.accessToken) || input.clearAccessToken,
+        });
+        return { item: getHomeAssistantInstance(db, id) };
+    });
+    app.get("/api/home-assistant/:id/credentials", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        if (!getHomeAssistantInstance(db, id))
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const credentials = getHomeAssistantCredentials(db, id);
+        if (!credentials)
+            return reply.code(404).send({ error: "Přihlašovací údaje nejsou uložené.", code: "NO_CREDENTIALS" });
+        reply.header("Cache-Control", "no-store");
+        audit(db, "home_assistant.credentials_revealed", user.id, null, { id });
+        return credentials;
+    });
+    app.post("/api/home-assistant/:id/check", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        if (!getHomeAssistantInstance(db, id))
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const existing = jobs.list(200).find((job) => job.kind === "ha_check" && job.serial === id && ["queued", "running"].includes(job.state));
+        return reply.code(202).send({ job: existing ?? jobs.enqueue("ha_check", id, user.id, { manual: true }) });
+    });
+    app.post("/api/home-assistant/check", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const existing = jobs.list(200).find((job) => job.kind === "ha_bulk_check" && ["queued", "running"].includes(job.state));
+        return reply.code(202).send({ job: existing ?? jobs.enqueue("ha_bulk_check", null, user.id, { manual: true }) });
+    });
+    app.delete("/api/home-assistant/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        const item = getHomeAssistantInstance(db, id);
+        if (!item)
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const payload = { id };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "home_assistant_delete", null, payload)) {
+            return reply.code(428).send({ error: "Smazání Home Assistantu je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        db.prepare("DELETE FROM home_assistant_instances WHERE id=?").run(id);
+        audit(db, "home_assistant.deleted", user.id, null, { id, name: item.name });
+        return { ok: true };
     });
     app.post("/api/folders", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -699,6 +870,7 @@ export async function registerApi(app, db, jobs) {
                 operatingModeSchedule: true,
                 lanWebservice: true,
                 serviceBundle: true,
+                homeAssistantMonitoring: true,
                 mfa: true,
                 mcp: false,
             },

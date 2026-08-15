@@ -14,6 +14,8 @@ function mapMiniServer(row) {
         firmwareRelation: firmwareRelation(row.current_firmware, row.target_firmware),
         connectionState: row.connection_state,
         lastCheckedAt: row.last_checked_at,
+        lastSuccessAt: row.last_success_at,
+        consecutiveFailures: Number(row.consecutive_failures ?? 0),
         lastErrorCode: row.last_error,
         elementsOnline: row.elements_online,
         elementsTotal: row.elements_total,

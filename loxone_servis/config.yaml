@@ -1,11 +1,12 @@
 name: Loxone Servis
-version: "0.4.7"
+version: "0.4.8"
 slug: loxone_fleet
 description: Bezpečný servisní přehled firemních Loxone Miniserverů.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha
 arch:
   - aarch64
   - amd64
+image: ghcr.io/michalschoniger-ops/loxone-servis
 startup: application
 boot: auto
 init: false

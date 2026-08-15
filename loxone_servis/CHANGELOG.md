@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.8
+
+- Přidána samostatná záložka Home Assistant s dvouhodinovým monitoringem Tailscale, Nabu Casa a privátních LAN adres.
+- Přehled ukazuje dostupnost, odezvu a poslední kontrolu; volitelný dlouhodobý token bezpečně načte verzi Core a název instalace.
+- Přístupy k Home Assistantu se ukládají šifrovaně, zobrazují se jen na vyžádání a nikdy se nevkládají do URL.
+- Krátký výpadek Miniserveru už okamžitě nepřepíše naposledy potvrzený online stav; následují dvě opakované kontroly s pětiminutovým odstupem.
+- Tlačítko `+` ve správci složek má vlastní akční buňku a nepřekrývá počet zařízení ani sousední pole.
+- Desktopové rozhraní používá kompaktní levé menu a přihlašovací stránku ve stylu Loxone Partner Portalu; tablet a telefon zůstávají bez vodorovného posouvání.
+- Partner Portal je dostupný bezpečným externím odkazem; soukromá data se bez oficiálního OAuth/API oprávnění nenačítají ani nescrapují.
+
 ## 0.4.7
 
 - Složky lze vkládat do dalších složek; výběry ukazují úplnou cestu jako `Dolní Morava / Melori` a API brání cyklům.

@@ -13,6 +13,12 @@ Na HA Domov vyplňte `canonical_base_url` veřejnou HTTPS adresou hlavní instal
 
 Port 8099 je určený pro přímý přístup přes důvěryhodný HTTPS reverse proxy nebo Tailscale Funnel. Nevystavujte jej na internet bez TLS.
 
+## Monitoring dalších Home Assistantů
+
+V záložce **Home Assistant** přidejte název a kořenovou adresu instalace. Povolené jsou adresy `*.ts.net`, `*.ui.nabu.casa` a privátní LAN IP na portech 443, 8123 nebo 8443. Hlavní instalace každé dvě hodiny ověří dostupnost a odezvu.
+
+Pro zobrazení verze Core vytvořte v cílovém Home Assistantu dlouhodobý přístupový token a vložte jej do editoru instalace. Token se ukládá šifrovaně a v UI se už nikdy nezobrazuje. Volitelný login a heslo slouží servisákovi ke zkopírování; prohlížeč je automaticky nevkládá do cizí přihlašovací stránky a aplikace je neposílá v URL.
+
 ### Veřejná cesta přes HA Práce
 
 Repozitář obsahuje úzce omezenou HA integraci `homeassistant/custom_components/loxone_servis_proxy`. Na HA Práce zpřístupní pouze cestu `/api/loxone-servis/` a předá ji lokálnímu add-onu na portu 8099. Aplikace nadále vyžaduje vlastní e-mail, heslo, případně TOTP a všechny operace zapisuje do auditu.

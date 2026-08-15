@@ -4,7 +4,8 @@ import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, re
 import { config } from "./config.js";
 import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
-import { notifyHomeAssistant } from "./home-assistant.js";
+import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } from "./home-assistant.js";
+import { stabilizeAvailability } from "./availability.js";
 function mapJob(row) {
     return {
         id: row.id,
@@ -51,16 +52,23 @@ function updateDevices(db, serial, result, now) {
 }
 function persistCheck(db, serial, result) {
     const now = new Date().toISOString();
-    transaction(db, () => {
+    return transaction(db, () => {
+        const previous = db.prepare("SELECT connection_state,consecutive_failures,last_success_at FROM miniservers WHERE serial=?").get(serial);
+        const stabilized = stabilizeAvailability({
+            connectionState: previous.connection_state,
+            consecutiveFailures: previous.consecutive_failures,
+            lastSuccessAt: previous.last_success_at,
+        }, result.state, Date.parse(now), config.fullCheckIntervalMinutes * 60_000);
         db.prepare(`UPDATE miniservers SET current_firmware=COALESCE(?,current_firmware),connection_state=?,last_checked_at=?,last_error=?,
        elements_online=?,elements_total=?,elements_offline_detail=?,elements_checked_at=?,elements_error=?,
        connection_url=COALESCE(?,connection_url),connection_transport=COALESCE(?,connection_transport),
        connection_resolved_at=CASE WHEN ? IS NOT NULL THEN ? ELSE connection_resolved_at END,last_latency_ms=?,
        last_success_at=CASE WHEN ?='online' THEN ? ELSE last_success_at END,
-       consecutive_failures=CASE WHEN ?='online' THEN 0 ELSE consecutive_failures+1 END,
-       next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, result.state, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.state === "online" ? result.connection?.baseUrl ?? null : null, now, result.latencyMs, result.state, now, result.state, new Date(Date.now() + config.fullCheckIntervalMinutes * 60_000).toISOString(), now, serial);
+       consecutive_failures=?,
+       next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, stabilized.connectionState, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.state === "online" ? result.connection?.baseUrl ?? null : null, now, result.latencyMs, result.state, now, stabilized.consecutiveFailures, stabilized.nextCheckAt, now, serial);
         db.prepare("INSERT INTO availability_events(serial,state,error_code,latency_ms,created_at) VALUES(?,?,?,?,?)").run(serial, result.state, result.errorCode, result.latencyMs, now);
         updateDevices(db, serial, result, now);
+        return stabilized;
     });
 }
 export class JobQueue {
@@ -113,6 +121,8 @@ export class JobQueue {
             await this.pollFirmwareUpdates();
             await this.maybeRefreshRelease();
             await this.maybeScheduleFullCheck(forceFullCheck);
+            await this.maybeScheduleRetryChecks();
+            await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeScheduleTopologyDiscovery();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
@@ -152,6 +162,38 @@ export class JobQueue {
             .get();
         if (!existing?.ok)
             this.enqueue("bulk_check", null, null, { scheduled: !force });
+    }
+    async maybeScheduleRetryChecks() {
+        const bulkCheck = this.db
+            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')")
+            .get();
+        if (bulkCheck?.ok)
+            return;
+        const due = this.db.prepare(`SELECT m.serial FROM miniservers m
+       WHERE m.consecutive_failures BETWEEN 1 AND 2
+         AND m.connection_state!='no_access'
+         AND m.next_check_at IS NOT NULL AND m.next_check_at<=?
+         AND NOT EXISTS (
+           SELECT 1 FROM action_jobs j
+           WHERE j.serial=m.serial AND j.kind='check' AND j.state IN ('queued','running')
+         )
+       ORDER BY m.next_check_at,m.serial LIMIT ?`).all(new Date().toISOString(), config.checkConcurrency);
+        for (const { serial } of due)
+            this.enqueue("check", serial, null, { automaticRetry: true });
+    }
+    async maybeScheduleHomeAssistantCheck(force) {
+        const monitored = this.db.prepare("SELECT COUNT(*) AS count FROM home_assistant_instances WHERE monitoring_enabled=1").get();
+        if (!monitored.count)
+            return;
+        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_ha_check_at'").get();
+        const due = !last?.value || Date.now() - Date.parse(last.value) >= config.fullCheckIntervalMinutes * 60_000;
+        if (!force && !due)
+            return;
+        const existing = this.db
+            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='ha_bulk_check' AND state IN ('queued','running')")
+            .get();
+        if (!existing?.ok)
+            this.enqueue("ha_bulk_check", null, null, { scheduled: !force });
     }
     async maybeScheduleTopologyDiscovery() {
         const fleetCheck = this.db
@@ -220,6 +262,14 @@ export class JobQueue {
                 case "topology_discovery":
                     await this.executeTopologyDiscovery(job);
                     return;
+                case "ha_check":
+                    if (!job.serial)
+                        throw new Error("Chybí identifikátor Home Assistantu.");
+                    await this.executeHomeAssistantCheck(job, job.serial);
+                    return;
+                case "ha_bulk_check":
+                    await this.executeHomeAssistantBulkCheck(job);
+                    return;
                 default:
                     throw new Error(`Úloha ${job.kind} zatím nemá obsluhu.`);
             }
@@ -234,10 +284,16 @@ export class JobQueue {
     async executeCheck(job, serial) {
         this.step(job.id, "resolve", "running", "Ověřuji Remote Connect a přihlášení.");
         const result = await checkMiniserver(this.db, serial);
-        persistCheck(this.db, serial, result);
+        const persisted = persistCheck(this.db, serial, result);
         if (result.state === "online") {
             this.step(job.id, "status", "succeeded", `Firmware ${result.firmware}; prvky ${result.elementsOnline ?? "?"}/${result.elementsTotal ?? "?"}.`);
             this.finish(job.id, "succeeded", `Online, FW ${result.firmware}.`, result);
+        }
+        else if (persisted.retryScheduled) {
+            this.step(job.id, "retry", "waiting", `Dočasné selhání ${persisted.consecutiveFailures}/3; další kontrola proběhne za 5 minut.`);
+            this.finish(job.id, "failed", persisted.heldRecentOnline
+                ? "Krátké selhání kontroly nepřepsalo naposledy potvrzený online stav. Kontrolu zopakuji."
+                : "Dostupnost zatím není potvrzená. Kontrolu zopakuji za 5 minut.", { ...result, stabilizedState: persisted.connectionState, retryAt: persisted.nextCheckAt }, result.errorCode);
         }
         else {
             this.finish(job.id, "failed", result.state === "no_access" ? "Miniserver odmítl přihlášení." : "Miniserver není dostupný.", result, result.errorCode);
@@ -253,9 +309,9 @@ export class JobQueue {
             const batch = rows.slice(offset, offset + config.checkConcurrency);
             const results = await Promise.all(batch.map(async ({ serial }) => ({ serial, result: await checkMiniserver(this.db, serial) })));
             for (const { serial, result } of results) {
-                persistCheck(this.db, serial, result);
+                const persisted = persistCheck(this.db, serial, result);
                 completed += 1;
-                if (result.state === "online")
+                if (persisted.connectionState === "online")
                     online += 1;
             }
             this.db.prepare("UPDATE action_jobs SET progress=?,message=? WHERE id=?").run(Math.floor((completed / Math.max(1, rows.length)) * 100), `Zkontrolováno ${completed}/${rows.length}`, job.id);
@@ -264,12 +320,54 @@ export class JobQueue {
         setSetting(this.db, "last_full_check_at", now);
         this.finish(job.id, "succeeded", `Kontrola dokončena: ${online}/${rows.length} online.`, { online, total: rows.length });
         audit(this.db, "fleet.check_completed", job.actor_user_id, null, { online, total: rows.length, jobId: job.id });
-        if (online < rows.length) {
+        const hardFailures = Number(this.db.prepare("SELECT COUNT(*) AS count FROM miniservers WHERE connection_state IN ('unavailable','no_access','error')").get().count);
+        if (hardFailures > 0) {
             void notifyHomeAssistant({
                 id: "fleet_problem",
                 title: "Loxone Servis: kontrola flotily",
-                message: `${online}/${rows.length} Miniserverů odpovědělo. Zkontrolujte nedostupné a chybné přístupy.`,
+                message: `${online}/${rows.length} Miniserverů je potvrzeno online; ${hardFailures} vyžaduje kontrolu.`,
                 path: "/",
+            });
+        }
+    }
+    async executeHomeAssistantCheck(job, id) {
+        this.step(job.id, "connect", "running", "Ověřuji adresu a API Home Assistantu.");
+        const result = await checkHomeAssistant(this.db, id);
+        persistHomeAssistantCheck(this.db, id, result);
+        if (result.connectionState === "online") {
+            const version = result.version ? ` · Core ${result.version}` : "";
+            this.finish(job.id, "succeeded", `Home Assistant je online${version}.`, result);
+            audit(this.db, "home_assistant.check_completed", job.actor_user_id, null, { id, jobId: job.id, state: result.connectionState, authState: result.authState });
+            return;
+        }
+        this.finish(job.id, "failed", "Home Assistant není dostupný.", result, result.errorCode);
+        audit(this.db, "home_assistant.check_failed", job.actor_user_id, null, { id, jobId: job.id, errorCode: result.errorCode });
+    }
+    async executeHomeAssistantBulkCheck(job) {
+        const rows = this.db.prepare("SELECT id FROM home_assistant_instances WHERE monitoring_enabled=1 ORDER BY name COLLATE NOCASE,id").all();
+        let completed = 0;
+        let online = 0;
+        for (let offset = 0; offset < rows.length; offset += config.checkConcurrency) {
+            const batch = rows.slice(offset, offset + config.checkConcurrency);
+            const results = await Promise.all(batch.map(async ({ id }) => ({ id, result: await checkHomeAssistant(this.db, id) })));
+            for (const { id, result } of results) {
+                persistHomeAssistantCheck(this.db, id, result);
+                completed += 1;
+                if (result.connectionState === "online")
+                    online += 1;
+            }
+            this.db.prepare("UPDATE action_jobs SET progress=?,message=? WHERE id=?").run(Math.floor((completed / Math.max(1, rows.length)) * 100), `Zkontrolováno ${completed}/${rows.length} Home Assistantů`, job.id);
+        }
+        const now = new Date().toISOString();
+        setSetting(this.db, "last_ha_check_at", now);
+        this.finish(job.id, "succeeded", `Kontrola dokončena: ${online}/${rows.length} online.`, { online, total: rows.length });
+        audit(this.db, "home_assistant.bulk_check_completed", job.actor_user_id, null, { online, total: rows.length, jobId: job.id });
+        if (online < rows.length) {
+            void notifyHomeAssistant({
+                id: "home_assistant_problem",
+                title: "Loxone Servis: monitoring Home Assistant",
+                message: `${online}/${rows.length} sledovaných Home Assistantů je online.`,
+                path: "/?page=home-assistant",
             });
         }
     }

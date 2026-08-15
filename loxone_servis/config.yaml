@@ -1,5 +1,5 @@
 name: Loxone Servis
-version: "0.2.1"
+version: "0.3.0"
 slug: loxone_fleet
 description: Bezpečný servisní přehled firemních Loxone Miniserverů.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha
@@ -35,3 +35,6 @@ schema:
   local_setup_allowed: bool
   ha_notify_service: str?
   public_base_url: url?
+  canonical_base_url: url?
+  backup_encryption_key: password?
+  backup_pull_token: password?

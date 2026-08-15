@@ -13,6 +13,8 @@ import { registerAuth } from "./auth.js";
 import { registerApi } from "./api.js";
 import { JobQueue } from "./jobs.js";
 import { LoxoneError } from "./loxone/client.js";
+import { registerEncryptedBackup } from "./backup.js";
+import { registerCanonicalProxy } from "./proxy.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -36,8 +38,6 @@ const app = Fastify({
     bodyLimit: 2 * 1024 * 1024,
     requestTimeout: 120_000,
 });
-const database = openDatabase();
-const jobs = new JobQueue(database);
 await app.register(cookie);
 await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
 await app.register(helmet, {
@@ -58,30 +58,46 @@ await app.register(helmet, {
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "same-origin" },
 });
-app.get("/healthz", async () => ({ status: "ok", version: config.appVersion, database: "ready" }));
-await registerAuth(app, database);
-await registerApi(app, database, jobs);
-const moduleDirectory = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const clientDirectoryCandidates = [
-    resolve(moduleDirectory, "../client"),
-    resolve(process.cwd(), "dist/client"),
-];
-const clientDirectory = clientDirectoryCandidates.find(existsSync);
-if (clientDirectory) {
-    await app.register(staticFiles, {
-        root: clientDirectory,
-        prefix: "/",
-        wildcard: false,
-        cacheControl: true,
-        maxAge: "1h",
-        immutable: false,
-    });
-    app.setNotFoundHandler(async (request, reply) => {
-        if (request.url.startsWith("/api/"))
-            return reply.code(404).send({ error: "API cesta neexistuje.", code: "NOT_FOUND" });
-        reply.header("Cache-Control", "no-cache");
-        return reply.sendFile("index.html");
-    });
+let database = null;
+let jobs = null;
+if (config.installationRole === "client") {
+    await registerCanonicalProxy(app);
+}
+else {
+    database = openDatabase();
+    jobs = new JobQueue(database);
+    app.get("/healthz", async () => ({
+        status: "ok",
+        version: config.appVersion,
+        mode: "main",
+        database: "ready",
+        encryptedBackup: config.backupEnabled ? "ready" : "disabled",
+    }));
+    await registerEncryptedBackup(app, database);
+    await registerAuth(app, database);
+    await registerApi(app, database, jobs);
+    const moduleDirectory = resolve(fileURLToPath(new URL(".", import.meta.url)));
+    const clientDirectoryCandidates = [
+        resolve(moduleDirectory, "../client"),
+        resolve(process.cwd(), "dist/client"),
+    ];
+    const clientDirectory = clientDirectoryCandidates.find(existsSync);
+    if (clientDirectory) {
+        await app.register(staticFiles, {
+            root: clientDirectory,
+            prefix: "/",
+            wildcard: false,
+            cacheControl: true,
+            maxAge: "1h",
+            immutable: false,
+        });
+        app.setNotFoundHandler(async (request, reply) => {
+            if (request.url.startsWith("/api/"))
+                return reply.code(404).send({ error: "API cesta neexistuje.", code: "NOT_FOUND" });
+            reply.header("Cache-Control", "no-cache");
+            return reply.sendFile("index.html");
+        });
+    }
 }
 app.setErrorHandler(async (error, request, reply) => {
     const requestId = request.id;
@@ -102,12 +118,12 @@ app.setErrorHandler(async (error, request, reply) => {
 });
 await app.listen({ host: config.host, port: config.port });
 if (config.schedulerEnabled)
-    jobs.start();
+    jobs?.start();
 async function shutdown(signal) {
     app.log.info({ signal }, "shutting down");
-    jobs.stop();
+    jobs?.stop();
     await app.close();
-    database.close();
+    database?.close();
     process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));

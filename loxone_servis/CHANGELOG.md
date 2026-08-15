@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6
+
+- Formulářové dialogy už v Safari a Home Assistant Ingressu nepřetékají vodorovně mimo dostupnou plochu.
+- Dvousloupcová pole se mohou bezpečně zmenšit podle šířky iframe; ovládací prvky nikdy nepřesáhnou svůj sloupec.
+- Dialog se posouvá pouze svisle uvnitř okna a na telefonu respektuje skutečnou dynamickou výšku displeje.
+
 ## 0.4.5
 
 - Nezařazený Client se už vizuálně neodsazuje pod nesouvisející Miniserver; stromová větev vznikne jen při konkrétní a platné vazbě na zobrazenou Gateway.

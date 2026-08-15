@@ -57,7 +57,7 @@ function normalizeLocalUrl(value) {
     parsed.hash = "";
     return { baseUrl: parsed.toString().replace(/\/$/, ""), source: "local", websocketUrl: null };
 }
-export async function resolveConnection(serial, localUrl) {
+async function resolveConnectionAttempt(serial, localUrl) {
     if (localUrl)
         return normalizeLocalUrl(localUrl);
     try {
@@ -119,6 +119,27 @@ export async function resolveConnection(serial, localUrl) {
             throw error;
         throw classifyFetchError(error, true);
     }
+}
+function resolverRetryDelay(serial, attempt) {
+    const jitter = createHash("sha256").update(`${serial}:${attempt}`).digest().readUInt16BE(0) % 450;
+    return 650 * (attempt + 1) + jitter;
+}
+export async function resolveConnection(serial, localUrl) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            return await resolveConnectionAttempt(serial, localUrl);
+        }
+        catch (error) {
+            lastError = error;
+            const retryable = error instanceof LoxoneError
+                && (error.code === "resolver_error" || error.code === "resolver_timeout");
+            if (!retryable || attempt === 2)
+                throw error;
+            await new Promise((resolve) => setTimeout(resolve, resolverRetryDelay(serial, attempt)));
+        }
+    }
+    throw lastError;
 }
 function decodeXml(value) {
     return value

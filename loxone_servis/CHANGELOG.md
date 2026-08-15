@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Hromadná kontrola omezuje počet souběžných cloudových resolverů na dva.
+- Přechodnou chybu nebo timeout resolveru zopakuje až třikrát s odstupem, než Miniserver označí jako nedostupný.
+
 ## 0.4.1
 
 - Klíček v seznamu jedním klepnutím zkopíruje heslo; dialog s přístupy otevírá pouze telefon.

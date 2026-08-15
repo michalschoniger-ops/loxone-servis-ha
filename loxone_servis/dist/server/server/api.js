@@ -7,6 +7,7 @@ import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, saveCredentials } from "./repository.js";
 import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, } from "./loxone/client.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
+import { replaceProjectFolderMembers } from "./folder-members.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 function confirmationHeader(headers) {
     const value = headers["x-action-confirmation"];
@@ -94,6 +95,36 @@ export async function registerApi(app, db, jobs) {
         }
         audit(db, "folder.updated", user.id, null, { id, fields: Object.keys(input) });
         return { folder: listProjectFolders(db).find((folder) => folder.id === id) };
+    });
+    app.put("/api/folders/:id/members", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({ serials: z.array(serialSchema).max(500) }).strict().parse(request.body);
+        const folder = db.prepare("SELECT name FROM project_folders WHERE id=?").get(id);
+        if (!folder)
+            return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
+        const serials = Array.from(new Set(input.serials));
+        const existing = serials.length
+            ? db.prepare(`SELECT serial FROM miniservers WHERE serial IN (${serials.map(() => "?").join(",")})`)
+                .all(...serials)
+            : [];
+        const existingSerials = new Set(existing.map((row) => row.serial));
+        const missing = serials.filter((serial) => !existingSerials.has(serial));
+        if (missing.length) {
+            return reply.code(404).send({
+                error: `Některé Miniservery nebyly nalezeny: ${missing.join(", ")}`,
+                code: "MINISERVER_NOT_FOUND",
+            });
+        }
+        const assignedServers = replaceProjectFolderMembers(db, id, serials);
+        audit(db, "folder.members_replaced", user.id, null, { id, name: folder.name, assignedServers });
+        return {
+            ok: true,
+            assignedServers,
+            folder: listProjectFolders(db).find((item) => item.id === id),
+        };
     });
     app.delete("/api/folders/:id", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);

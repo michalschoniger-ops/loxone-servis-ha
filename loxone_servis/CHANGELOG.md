@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5
+
+- Nezařazený Client se už vizuálně neodsazuje pod nesouvisející Miniserver; stromová větev vznikne jen při konkrétní a platné vazbě na zobrazenou Gateway.
+- Client bez doložené rodičovské Gateway je v seznamu výslovně označen jako „bez přiřazené Gateway“.
+- Správce složek má u každé složky tlačítko `+` s vyhledáváním a hromadným výběrem Miniserverů.
+- Členství ve složce se ukládá atomicky a může bezpečně přesunout Miniserver z jiné složky.
+
 ## 0.4.4
 
 - Neplatný přihlašovací formulář vrací bezpečnou odpověď `400 VALIDATION_ERROR` místo interní chyby 500.

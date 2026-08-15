@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.9
+
+- Aplikace se nově jmenuje Evora Smart Hub a používá diagonálně spojenou identitu LOXONE a Home Assistant.
+- Hlavní navigace rozlišuje zelenou část LOXONE a modrou část Home Assistant; rozhraní zůstává responzivní pro iPhone, iPad, Mac a Home Assistant Ingress.
+- „Flotila“ se přejmenovala na „LOXONE“ a „Firmware“ na „Config“.
+- Uživatel s rolí pouze pro čtení neuvidí Servis ani Uživatele; servisní API je nově stejně omezené i na backendu.
+- Slug, databáze a šifrované přístupy zůstávají beze změny, takže aktualizace zachová veškerá produkční data.
+
 ## 0.4.8
 
 - Přidána samostatná záložka Home Assistant s dvouhodinovým monitoringem Tailscale, Nabu Casa a privátních LAN adres.

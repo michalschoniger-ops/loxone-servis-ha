@@ -38,7 +38,7 @@ async function forward(request, reply) {
     catch (error) {
         request.log.warn({ err: error }, "canonical server unavailable");
         return reply.code(502).send({
-            error: "Hlavní Loxone Servis na HA Práce není dostupný.",
+            error: "Hlavní Evora Smart Hub na HA Práce není dostupný.",
             code: "CANONICAL_UNAVAILABLE",
         });
     }

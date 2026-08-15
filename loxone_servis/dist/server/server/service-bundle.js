@@ -99,7 +99,7 @@ export async function createServiceBundle(db, serial, actorUserId, anonymized = 
     const safeServer = anonymized ? anonymizeServiceBundleValue(server, redactionContext) : redactServiceBundleSecrets(server);
     archive.append(json({
         generatedAt: new Date().toISOString(),
-        generator: `EVORA Loxone Servis ${config.appVersion}`,
+        generator: `Evora Smart Hub ${config.appVersion}`,
         anonymized,
         containsCredentials: false,
         containsTokens: false,

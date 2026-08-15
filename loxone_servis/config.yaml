@@ -1,7 +1,7 @@
-name: Loxone Servis
-version: "0.4.8"
+name: Evora Smart Hub
+version: "0.4.9"
 slug: loxone_fleet
-description: Bezpečný servisní přehled firemních Loxone Miniserverů.
+description: Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha
 arch:
   - aarch64
@@ -12,15 +12,15 @@ init: false
 ingress: true
 ingress_port: 8099
 ingress_stream: true
-panel_title: Loxone Servis
-panel_icon: loxone:mark
+panel_title: Evora Smart Hub
+panel_icon: mdi:home-automation
 panel_admin: false
 watchdog: http://[HOST]:[PORT:8099]/healthz
 homeassistant_api: true
 ports:
   8099/tcp: 8099
 ports_description:
-  8099/tcp: Přímý web Loxone Servisu (pro HTTPS reverse proxy nebo Tailscale Funnel)
+  8099/tcp: Přímý web Evora Smart Hubu (pro HTTPS reverse proxy nebo Tailscale Funnel)
 options:
   credentials_master_key: ""
   bootstrap_admin_email: schoniger@evorasmart.cz

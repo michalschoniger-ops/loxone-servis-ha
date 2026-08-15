@@ -740,13 +740,13 @@ export async function registerApi(app, db, jobs) {
         return reply.send(serviceBundleStream(bundle));
     });
     app.get("/api/jobs", async (request, reply) => {
-        if (!requireUser(request, reply))
+        if (!requireRole(request, reply, ["admin", "technician"]))
             return;
         const query = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(request.query);
         return { items: jobs.list(query.limit) };
     });
     app.get("/api/jobs/:id", async (request, reply) => {
-        if (!requireUser(request, reply))
+        if (!requireRole(request, reply, ["admin", "technician"]))
             return;
         const id = z.string().uuid().parse(request.params.id);
         const job = jobs.get(id);

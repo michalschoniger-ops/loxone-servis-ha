@@ -1,7 +1,7 @@
 # Instalace a aktualizace
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
-2. Nainstalujte **Loxone Servis**.
+2. Nainstalujte **Evora Smart Hub**.
 3. Na hlavní instalaci HA Práce vložte 32bajtový Base64 `credentials_master_key` a PBKDF2 hash hesla prvního správce. Při migraci obnovte celý adresář `/data` ze zálohy původní instalace.
 4. Spusťte aplikaci a otevřete ji ze sidebaru.
 
@@ -9,7 +9,7 @@
 
 HA Práce je hlavní instalace a jako jediná obsahuje databázi i klíče. Volbu `canonical_base_url` na ní nevyplňujte.
 
-Na HA Domov vyplňte `canonical_base_url` veřejnou HTTPS adresou hlavní instalace HA Práce. Aplikace se automaticky přepne do bezstavového klientského režimu: neotevře lokální databázi, nespustí plánovač a všechny obrazovky i API přepošle do HA Práce. Přihlašuje se stále přímo do Loxone Servisu, nikoli účtem Home Assistantu.
+Na HA Domov vyplňte `canonical_base_url` veřejnou HTTPS adresou hlavní instalace HA Práce. Aplikace se automaticky přepne do bezstavového klientského režimu: neotevře lokální databázi, nespustí plánovač a všechny obrazovky i API přepošle do HA Práce. Přihlašuje se stále přímo do Evora Smart Hubu, nikoli účtem Home Assistantu.
 
 Port 8099 je určený pro přímý přístup přes důvěryhodný HTTPS reverse proxy nebo Tailscale Funnel. Nevystavujte jej na internet bez TLS.
 

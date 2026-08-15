@@ -1,8 +1,8 @@
 {
   "name": "@evora/loxone-servis",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "private": true,
-  "description": "Bezpečná servisní konzole pro flotilu Loxone Miniserverů.",
+  "description": "Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.",
   "type": "module",
   "engines": {
     "node": ">=22.13"

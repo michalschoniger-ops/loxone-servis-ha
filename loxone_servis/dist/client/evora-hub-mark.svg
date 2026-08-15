@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title desc">
+  <title id="title">Evora Smart Hub</title>
+  <desc id="desc">Diagonálně spojený symbol Loxone a Home Assistant</desc>
+  <defs>
+    <clipPath id="rounded"><rect width="192" height="192" rx="38"/></clipPath>
+    <clipPath id="loxone-half"><path d="M0 0h192L0 192z"/></clipPath>
+    <clipPath id="ha-half"><path d="M192 0v192H0z"/></clipPath>
+  </defs>
+  <g clip-path="url(#rounded)">
+    <rect width="192" height="192" fill="#82ff63"/>
+    <path d="M192 0v192H0z" fill="#18a5e8"/>
+    <path d="M0 192 192 0" fill="none" stroke="#fff" stroke-opacity=".72" stroke-width="4"/>
+    <g clip-path="url(#loxone-half)" fill="none" stroke="#111611" stroke-linecap="round" stroke-width="18">
+      <path d="M38 76V55a17 17 0 0 1 17-17h21"/>
+      <path d="M116 38h21a17 17 0 0 1 17 17v21"/>
+      <path d="M154 116v21a17 17 0 0 1-17 17h-21"/>
+      <path d="M76 154H55a17 17 0 0 1-17-17v-21"/>
+    </g>
+    <g clip-path="url(#ha-half)" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m45 99 51-45 51 45v48H45z" stroke-width="12"/>
+      <path d="M73 97v28h46V97M96 54v71" stroke-width="9"/>
+      <circle cx="73" cy="97" r="7" fill="#fff" stroke="none"/>
+      <circle cx="119" cy="97" r="7" fill="#fff" stroke="none"/>
+      <circle cx="96" cy="125" r="7" fill="#fff" stroke="none"/>
+    </g>
+  </g>
+</svg>

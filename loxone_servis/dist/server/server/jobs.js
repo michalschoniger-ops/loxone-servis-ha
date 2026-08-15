@@ -324,7 +324,7 @@ export class JobQueue {
         if (hardFailures > 0) {
             void notifyHomeAssistant({
                 id: "fleet_problem",
-                title: "Loxone Servis: kontrola flotily",
+                title: "Evora Smart Hub: kontrola LOXONE",
                 message: `${online}/${rows.length} Miniserverů je potvrzeno online; ${hardFailures} vyžaduje kontrolu.`,
                 path: "/",
             });
@@ -365,7 +365,7 @@ export class JobQueue {
         if (online < rows.length) {
             void notifyHomeAssistant({
                 id: "home_assistant_problem",
-                title: "Loxone Servis: monitoring Home Assistant",
+                title: "Evora Smart Hub: monitoring Home Assistant",
                 message: `${online}/${rows.length} sledovaných Home Assistantů je online.`,
                 path: "/?page=home-assistant",
             });

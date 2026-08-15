@@ -53,6 +53,7 @@ await app.register(helmet, {
             baseUri: ["'self'"],
             formAction: ["'self'"],
             objectSrc: ["'none'"],
+            upgradeInsecureRequests: null,
         },
     },
     crossOriginEmbedderPolicy: false,
@@ -87,9 +88,12 @@ else {
             root: clientDirectory,
             prefix: "/",
             wildcard: false,
-            cacheControl: true,
-            maxAge: "1h",
+            cacheControl: false,
             immutable: false,
+            setHeaders(reply) {
+                reply.header("Cache-Control", "no-store, max-age=0");
+                reply.header("Pragma", "no-cache");
+            },
         });
         app.setNotFoundHandler(async (request, reply) => {
             if (request.url.startsWith("/api/"))

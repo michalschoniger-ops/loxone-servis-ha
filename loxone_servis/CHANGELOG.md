@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Klíček v seznamu jedním klepnutím zkopíruje heslo; dialog s přístupy otevírá pouze telefon.
+- Spuštění Loxone App používá oficiální `loxone://ms` URL schéma a ověřenou adresu Miniserveru.
+- Opravena bílá stránka Safari při lokálním HTTP přístupu přes Home Assistant Ingress.
+- HTML, JS a CSS se po aktualizaci neposílají ze zastaralé cache.
+
 ## 0.4.0
 
 - Automatické rozpoznání role Gateway, Client nebo samostatný Miniserver z LoxAPP3 WebService.

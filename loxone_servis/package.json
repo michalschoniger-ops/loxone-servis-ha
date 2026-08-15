@@ -1,6 +1,6 @@
 {
   "name": "@evora/loxone-servis",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Bezpečná servisní konzole pro flotilu Loxone Miniserverů.",
   "type": "module",

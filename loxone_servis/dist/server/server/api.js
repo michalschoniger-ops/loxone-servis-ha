@@ -266,13 +266,15 @@ export async function registerApi(app, db, jobs) {
         if (!user)
             return;
         const serial = serialSchema.parse(request.params.serial);
-        const query = z.object({ purpose: z.enum(["copy", "open-loxone-app"]) }).parse(request.query);
+        const query = z.object({ purpose: z.enum(["copy", "copy-password", "open-loxone-app"]) }).parse(request.query);
         const credentials = getStoredCredentials(db, serial);
         if (!credentials)
             return reply.code(404).send({ error: "U Miniserveru nejsou uložené přístupy.", code: "CREDENTIALS_MISSING" });
         reply.header("Cache-Control", "no-store, max-age=0");
         reply.header("Pragma", "no-cache");
         audit(db, `credentials.${query.purpose}`, user.id, serial, {});
+        if (query.purpose === "copy-password")
+            return { password: credentials.password };
         return credentials;
     });
     app.post("/api/miniservers/:serial/check", async (request, reply) => {

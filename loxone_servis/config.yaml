@@ -1,0 +1,38 @@
+name: Loxone Servis
+version: "0.2.1"
+slug: loxone_fleet
+description: Bezpečný servisní přehled firemních Loxone Miniserverů.
+url: https://github.com/michalschoniger-ops/loxone-servis-ha
+arch:
+  - aarch64
+  - amd64
+image: ghcr.io/michalschoniger-ops/loxone-servis
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_title: Loxone Servis
+panel_icon: loxone:mark
+panel_admin: false
+watchdog: http://[HOST]:[PORT:8099]/healthz
+homeassistant_api: true
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Přímý web Loxone Servisu (pro HTTPS reverse proxy nebo Tailscale Funnel)
+options:
+  credentials_master_key: ""
+  bootstrap_admin_email: schoniger@evorasmart.cz
+  bootstrap_admin_password_hash: ""
+  cron_secret: ""
+  local_setup_allowed: false
+schema:
+  credentials_master_key: password
+  bootstrap_admin_email: str
+  bootstrap_admin_password_hash: password
+  cron_secret: password
+  local_setup_allowed: bool
+  ha_notify_service: str?
+  public_base_url: url?

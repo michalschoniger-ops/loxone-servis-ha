@@ -6,7 +6,6 @@ url: https://github.com/michalschoniger-ops/loxone-servis-ha
 arch:
   - aarch64
   - amd64
-image: ghcr.io/michalschoniger-ops/loxone-servis
 startup: application
 boot: auto
 init: false

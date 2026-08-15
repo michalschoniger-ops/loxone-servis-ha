@@ -1,0 +1,80 @@
+import { XMLParser } from "fast-xml-parser";
+const RELEASE_URL = "https://update.loxone.com/updatecheck.xml";
+function text(value) {
+    if (typeof value === "string" || typeof value === "number")
+        return String(value);
+    return null;
+}
+export function normalizeFirmwareVersion(value) {
+    const parts = value.trim().split(".");
+    if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) {
+        throw new Error(`Neplatn\u00e1 verze firmware: ${value}`);
+    }
+    return parts.map((part) => String(Number(part))).join(".");
+}
+function secureDownloadUrl(value) {
+    const url = text(value);
+    if (!url || !/^https?:\/\//i.test(url))
+        return null;
+    if (/^http:\/\/updatefiles\.loxone\.com\//i.test(url))
+        return url.replace(/^http:/i, "https:");
+    return url;
+}
+function parseNamedRelease(channel, value) {
+    const release = Array.isArray(value) ? value[0] : value;
+    if (!release || typeof release !== "object")
+        return null;
+    const xmlRelease = release;
+    const rawVersion = text(xmlRelease.Version);
+    if (!rawVersion || !/^\d+\.\d+\.\d+\.\d+$/.test(rawVersion))
+        return null;
+    return { channel, version: normalizeFirmwareVersion(rawVersion), url: secureDownloadUrl(xmlRelease.Path) };
+}
+export function parseOfficialReleaseXml(xml) {
+    const document = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" }).parse(xml);
+    const root = document.Miniserversoftware;
+    if (!root || typeof root !== "object")
+        throw new Error("XML neobsahuje ko\u0159en Miniserversoftware");
+    const releases = root;
+    const parsed = [
+        parseNamedRelease("stable", releases.Release),
+        parseNamedRelease("beta", releases.Beta),
+        parseNamedRelease("alpha", releases.Test),
+    ].filter((release) => Boolean(release));
+    if (!parsed.some((release) => release.channel === "stable")) {
+        throw new Error("XML neobsahuje stabiln\u00ed verzi Miniserveru");
+    }
+    return parsed;
+}
+export async function refreshOfficialReleases(db) {
+    const checkedAt = new Date().toISOString();
+    try {
+        const response = await fetch(RELEASE_URL, {
+            signal: AbortSignal.timeout(20_000),
+            headers: { Accept: "application/xml, text/xml", "User-Agent": "EVORA-Loxone-Servis/0.2" },
+        });
+        if (!response.ok)
+            throw new Error(`HTTP ${response.status}`);
+        const releases = parseOfficialReleaseXml(await response.text());
+        const statement = db.prepare(`INSERT INTO firmware_releases(channel,version,config_url,published_at,source_url,checked_at,error_code)
+       VALUES(?,?,?,?,?,?,NULL)
+       ON CONFLICT(channel) DO UPDATE SET version=excluded.version,config_url=excluded.config_url,
+         published_at=excluded.published_at,source_url=excluded.source_url,checked_at=excluded.checked_at,error_code=NULL`);
+        for (const release of releases) {
+            statement.run(release.channel, release.version, release.url, null, RELEASE_URL, checkedAt);
+        }
+        const stable = releases.find((release) => release.channel === "stable");
+        db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES('target_firmware',?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(stable.version, checkedAt);
+        db.prepare("UPDATE miniservers SET target_firmware=? WHERE firmware_channel='stable' AND excluded=0").run(stable.version);
+        db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES('official_release_checked_at',?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(checkedAt, checkedAt);
+        db.prepare("DELETE FROM settings WHERE key='official_release_error'").run();
+    }
+    catch (error) {
+        db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES('official_release_error',?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(error.message.slice(0, 200), checkedAt);
+        throw error;
+    }
+}
+//# sourceMappingURL=release.js.map

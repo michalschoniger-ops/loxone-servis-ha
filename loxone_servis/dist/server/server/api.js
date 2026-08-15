@@ -1,0 +1,546 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { actionPayloadHash, consumeConfirmation, requireRole, requireUser } from "./auth.js";
+import { audit, transaction } from "./database.js";
+import { config } from "./config.js";
+import { encryptSecret, hashPassword } from "./crypto.js";
+import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, saveCredentials } from "./repository.js";
+import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, } from "./loxone/client.js";
+import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
+const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
+function confirmationHeader(headers) {
+    const value = headers["x-action-confirmation"];
+    return typeof value === "string" ? value : undefined;
+}
+function requireConfirmation(db, user, header, action, serial, payload) {
+    return consumeConfirmation(db, user, header, action, serial, actionPayloadHash(action, serial, payload));
+}
+function parseJson(value) {
+    if (!value)
+        return null;
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        return value;
+    }
+}
+export async function registerApi(app, db, jobs) {
+    app.get("/api/overview", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return fleetOverview(db);
+    });
+    app.get("/api/miniservers", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return { items: listMiniservers(db) };
+    });
+    app.get("/api/miniservers/:serial", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const server = getMiniserver(db, serial);
+        if (!server)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const devices = db
+            .prepare(`SELECT device_serial AS serial,parent_serial AS parentSerial,name,type,firmware,online,first_offline_at AS firstOfflineAt,
+                last_seen_at AS lastSeenAt,system_message AS systemMessage,device_index AS deviceIndex,source,updated_at AS updatedAt
+         FROM device_inventory WHERE serial=? ORDER BY online,name COLLATE NOCASE`)
+            .all(serial);
+        const health = db
+            .prepare("SELECT * FROM health_snapshots WHERE serial=? ORDER BY checked_at DESC LIMIT 20")
+            .all(serial)
+            .map((row) => ({ ...row, payload_json: parseJson(String(row.payload_json ?? "{}")) }));
+        const projectChanges = db
+            .prepare("SELECT * FROM project_changes WHERE serial=? ORDER BY created_at DESC LIMIT 50")
+            .all(serial)
+            .map((row) => ({ ...row, details_json: parseJson(String(row.details_json ?? "{}")) }));
+        const availability = db
+            .prepare("SELECT state,error_code,latency_ms,created_at FROM availability_events WHERE serial=? ORDER BY created_at DESC LIMIT 200")
+            .all(serial);
+        return { server, devices, health, projectChanges, availability };
+    });
+    app.post("/api/miniservers", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z
+            .object({
+            serial: serialSchema,
+            type: z.string().min(1).max(80),
+            project: z.string().min(1).max(250),
+            registered: z.string().max(40).default(""),
+            username: z.string().max(200).optional(),
+            password: z.string().max(1024).optional(),
+            targetFirmware: z.string().regex(/^\d+\.\d+\.\d+\.\d+$/),
+            notes: z.string().max(5000).default(""),
+        })
+            .parse(request.body);
+        const now = new Date().toISOString();
+        try {
+            db.prepare(`INSERT INTO miniservers(serial,type,project,registered,credential_source,access_policy,target_firmware,notes,created_at,updated_at)
+         VALUES(?,?,?,?,'manual','managed',?,?,?,?)`).run(input.serial, input.type, input.project, input.registered, input.targetFirmware, input.notes, now, now);
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE")) {
+                return reply.code(409).send({ error: "Miniserver s tímto SN už existuje.", code: "DUPLICATE_SERIAL" });
+            }
+            throw error;
+        }
+        if (input.username && input.password)
+            saveCredentials(db, input.serial, input.username, input.password);
+        audit(db, "miniserver.created", user.id, input.serial, { type: input.type, project: input.project });
+        return reply.code(201).send({ server: getMiniserver(db, input.serial) });
+    });
+    app.patch("/api/miniservers/:serial", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z
+            .object({
+            type: z.string().min(1).max(80).optional(),
+            project: z.string().min(1).max(250).optional(),
+            registered: z.string().max(40).optional(),
+            targetFirmware: z.string().regex(/^\d+\.\d+\.\d+\.\d+$/).optional(),
+            firmwareChannel: z.enum(["stable", "beta", "alpha"]).optional(),
+            accessPolicy: z.enum(["managed", "manual", "no_access"]).optional(),
+            excluded: z.boolean().optional(),
+            manualOnly: z.boolean().optional(),
+            notes: z.string().max(5000).optional(),
+            gatewaySerial: serialSchema.nullable().optional(),
+            localUrl: z.string().url().nullable().optional(),
+        })
+            .strict()
+            .parse(request.body);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const fields = [];
+        const values = [];
+        const columns = {
+            type: "type",
+            project: "project",
+            registered: "registered",
+            targetFirmware: "target_firmware",
+            firmwareChannel: "firmware_channel",
+            accessPolicy: "access_policy",
+            excluded: "excluded",
+            manualOnly: "manual_only",
+            notes: "notes",
+            gatewaySerial: "gateway_serial",
+            localUrl: "local_url",
+        };
+        for (const [key, value] of Object.entries(input)) {
+            fields.push(`${columns[key]}=?`);
+            values.push(typeof value === "boolean" ? (value ? 1 : 0) : value);
+        }
+        if (fields.length) {
+            fields.push("updated_at=?");
+            values.push(new Date().toISOString(), serial);
+            db.prepare(`UPDATE miniservers SET ${fields.join(",")} WHERE serial=?`).run(...values);
+            audit(db, "miniserver.updated", user.id, serial, { fields: Object.keys(input) });
+        }
+        return { server: getMiniserver(db, serial) };
+    });
+    app.put("/api/miniservers/:serial/credentials", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({ username: z.string().min(1).max(200), password: z.string().min(1).max(1024) }).parse(request.body);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        saveCredentials(db, serial, input.username, input.password);
+        audit(db, "credentials.updated", user.id, serial, {});
+        return { ok: true };
+    });
+    app.get("/api/miniservers/:serial/credentials", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const query = z.object({ purpose: z.enum(["copy", "open-loxone-app"]) }).parse(request.query);
+        const credentials = getStoredCredentials(db, serial);
+        if (!credentials)
+            return reply.code(404).send({ error: "U Miniserveru nejsou uložené přístupy.", code: "CREDENTIALS_MISSING" });
+        reply.header("Cache-Control", "no-store, max-age=0");
+        reply.header("Pragma", "no-cache");
+        audit(db, `credentials.${query.purpose}`, user.id, serial, {});
+        return credentials;
+    });
+    app.post("/api/miniservers/:serial/check", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        return reply.code(202).send({ job: jobs.enqueue("check", serial, user.id) });
+    });
+    app.post("/api/fleet/check", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const existing = jobs.list(200).find((job) => job.kind === "bulk_check" && ["queued", "running"].includes(job.state));
+        return reply.code(202).send({ job: existing ?? jobs.enqueue("bulk_check", null, user.id, { manual: true }) });
+    });
+    app.post("/api/miniservers/:serial/update", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "firmware_update", serial, {})) {
+            return reply.code(428).send({ error: "Aktualizaci je nutné znovu potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        return reply.code(202).send({ job: jobs.enqueue("firmware_update", serial, user.id, {}, new Date(Date.now() + 30 * 60_000).toISOString()) });
+    });
+    app.post("/api/fleet/update", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const payload = { all: true };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "bulk_firmware_update", null, payload)) {
+            return reply.code(428).send({ error: "Hromadnou aktualizaci je nutné znovu potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        return reply.code(202).send({ job: jobs.enqueue("bulk_firmware_update", null, user.id, payload) });
+    });
+    app.post("/api/miniservers/:serial/reboot", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "miniserver_reboot", serial, {})) {
+            return reply.code(428).send({ error: "Restart je nutné znovu potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        return reply.code(202).send({ job: jobs.enqueue("miniserver_reboot", serial, user.id) });
+    });
+    app.post("/api/miniservers/:serial/sd-test", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        return reply.code(202).send({ job: jobs.enqueue("sd_test", serial, user.id) });
+    });
+    app.post("/api/miniservers/:serial/health", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        return { health: await jobs.runHealthNow(serial, user.id) };
+    });
+    app.post("/api/miniservers/:serial/project-sync", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        return reply.code(202).send({ job: jobs.enqueue("project_sync", serial, user.id) });
+    });
+    app.post("/api/miniservers/:serial/jwt", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({ permission: z.number().int().min(1).max(255).default(2) }).parse(request.body ?? {});
+        const result = await obtainJwt(db, serial, input.permission);
+        audit(db, "jwt.created", user.id, serial, { permission: input.permission, validUntil: result.validUntil });
+        return result;
+    });
+    app.post("/api/miniservers/:serial/devices/:deviceSerial/:command", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const params = z
+            .object({ serial: serialSchema, deviceSerial: z.string().regex(/^[A-Fa-f0-9]{6,16}$/), command: z.enum(["reboot", "update", "identify"]) })
+            .parse(request.params);
+        const device = db
+            .prepare("SELECT source,device_index FROM device_inventory WHERE serial=? AND device_serial=?")
+            .get(params.serial, params.deviceSerial.toUpperCase());
+        if (!device)
+            return reply.code(404).send({ error: "Prvek nebyl nalezen v posledním ověřeném stavu.", code: "DEVICE_NOT_FOUND" });
+        const payload = {
+            command: params.command,
+            deviceSerial: params.deviceSerial.toUpperCase(),
+            source: device.source === "extension" ? "extension" : "device",
+            deviceIndex: device.device_index ?? null,
+        };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), `device_${params.command}`, params.serial, payload)) {
+            return reply.code(428).send({ error: "Zásah do prvku je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await deviceCommand(db, params.serial, { serial: payload.deviceSerial, source: payload.source, deviceIndex: payload.deviceIndex }, params.command);
+        audit(db, `device.${params.command}`, user.id, params.serial, payload);
+        return { ok: true, result };
+    });
+    app.get("/api/miniservers/:serial/log", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const log = await readDefinitionLog(db, serial);
+        audit(db, "miniserver.log_read", user.id, serial, {});
+        reply.header("Cache-Control", "no-store");
+        return { log };
+    });
+    app.get("/api/miniservers/:serial/controls/:uuid/history", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const params = request.params;
+        const serial = serialSchema.parse(params.serial);
+        return { history: await readControlHistory(db, serial, params.uuid) };
+    });
+    app.get("/api/miniservers/:serial/statistics/:uuid", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const params = request.params;
+        const serial = serialSchema.parse(params.serial);
+        return { info: await readStatisticInfo(db, serial, params.uuid) };
+    });
+    app.post("/api/miniservers/:serial/statistics/:uuid/raw", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const params = request.params;
+        const serial = serialSchema.parse(params.serial);
+        const input = z
+            .object({ from: z.number().int(), to: z.number().int(), dataPointUnit: z.number().int().min(1), groupId: z.number().int().min(0), outputName: z.string() })
+            .parse(request.body);
+        return { values: await readStatisticRaw(db, serial, { controlUuid: params.uuid, ...input }) };
+    });
+    app.post("/api/miniservers/:serial/user-audit", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const result = await readUserAudit(db, serial);
+        const id = randomUUID();
+        db.prepare(`INSERT INTO user_audit_snapshots(id,serial,created_at,admin_count,weak_password_count,expired_count,summary_json,payload_json)
+       VALUES(?,?,?,?,?,?,?,?)`).run(id, serial, new Date().toISOString(), result.summary.admins, result.summary.weakPasswords, result.summary.expired, JSON.stringify(result.summary), encryptSecret(JSON.stringify(result), config.masterKey, `${serial}:user-audit:${id}`));
+        audit(db, "miniserver.user_audit", user.id, serial, result.summary);
+        return result;
+    });
+    app.get("/api/miniservers/:serial/operating-modes", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const [modes, schedule] = await Promise.all([readOperatingModes(db, serial), readOperatingModeSchedule(db, serial)]);
+        return { modes, schedule };
+    });
+    app.post("/api/miniservers/:serial/operating-modes/:operation", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const params = z.object({ serial: serialSchema, operation: z.enum(["create", "update", "delete"]) }).parse(request.params);
+        const entry = z
+            .object({
+            uuid: z.string().optional(),
+            name: z.string().min(1).max(120),
+            operatingMode: z.number().int(),
+            calendarMode: z.number().int().min(0).max(5),
+            calendarModeAttributes: z.string().regex(/^[0-9/-]{1,64}$/),
+        })
+            .parse(request.body);
+        const payload = { operation: params.operation, entry };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "operating_mode_change", params.serial, payload)) {
+            return reply.code(428).send({ error: "Změnu kalendáře je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await mutateOperatingModeSchedule(db, params.serial, params.operation, entry);
+        audit(db, `operating_mode.${params.operation}`, user.id, params.serial, { entry: { ...entry, name: entry.name } });
+        return { ok: true, result };
+    });
+    app.get("/api/lan-targets", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return { items: db.prepare("SELECT * FROM lan_probe_targets ORDER BY name").all() };
+    });
+    app.post("/api/lan-targets", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z.object({ serial: serialSchema, name: z.string().min(1).max(120), address: z.union([z.ipv4(), z.ipv6()]), webservice: z.string().startsWith("/") }).parse(request.body);
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        db.prepare("INSERT INTO lan_probe_targets(id,serial,name,url,enabled,created_at,updated_at) VALUES(?,?,?,?,1,?,?)").run(id, input.serial, input.name, JSON.stringify({ address: input.address, webservice: input.webservice }), now, now);
+        audit(db, "lan_target.created", user.id, input.serial, { id, name: input.name, address: input.address });
+        return reply.code(201).send({ id });
+    });
+    app.post("/api/lan-targets/:id/probe", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const row = db.prepare("SELECT * FROM lan_probe_targets WHERE id=? AND enabled=1").get(id);
+        if (!row)
+            return reply.code(404).send({ error: "LAN cíl nebyl nalezen.", code: "NOT_FOUND" });
+        const payload = { targetId: id };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "lan_probe", row.serial, payload)) {
+            return reply.code(428).send({ error: "LAN dotaz je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const target = JSON.parse(row.url);
+        const result = await sendAllowedWebservice(db, row.serial, target);
+        audit(db, "lan_target.probed", user.id, row.serial, { id, name: row.name, address: target.address });
+        return { result };
+    });
+    app.post("/api/miniservers/:serial/service-bundle", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({ anonymized: z.boolean().default(true) }).parse(request.body ?? {});
+        const bundle = await createServiceBundle(db, serial, user.id, input.anonymized);
+        return reply.code(201).send({ id: bundle.id, fileName: bundle.fileName, sha256: bundle.sha256, size: bundle.size, expiresAt: bundle.expiresAt });
+    });
+    app.get("/api/service-bundles/:id/download", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const bundle = getServiceBundle(db, id);
+        if (!bundle)
+            return reply.code(404).send({ error: "Balíček neexistuje nebo vypršel.", code: "NOT_FOUND" });
+        audit(db, "service_bundle.downloaded", user.id, null, { id, sha256: bundle.sha256 });
+        reply.header("Content-Type", "application/zip");
+        reply.header("Content-Disposition", `attachment; filename="${bundle.fileName.replace(/["\r\n]/g, "")}"`);
+        reply.header("Cache-Control", "no-store");
+        return reply.send(serviceBundleStream(bundle));
+    });
+    app.get("/api/jobs", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const query = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(request.query);
+        return { items: jobs.list(query.limit) };
+    });
+    app.get("/api/jobs/:id", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const job = jobs.get(id);
+        if (!job)
+            return reply.code(404).send({ error: "Úloha nebyla nalezena.", code: "NOT_FOUND" });
+        const steps = db.prepare("SELECT step,state,message,created_at AS createdAt FROM action_steps WHERE job_id=? ORDER BY id").all(id);
+        return { job, steps };
+    });
+    app.get("/api/audit", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const items = db
+            .prepare(`SELECT a.id,u.email AS actor,a.action,a.serial,a.details,a.created_at AS createdAt
+         FROM audit_log a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT 500`)
+            .all()
+            .map((row) => ({ ...row, details: parseJson(String(row.details ?? "{}")) }));
+        return { items };
+    });
+    app.get("/api/users", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        return {
+            items: db
+                .prepare("SELECT id,email,role,immutable,active,mfa_enabled AS mfaEnabled,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY email")
+                .all(),
+        };
+    });
+    app.post("/api/users", async (request, reply) => {
+        const actor = requireRole(request, reply, ["admin"]);
+        if (!actor)
+            return;
+        const input = z
+            .object({
+            email: z.string().email().refine((value) => value.toLowerCase().endsWith("@evorasmart.cz"), "Je povolený jen firemní e-mail."),
+            password: z.string().min(14).max(256),
+            role: z.enum(["admin", "technician", "viewer"]),
+        })
+            .parse(request.body);
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        try {
+            db.prepare(`INSERT INTO users(id,email,password_hash,role,immutable,active,created_at,updated_at,mfa_enabled)
+         VALUES(?,?,?,?,0,1,?,?,0)`).run(id, input.email.toLowerCase(), await hashPassword(input.password), input.role, now, now);
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE"))
+                return reply.code(409).send({ error: "Uživatel už existuje.", code: "DUPLICATE_USER" });
+            throw error;
+        }
+        audit(db, "user.created", actor.id, null, { id, email: input.email.toLowerCase(), role: input.role });
+        return reply.code(201).send({ id });
+    });
+    app.patch("/api/users/:id", async (request, reply) => {
+        const actor = requireRole(request, reply, ["admin"]);
+        if (!actor)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({ role: z.enum(["admin", "technician", "viewer"]).optional(), active: z.boolean().optional() }).parse(request.body);
+        const target = db.prepare("SELECT immutable FROM users WHERE id=?").get(id);
+        if (!target)
+            return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "NOT_FOUND" });
+        if (target.immutable === 1 && (input.role || input.active === false)) {
+            return reply.code(409).send({ error: "Hlavní správce nejde deaktivovat ani změnit.", code: "IMMUTABLE_USER" });
+        }
+        if (input.role)
+            db.prepare("UPDATE users SET role=?,updated_at=? WHERE id=?").run(input.role, new Date().toISOString(), id);
+        if (input.active !== undefined)
+            db.prepare("UPDATE users SET active=?,updated_at=? WHERE id=?").run(input.active ? 1 : 0, new Date().toISOString(), id);
+        if (input.active === false)
+            db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
+        audit(db, "user.updated", actor.id, null, { id, fields: Object.keys(input) });
+        return { ok: true };
+    });
+    app.delete("/api/users/:id", async (request, reply) => {
+        const actor = requireRole(request, reply, ["admin"]);
+        if (!actor)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const target = db.prepare("SELECT email,immutable FROM users WHERE id=?").get(id);
+        if (!target)
+            return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "NOT_FOUND" });
+        if (target.immutable === 1 || id === actor.id)
+            return reply.code(409).send({ error: "Tento účet nejde smazat.", code: "IMMUTABLE_USER" });
+        const payload = { userId: id };
+        if (!requireConfirmation(db, actor, confirmationHeader(request.headers), "app_user_delete", null, payload)) {
+            return reply.code(428).send({ error: "Smazání uživatele je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        transaction(db, () => db.prepare("DELETE FROM users WHERE id=?").run(id));
+        audit(db, "user.deleted", actor.id, null, { id, email: target.email });
+        return { ok: true };
+    });
+    app.get("/api/capabilities", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return {
+            features: {
+                remoteConnect: true,
+                legacyCloudDnsFallback: true,
+                jwt: true,
+                firmware: true,
+                health: true,
+                sdTest: true,
+                definitionLog: true,
+                devices: true,
+                loxApp3: true,
+                history: true,
+                statistics: true,
+                userAudit: true,
+                trust: true,
+                operatingModeSchedule: true,
+                lanWebservice: true,
+                serviceBundle: true,
+                mfa: true,
+                mcp: false,
+            },
+            documentation: {
+                api: "https://www.loxone.com/enen/kb/api/",
+                webservices: "https://www.loxone.com/enen/kb/web-services/",
+                appUrlScheme: "https://www.loxone.com/enen/kb/visualisation/",
+            },
+        };
+    });
+    app.post("/api/internal/tick", async (request, reply) => {
+        if (!config.cronSecret || request.headers.authorization !== `Bearer ${config.cronSecret}`) {
+            return reply.code(401).send({ error: "Neplatné oprávnění.", code: "AUTH_REQUIRED" });
+        }
+        await jobs.tick();
+        cleanupServiceBundles(db);
+        return { ok: true };
+    });
+}
+//# sourceMappingURL=api.js.map

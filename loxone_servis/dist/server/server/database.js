@@ -208,6 +208,11 @@ function applyMigrations(db) {
         migrateUserRoles(db);
     }
     addColumn(db, "miniservers", "gateway_serial TEXT");
+    addColumn(db, "miniservers", "folder_id TEXT");
+    addColumn(db, "miniservers", "gateway_role TEXT NOT NULL DEFAULT 'unknown'");
+    addColumn(db, "miniservers", "gateway_role_source TEXT NOT NULL DEFAULT 'unknown'");
+    addColumn(db, "miniservers", "gateway_detected_role TEXT");
+    addColumn(db, "miniservers", "gateway_detected_at TEXT");
     addColumn(db, "miniservers", "local_url TEXT");
     addColumn(db, "miniservers", "connection_url TEXT");
     addColumn(db, "miniservers", "connection_transport TEXT");
@@ -234,6 +239,16 @@ function applyMigrations(db) {
         addColumn(db, "sessions", "user_agent_hash TEXT");
     }
     db.exec(`
+    CREATE TABLE IF NOT EXISTS project_folders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_miniservers_folder ON miniservers(folder_id);
+    CREATE INDEX IF NOT EXISTS idx_miniservers_gateway ON miniservers(gateway_serial);
     CREATE TABLE IF NOT EXISTS firmware_releases (
       channel TEXT PRIMARY KEY CHECK(channel IN ('stable','beta','alpha')),
       version TEXT,
@@ -442,7 +457,7 @@ function applyMigrations(db) {
       updated_at TEXT NOT NULL
     );
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, new Date().toISOString());
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();

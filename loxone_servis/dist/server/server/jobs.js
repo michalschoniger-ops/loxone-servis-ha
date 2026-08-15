@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { audit, setSetting, transaction } from "./database.js";
-import { checkMiniserver, miniserverCommand, readHealth, readLoxApp3, } from "./loxone/client.js";
+import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, readLoxApp3, } from "./loxone/client.js";
 import { config } from "./config.js";
 import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
@@ -113,6 +113,7 @@ export class JobQueue {
             await this.pollFirmwareUpdates();
             await this.maybeRefreshRelease();
             await this.maybeScheduleFullCheck(forceFullCheck);
+            await this.maybeScheduleTopologyDiscovery();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
                     .prepare("SELECT * FROM action_jobs WHERE state='queued' ORDER BY created_at LIMIT 1")
@@ -151,6 +152,21 @@ export class JobQueue {
             .get();
         if (!existing?.ok)
             this.enqueue("bulk_check", null, null, { scheduled: !force });
+    }
+    async maybeScheduleTopologyDiscovery() {
+        const fleetCheck = this.db
+            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')")
+            .get();
+        if (fleetCheck?.ok)
+            return;
+        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_topology_discovery_at'").get();
+        if (last?.value && Date.now() - Date.parse(last.value) < 24 * 60 * 60_000)
+            return;
+        const existing = this.db
+            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='topology_discovery' AND state IN ('queued','running')")
+            .get();
+        if (!existing?.ok)
+            this.enqueue("topology_discovery", null, null, { scheduled: true });
     }
     finish(id, state, message, result = {}, errorCode = null) {
         this.db.prepare(`UPDATE action_jobs SET state=?,progress=?,message=?,result_json=?,error_code=?,finished_at=? WHERE id=?`).run(state, state === "succeeded" ? 100 : 0, message, JSON.stringify(result), errorCode, new Date().toISOString(), id);
@@ -200,6 +216,9 @@ export class JobQueue {
                     if (!job.serial)
                         throw new Error("Chybí SN Miniserveru.");
                     await this.executeProjectSync(job, job.serial);
+                    return;
+                case "topology_discovery":
+                    await this.executeTopologyDiscovery(job);
                     return;
                 default:
                     throw new Error(`Úloha ${job.kind} zatím nemá obsluhu.`);
@@ -378,6 +397,83 @@ export class JobQueue {
         });
         this.finish(job.id, "succeeded", existing ? "Změna projektu byla zaznamenána." : "Projekt byl načten.", summary);
         audit(this.db, "project.snapshot", job.actor_user_id, serial, { jobId: job.id, changed: Boolean(existing), hash: snapshot.hash });
+    }
+    async executeTopologyDiscovery(job) {
+        const rows = this.db.prepare("SELECT serial FROM miniservers ORDER BY serial").all();
+        const knownSerials = new Set(rows.map((row) => row.serial));
+        const detected = new Map();
+        const errors = [];
+        let completed = 0;
+        for (let offset = 0; offset < rows.length; offset += config.checkConcurrency) {
+            const batch = rows.slice(offset, offset + config.checkConcurrency);
+            const results = await Promise.all(batch.map(async ({ serial }) => {
+                try {
+                    return { serial, topology: await readGatewayTopology(this.db, serial, knownSerials), error: null };
+                }
+                catch (error) {
+                    return { serial, topology: null, error: error.code ?? "topology_failed" };
+                }
+            }));
+            for (const result of results) {
+                completed += 1;
+                if (result.topology)
+                    detected.set(result.serial, result.topology);
+                else
+                    errors.push({ serial: result.serial, code: result.error ?? "topology_failed" });
+            }
+            this.db.prepare("UPDATE action_jobs SET progress=?,message=? WHERE id=?").run(Math.floor((completed / Math.max(1, rows.length)) * 100), `Zjištěna struktura ${completed}/${rows.length}`, job.id);
+        }
+        const owners = new Map();
+        for (const [gatewaySerial, topology] of detected) {
+            if (topology.role !== "gateway")
+                continue;
+            for (const clientSerial of topology.referencedSerials) {
+                if (detected.get(clientSerial)?.role !== "client")
+                    continue;
+                owners.set(clientSerial, [...(owners.get(clientSerial) ?? []), gatewaySerial]);
+            }
+        }
+        const now = new Date().toISOString();
+        let gateways = 0;
+        let clients = 0;
+        let standalone = 0;
+        let assignedClients = 0;
+        let ambiguousClients = 0;
+        transaction(this.db, () => {
+            for (const [serial, topology] of detected) {
+                if (topology.role === "gateway")
+                    gateways += 1;
+                else if (topology.role === "client")
+                    clients += 1;
+                else if (topology.role === "standalone")
+                    standalone += 1;
+                const gatewayCandidates = topology.role === "client" ? owners.get(serial) ?? [] : [];
+                const gatewaySerial = gatewayCandidates.length === 1 ? gatewayCandidates[0] : null;
+                if (topology.role === "client" && gatewaySerial)
+                    assignedClients += 1;
+                if (topology.role === "client" && gatewayCandidates.length > 1)
+                    ambiguousClients += 1;
+                this.db.prepare(`UPDATE miniservers SET gateway_detected_role=?,gateway_detected_at=?,
+             gateway_role=CASE WHEN gateway_role_source='manual' THEN gateway_role ELSE ? END,
+             gateway_role_source=CASE WHEN gateway_role_source='manual' THEN gateway_role_source ELSE 'webservice' END,
+             gateway_serial=CASE WHEN gateway_role_source='manual' THEN gateway_serial ELSE ? END,
+             updated_at=? WHERE serial=?`).run(topology.role, now, topology.role, gatewaySerial, now, serial);
+            }
+            setSetting(this.db, "last_topology_discovery_at", now);
+        });
+        const result = {
+            total: rows.length,
+            detected: detected.size,
+            errors: errors.length,
+            gateways,
+            clients,
+            standalone,
+            assignedClients,
+            unassignedClients: clients - assignedClients,
+            ambiguousClients,
+        };
+        this.finish(job.id, "succeeded", `Struktura načtena: ${gateways} Gateway, ${clients} Client, ${errors.length} bez odpovědi.`, result);
+        audit(this.db, "fleet.topology_discovered", job.actor_user_id, null, { ...result, jobId: job.id });
     }
 }
 //# sourceMappingURL=jobs.js.map

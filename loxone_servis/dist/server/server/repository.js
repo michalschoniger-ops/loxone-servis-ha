@@ -20,7 +20,13 @@ function mapMiniServer(row) {
         updateStatus: row.update_status,
         excluded: row.excluded === 1,
         notes: row.notes,
+        folderId: row.folder_id,
+        folderName: row.folder_name,
         gatewaySerial: row.gateway_serial,
+        gatewayRole: row.gateway_role,
+        gatewayRoleSource: row.gateway_role_source,
+        gatewayDetectedRole: row.gateway_detected_role,
+        gatewayDetectedAt: row.gateway_detected_at,
         localUrl: row.local_url,
         connectionUrl: row.connection_url,
         lastLatencyMs: row.last_latency_ms,
@@ -31,15 +37,41 @@ function mapMiniServer(row) {
     };
 }
 const miniserverSelect = `
-  SELECT m.*,
+  SELECT m.*,f.name AS folder_name,f.sort_order AS folder_sort_order,
     (SELECT COUNT(*) FROM device_inventory d WHERE d.serial=m.serial AND d.online=0) AS offline_devices
-  FROM miniservers m`;
+  FROM miniservers m LEFT JOIN project_folders f ON f.id=m.folder_id`;
 export function listMiniservers(db) {
-    return db.prepare(`${miniserverSelect} ORDER BY project COLLATE NOCASE, serial`).all().map(mapMiniServer);
+    return db.prepare(`${miniserverSelect} ORDER BY
+    CASE WHEN m.folder_id IS NULL THEN 1 ELSE 0 END,
+    COALESCE(f.sort_order,2147483647),f.name COLLATE NOCASE,
+    CASE m.gateway_role WHEN 'gateway' THEN 0 WHEN 'standalone' THEN 1 WHEN 'client' THEN 2 ELSE 3 END,
+    COALESCE(m.gateway_serial,m.serial),m.project COLLATE NOCASE,m.serial`).all().map(mapMiniServer);
 }
 export function getMiniserver(db, serial) {
     const row = db.prepare(`${miniserverSelect} WHERE m.serial=?`).get(serial.toUpperCase());
     return row ? mapMiniServer(row) : null;
+}
+export function listProjectFolders(db) {
+    return db.prepare(`
+    SELECT f.id,f.name,f.description,f.sort_order,f.created_at,f.updated_at,
+      COUNT(m.serial) AS server_count,
+      SUM(CASE WHEN m.gateway_role='gateway' THEN 1 ELSE 0 END) AS gateway_count,
+      SUM(CASE WHEN m.gateway_role='client' THEN 1 ELSE 0 END) AS client_count
+    FROM project_folders f
+    LEFT JOIN miniservers m ON m.folder_id=f.id
+    GROUP BY f.id
+    ORDER BY f.sort_order,f.name COLLATE NOCASE
+  `).all().map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        sortOrder: row.sort_order,
+        serverCount: Number(row.server_count ?? 0),
+        gatewayCount: Number(row.gateway_count ?? 0),
+        clientCount: Number(row.client_count ?? 0),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    }));
 }
 export function getStoredCredentials(db, serial) {
     const row = db

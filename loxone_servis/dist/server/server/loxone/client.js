@@ -394,6 +394,29 @@ export async function readLoxApp3(db, serial) {
     const version = typeof parsed.LoxAPPversion3 === "string" ? parsed.LoxAPPversion3 : null;
     return { payload: parsed, hash: createHash("sha256").update(text).digest("hex"), version };
 }
+export function parseGatewayTopology(payload, ownSerial, knownSerials) {
+    const root = payload && typeof payload === "object" ? payload : {};
+    const msInfo = root.msInfo && typeof root.msInfo === "object" ? root.msInfo : {};
+    const gatewayType = Number(msInfo.gatewayType);
+    const role = gatewayType === 2
+        ? "gateway"
+        : gatewayType === 1
+            ? "client"
+            : gatewayType === 0
+                ? "standalone"
+                : "unknown";
+    const normalizedOwnSerial = ownSerial.toUpperCase();
+    const normalizedKnownSerials = new Set(Array.from(knownSerials, (serial) => serial.toUpperCase()));
+    const referencedSerials = Array.from(new Set((JSON.stringify(payload).toUpperCase().match(/504F94[A-F0-9]{6}/g) ?? [])
+        .filter((serial) => serial !== normalizedOwnSerial && normalizedKnownSerials.has(serial)))).sort();
+    const miniserverType = Number.isFinite(Number(msInfo.miniserverType)) ? Number(msInfo.miniserverType) : null;
+    const projectName = typeof msInfo.projectName === "string" ? msInfo.projectName : null;
+    return { role, referencedSerials, miniserverType, projectName };
+}
+export async function readGatewayTopology(db, serial, knownSerials) {
+    const snapshot = await readLoxApp3(db, serial);
+    return parseGatewayTopology(snapshot.payload, serial, knownSerials);
+}
 export async function readControlHistory(db, serial, controlUuid) {
     if (!/^[A-F0-9-]{20,40}$/i.test(controlUuid))
         throw new LoxoneError("invalid_response", "Neplatné UUID ovládacího prvku.");

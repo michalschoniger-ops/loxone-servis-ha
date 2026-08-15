@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Automatické rozpoznání role Gateway, Client nebo samostatný Miniserver z LoxAPP3 WebService.
+- Jednoznačně doložené vazby Client → Gateway se zobrazují hierarchicky; neurčené vazby se nehádají.
+- Přidány editovatelné složky projektů pro přehledné seskupení více Miniserverů.
+- Role, vazbu i složku lze ručně upravit; ruční nastavení automatická kontrola nepřepíše.
+
 ## 0.3.0
 
 - HA Práce může fungovat jako jediný hlavní server a HA Domov jako bezstavový klient.

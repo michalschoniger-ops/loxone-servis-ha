@@ -13,6 +13,12 @@ Na HA Domov vyplňte `canonical_base_url` veřejnou HTTPS adresou hlavní instal
 
 Port 8099 je určený pro přímý přístup přes důvěryhodný HTTPS reverse proxy nebo Tailscale Funnel. Nevystavujte jej na internet bez TLS.
 
+## Složky a struktura Gateway/Client
+
+Tlačítko **Zjistit strukturu** načte z každého dostupného Miniserveru `/data/LoxAPP3.json`. Hodnota `msInfo.gatewayType` určí roli a známá SN nalezená v projektu Gateway vytvoří vazbu na Clienta pouze tehdy, když je výsledek jednoznačný. Neurčené nebo neodpovídající Clienty aplikace ponechá bez rodiče. Automatická kontrola běží nejvýše jednou denně a nikdy nepřepíše ručně nastavenou roli či vazbu.
+
+Tlačítko **Složky** vytváří společné skupiny pro projekty s více samostatnými Miniservery nebo více systémy Gateway/Client. Smazání složky nemaže Miniservery; pouze je přesune do skupiny **Bez složky**.
+
 ## Data a zálohy
 
 Databáze, šifrovací klíč, relace a přístupy k Miniserverům zůstávají v `/data` hlavního HA Práce. Standardní záloha Home Assistantu tato data zahrnuje.

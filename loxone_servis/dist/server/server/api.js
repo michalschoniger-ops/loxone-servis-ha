@@ -4,7 +4,7 @@ import { actionPayloadHash, consumeConfirmation, requireRole, requireUser } from
 import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
-import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, saveCredentials } from "./repository.js";
+import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, saveCredentials } from "./repository.js";
 import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, } from "./loxone/client.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
@@ -35,6 +35,81 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listMiniservers(db) };
+    });
+    app.get("/api/folders", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return { items: listProjectFolders(db) };
+    });
+    app.post("/api/folders", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(500).default("") }).parse(request.body);
+        const now = new Date().toISOString();
+        const id = randomUUID();
+        const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order),-10)+10 AS value FROM project_folders").get().value);
+        try {
+            db.prepare("INSERT INTO project_folders(id,name,description,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+                .run(id, input.name, input.description, sortOrder, now, now);
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE"))
+                return reply.code(409).send({ error: "Složka s tímto názvem už existuje.", code: "DUPLICATE_FOLDER" });
+            throw error;
+        }
+        audit(db, "folder.created", user.id, null, { id, name: input.name });
+        return reply.code(201).send({ folder: listProjectFolders(db).find((folder) => folder.id === id) });
+    });
+    app.patch("/api/folders/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({
+            name: z.string().trim().min(1).max(120).optional(),
+            description: z.string().max(500).optional(),
+            sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+        }).strict().parse(request.body);
+        const fields = [];
+        const values = [];
+        const columns = { name: "name", description: "description", sortOrder: "sort_order" };
+        for (const [key, value] of Object.entries(input)) {
+            fields.push(`${columns[key]}=?`);
+            values.push(value);
+        }
+        if (!fields.length)
+            return reply.code(400).send({ error: "Není co změnit.", code: "EMPTY_PATCH" });
+        fields.push("updated_at=?");
+        values.push(new Date().toISOString(), id);
+        try {
+            const result = db.prepare(`UPDATE project_folders SET ${fields.join(",")} WHERE id=?`).run(...values);
+            if (!result.changes)
+                return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
+        }
+        catch (error) {
+            if (error.message.includes("UNIQUE"))
+                return reply.code(409).send({ error: "Složka s tímto názvem už existuje.", code: "DUPLICATE_FOLDER" });
+            throw error;
+        }
+        audit(db, "folder.updated", user.id, null, { id, fields: Object.keys(input) });
+        return { folder: listProjectFolders(db).find((folder) => folder.id === id) };
+    });
+    app.delete("/api/folders/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const folder = db.prepare("SELECT name FROM project_folders WHERE id=?").get(id);
+        if (!folder)
+            return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
+        const moved = Number(db.prepare("SELECT COUNT(*) AS count FROM miniservers WHERE folder_id=?").get(id).count);
+        transaction(db, () => {
+            db.prepare("UPDATE miniservers SET folder_id=NULL,updated_at=? WHERE folder_id=?").run(new Date().toISOString(), id);
+            db.prepare("DELETE FROM project_folders WHERE id=?").run(id);
+        });
+        audit(db, "folder.deleted", user.id, null, { id, name: folder.name, unassignedServers: moved });
+        return { ok: true, unassignedServers: moved };
     });
     app.get("/api/miniservers/:serial", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -75,12 +150,16 @@ export async function registerApi(app, db, jobs) {
             password: z.string().max(1024).optional(),
             targetFirmware: z.string().regex(/^\d+\.\d+\.\d+\.\d+$/),
             notes: z.string().max(5000).default(""),
+            folderId: z.string().uuid().nullable().optional(),
         })
             .parse(request.body);
+        if (input.folderId && !db.prepare("SELECT 1 AS ok FROM project_folders WHERE id=?").get(input.folderId)) {
+            return reply.code(404).send({ error: "Vybraná složka neexistuje.", code: "FOLDER_NOT_FOUND" });
+        }
         const now = new Date().toISOString();
         try {
-            db.prepare(`INSERT INTO miniservers(serial,type,project,registered,credential_source,access_policy,target_firmware,notes,created_at,updated_at)
-         VALUES(?,?,?,?,'manual','managed',?,?,?,?)`).run(input.serial, input.type, input.project, input.registered, input.targetFirmware, input.notes, now, now);
+            db.prepare(`INSERT INTO miniservers(serial,type,project,registered,credential_source,access_policy,target_firmware,notes,folder_id,created_at,updated_at)
+         VALUES(?,?,?,?,'manual','managed',?,?,?,?,?)`).run(input.serial, input.type, input.project, input.registered, input.targetFirmware, input.notes, input.folderId ?? null, now, now);
         }
         catch (error) {
             if (error.message.includes("UNIQUE")) {
@@ -109,6 +188,8 @@ export async function registerApi(app, db, jobs) {
             excluded: z.boolean().optional(),
             manualOnly: z.boolean().optional(),
             notes: z.string().max(5000).optional(),
+            folderId: z.string().uuid().nullable().optional(),
+            gatewayRole: z.enum(["automatic", "standalone", "gateway", "client"]).optional(),
             gatewaySerial: serialSchema.nullable().optional(),
             localUrl: z.string().url().nullable().optional(),
         })
@@ -116,6 +197,18 @@ export async function registerApi(app, db, jobs) {
             .parse(request.body);
         if (!getMiniserver(db, serial))
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        if (input.folderId && !db.prepare("SELECT 1 AS ok FROM project_folders WHERE id=?").get(input.folderId)) {
+            return reply.code(404).send({ error: "Vybraná složka neexistuje.", code: "FOLDER_NOT_FOUND" });
+        }
+        if (input.gatewaySerial) {
+            if (input.gatewaySerial === serial)
+                return reply.code(400).send({ error: "Miniserver nemůže být vlastní Gateway.", code: "INVALID_GATEWAY" });
+            const gateway = getMiniserver(db, input.gatewaySerial);
+            if (!gateway)
+                return reply.code(404).send({ error: "Vybraná Gateway neexistuje.", code: "GATEWAY_NOT_FOUND" });
+            if (gateway.gatewayRole !== "gateway")
+                return reply.code(409).send({ error: "Vybraný Miniserver nemá roli Gateway.", code: "INVALID_GATEWAY_ROLE" });
+        }
         const fields = [];
         const values = [];
         const columns = {
@@ -128,12 +221,25 @@ export async function registerApi(app, db, jobs) {
             excluded: "excluded",
             manualOnly: "manual_only",
             notes: "notes",
-            gatewaySerial: "gateway_serial",
+            folderId: "folder_id",
             localUrl: "local_url",
         };
-        for (const [key, value] of Object.entries(input)) {
+        for (const [key, value] of Object.entries(input).filter(([key]) => !["gatewayRole", "gatewaySerial"].includes(key))) {
             fields.push(`${columns[key]}=?`);
             values.push(typeof value === "boolean" ? (value ? 1 : 0) : value);
+        }
+        if (input.gatewayRole) {
+            if (input.gatewayRole === "automatic") {
+                fields.push("gateway_role=COALESCE(gateway_detected_role,'unknown')", "gateway_role_source=CASE WHEN gateway_detected_role IS NULL THEN 'unknown' ELSE 'webservice' END", "gateway_serial=NULL");
+            }
+            else {
+                fields.push("gateway_role=?", "gateway_role_source='manual'", "gateway_serial=?");
+                values.push(input.gatewayRole, input.gatewayRole === "client" ? input.gatewaySerial ?? null : null);
+            }
+        }
+        else if (input.gatewaySerial !== undefined) {
+            fields.push("gateway_role='client'", "gateway_role_source='manual'", "gateway_serial=?");
+            values.push(input.gatewaySerial);
         }
         if (fields.length) {
             fields.push("updated_at=?");
@@ -184,6 +290,13 @@ export async function registerApi(app, db, jobs) {
             return;
         const existing = jobs.list(200).find((job) => job.kind === "bulk_check" && ["queued", "running"].includes(job.state));
         return reply.code(202).send({ job: existing ?? jobs.enqueue("bulk_check", null, user.id, { manual: true }) });
+    });
+    app.post("/api/fleet/discover-topology", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const existing = jobs.list(200).find((job) => job.kind === "topology_discovery" && ["queued", "running"].includes(job.state));
+        return reply.code(202).send({ job: existing ?? jobs.enqueue("topology_discovery", null, user.id, { manual: true }) });
     });
     app.post("/api/miniservers/:serial/update", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);

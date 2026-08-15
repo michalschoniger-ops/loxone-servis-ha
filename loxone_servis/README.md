@@ -1,3 +1,5 @@
 # Loxone Servis
 
-Servisní konzole EVORA Smart pro Loxone Miniservery. HA Práce slouží jako jediný hlavní server; HA Domov lze nastavit jako bezstavového HTTPS klienta pomocí `canonical_base_url`. Tento instalační repozitář neobsahuje žádná zákaznická data ani klíče.
+Bezpečná servisní konzole EVORA Smart pro kontrolu firmware, dostupnosti a diagnostiky Loxone Miniserverů.
+
+Po instalaci aplikace otevřete její webové rozhraní ze sidebaru Home Assistantu. Citlivá data jsou uložena pouze v trvalém adresáři `/data` dané instalace a nejsou součástí obrazu ani GitHub repozitáře.

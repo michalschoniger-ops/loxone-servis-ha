@@ -49,7 +49,7 @@ export async function registerEncryptedBackup(app, db) {
             const stamp = createdAt.replace(/[:.]/g, "-");
             reply.header("Cache-Control", "no-store, max-age=0");
             reply.header("Content-Type", "application/octet-stream");
-            reply.header("Content-Disposition", `attachment; filename=\"loxone-servis-${stamp}.lxbak\"`);
+            reply.header("Content-Disposition", `attachment; filename="loxone-servis-${stamp}.lxbak"`);
             return reply.send(encrypted);
         }
         finally {
@@ -58,4 +58,3 @@ export async function registerEncryptedBackup(app, db) {
         }
     });
 }
-//# sourceMappingURL=backup.js.map

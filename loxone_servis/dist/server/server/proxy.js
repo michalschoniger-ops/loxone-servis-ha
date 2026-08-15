@@ -75,4 +75,3 @@ export async function registerCanonicalProxy(app) {
     app.all("/", forward);
     app.all("/*", forward);
 }
-//# sourceMappingURL=proxy.js.map

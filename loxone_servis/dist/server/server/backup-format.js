@@ -39,4 +39,3 @@ export function decryptBackupPayload(input, key) {
     decipher.setAuthTag(Buffer.from(parsed.tag, "base64"));
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
-//# sourceMappingURL=backup-format.js.map

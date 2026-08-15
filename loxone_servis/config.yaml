@@ -1,5 +1,5 @@
 name: Loxone Servis
-version: "0.4.6"
+version: "0.4.7"
 slug: loxone_fleet
 description: Bezpečný servisní přehled firemních Loxone Miniserverů.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha

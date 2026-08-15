@@ -31,4 +31,3 @@ export function rewriteClientLocation(value, canonicalBaseUrl) {
         return value;
     }
 }
-//# sourceMappingURL=proxy-utils.js.map

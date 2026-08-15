@@ -37,4 +37,3 @@ export function registerApplicationErrorHandler(app) {
         return reply.code(500).send({ error: "Vnitřní chyba aplikace.", code: "INTERNAL_ERROR", requestId });
     });
 }
-//# sourceMappingURL=error-handler.js.map

@@ -476,4 +476,3 @@ export class JobQueue {
         audit(this.db, "fleet.topology_discovered", job.actor_user_id, null, { ...result, jobId: job.id });
     }
 }
-//# sourceMappingURL=jobs.js.map

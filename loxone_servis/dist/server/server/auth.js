@@ -256,4 +256,3 @@ export function consumeConfirmation(db, user, confirmationId, action, serial, pa
     db.prepare("UPDATE action_confirmations SET consumed_at=? WHERE id=? AND consumed_at IS NULL").run(new Date().toISOString(), confirmationId);
     return true;
 }
-//# sourceMappingURL=auth.js.map

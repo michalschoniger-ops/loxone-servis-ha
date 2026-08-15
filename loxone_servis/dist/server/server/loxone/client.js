@@ -55,14 +55,31 @@ function normalizeOfficialUrl(value) {
     parsed.hash = "";
     return { baseUrl: parsed.toString().replace(/\/$/, ""), source: "connect", websocketUrl };
 }
-function normalizeLocalUrl(value) {
-    const parsed = new URL(value);
-    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
-        throw new LoxoneError("invalid_response", "Lokální adresa musí být bezpečná HTTP(S) URL bez hesla.");
+export function isSafeLocalMiniserverUrl(value) {
+    try {
+        const parsed = new URL(value);
+        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash)
+            return false;
+        if (parsed.pathname !== "/")
+            return false;
+        const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+        if (isIP(hostname) === 4) {
+            const octets = hostname.split(".").map(Number);
+            return octets[0] === 10
+                || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+                || (octets[0] === 192 && octets[1] === 168);
+        }
+        return isIP(hostname) === 6 && (hostname.startsWith("fc") || hostname.startsWith("fd"));
     }
-    parsed.pathname = parsed.pathname.replace(/\/$/, "");
-    parsed.search = "";
-    parsed.hash = "";
+    catch {
+        return false;
+    }
+}
+export function normalizeLocalUrl(value) {
+    const parsed = new URL(value);
+    if (!isSafeLocalMiniserverUrl(value)) {
+        throw new LoxoneError("invalid_response", "Lokální adresa musí být HTTP(S) URL s privátní LAN IP bez cesty, hesla nebo parametrů.");
+    }
     return { baseUrl: parsed.toString().replace(/\/$/, ""), source: "local", websocketUrl: null };
 }
 export function cachedConnection(row, now = Date.now()) {
@@ -189,7 +206,7 @@ export function extractLoxoneValue(body) {
         if (code === 401 || code === 403)
             throw new LoxoneError("no_access", "Miniserver odmítl přihlášení.", code);
         const value = parsed.LL?.value ?? parsed;
-        if (typeof value === "string" && /^[\[{]/.test(value.trim())) {
+        if (typeof value === "string" && ["[", "{"].some((prefix) => value.trim().startsWith(prefix))) {
             try {
                 return JSON.parse(value);
             }
@@ -658,4 +675,3 @@ export async function obtainJwt(db, serial, permission = 2) {
 export function parseXmlDocument(xml) {
     return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" }).parse(xml);
 }
-//# sourceMappingURL=client.js.map

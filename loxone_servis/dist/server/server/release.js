@@ -13,12 +13,23 @@ export function normalizeFirmwareVersion(value) {
     return parts.map((part) => String(Number(part))).join(".");
 }
 function secureDownloadUrl(value) {
-    const url = text(value);
-    if (!url || !/^https?:\/\//i.test(url))
+    const rawUrl = text(value);
+    if (!rawUrl)
         return null;
-    if (/^http:\/\/updatefiles\.loxone\.com\//i.test(url))
-        return url.replace(/^http:/i, "https:");
-    return url;
+    try {
+        const url = new URL(rawUrl);
+        if (url.protocol === "http:" && url.hostname.toLowerCase() === "updatefiles.loxone.com")
+            url.protocol = "https:";
+        const hostname = url.hostname.toLowerCase();
+        if (url.protocol !== "https:" || (hostname !== "loxone.com" && !hostname.endsWith(".loxone.com")))
+            return null;
+        if (url.username || url.password)
+            return null;
+        return url.toString();
+    }
+    catch {
+        return null;
+    }
 }
 function parseNamedRelease(channel, value) {
     const release = Array.isArray(value) ? value[0] : value;
@@ -77,4 +88,3 @@ export async function refreshOfficialReleases(db) {
         throw error;
     }
 }
-//# sourceMappingURL=release.js.map

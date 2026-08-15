@@ -23,4 +23,3 @@ export function firmwareRelation(current, target) {
         return "current";
     return result > 0 ? "newer" : "older";
 }
-//# sourceMappingURL=version.js.map

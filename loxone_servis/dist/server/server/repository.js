@@ -53,11 +53,12 @@ export function getMiniserver(db, serial) {
 }
 export function listProjectFolders(db) {
     return db.prepare(`
-    SELECT f.id,f.name,f.description,f.sort_order,f.created_at,f.updated_at,
+    SELECT f.id,f.name,f.description,f.parent_id,p.name AS parent_name,f.sort_order,f.created_at,f.updated_at,
       COUNT(m.serial) AS server_count,
       SUM(CASE WHEN m.gateway_role='gateway' THEN 1 ELSE 0 END) AS gateway_count,
       SUM(CASE WHEN m.gateway_role='client' THEN 1 ELSE 0 END) AS client_count
     FROM project_folders f
+    LEFT JOIN project_folders p ON p.id=f.parent_id
     LEFT JOIN miniservers m ON m.folder_id=f.id
     GROUP BY f.id
     ORDER BY f.sort_order,f.name COLLATE NOCASE
@@ -65,6 +66,8 @@ export function listProjectFolders(db) {
         id: row.id,
         name: row.name,
         description: row.description,
+        parentId: row.parent_id,
+        parentName: row.parent_name,
         sortOrder: row.sort_order,
         serverCount: Number(row.server_count ?? 0),
         gatewayCount: Number(row.gateway_count ?? 0),
@@ -141,4 +144,3 @@ export function fleetOverview(db) {
         nextFullCheckAt,
     };
 }
-//# sourceMappingURL=repository.js.map

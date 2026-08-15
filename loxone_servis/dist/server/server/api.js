@@ -5,9 +5,10 @@ import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, saveCredentials } from "./repository.js";
-import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, } from "./loxone/client.js";
+import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
+import { wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 function confirmationHeader(headers) {
     const value = headers["x-action-confirmation"];
@@ -46,20 +47,27 @@ export async function registerApi(app, db, jobs) {
         const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
-        const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(500).default("") }).parse(request.body);
+        const input = z.object({
+            name: z.string().trim().min(1).max(120),
+            description: z.string().max(500).default(""),
+            parentId: z.string().uuid().nullable().default(null),
+        }).strict().parse(request.body);
+        if (input.parentId && !db.prepare("SELECT 1 AS ok FROM project_folders WHERE id=?").get(input.parentId)) {
+            return reply.code(404).send({ error: "Nadřazená složka nebyla nalezena.", code: "PARENT_FOLDER_NOT_FOUND" });
+        }
         const now = new Date().toISOString();
         const id = randomUUID();
         const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order),-10)+10 AS value FROM project_folders").get().value);
         try {
-            db.prepare("INSERT INTO project_folders(id,name,description,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?)")
-                .run(id, input.name, input.description, sortOrder, now, now);
+            db.prepare("INSERT INTO project_folders(id,name,description,parent_id,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
+                .run(id, input.name, input.description, input.parentId, sortOrder, now, now);
         }
         catch (error) {
             if (error.message.includes("UNIQUE"))
                 return reply.code(409).send({ error: "Složka s tímto názvem už existuje.", code: "DUPLICATE_FOLDER" });
             throw error;
         }
-        audit(db, "folder.created", user.id, null, { id, name: input.name });
+        audit(db, "folder.created", user.id, null, { id, name: input.name, parentId: input.parentId });
         return reply.code(201).send({ folder: listProjectFolders(db).find((folder) => folder.id === id) });
     });
     app.patch("/api/folders/:id", async (request, reply) => {
@@ -70,11 +78,21 @@ export async function registerApi(app, db, jobs) {
         const input = z.object({
             name: z.string().trim().min(1).max(120).optional(),
             description: z.string().max(500).optional(),
+            parentId: z.string().uuid().nullable().optional(),
             sortOrder: z.number().int().min(0).max(1_000_000).optional(),
         }).strict().parse(request.body);
+        if (input.parentId !== undefined) {
+            const folders = listProjectFolders(db);
+            if (input.parentId && !folders.some((folder) => folder.id === input.parentId)) {
+                return reply.code(404).send({ error: "Nadřazená složka nebyla nalezena.", code: "PARENT_FOLDER_NOT_FOUND" });
+            }
+            if (wouldCreateProjectFolderCycle(folders, id, input.parentId)) {
+                return reply.code(409).send({ error: "Složku nelze vložit do sebe ani do vlastní podsložky.", code: "FOLDER_CYCLE" });
+            }
+        }
         const fields = [];
         const values = [];
-        const columns = { name: "name", description: "description", sortOrder: "sort_order" };
+        const columns = { name: "name", description: "description", parentId: "parent_id", sortOrder: "sort_order" };
         for (const [key, value] of Object.entries(input)) {
             fields.push(`${columns[key]}=?`);
             values.push(value);
@@ -131,16 +149,18 @@ export async function registerApi(app, db, jobs) {
         if (!user)
             return;
         const id = z.string().uuid().parse(request.params.id);
-        const folder = db.prepare("SELECT name FROM project_folders WHERE id=?").get(id);
+        const folder = db.prepare("SELECT name,parent_id AS parentId FROM project_folders WHERE id=?").get(id);
         if (!folder)
             return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
         const moved = Number(db.prepare("SELECT COUNT(*) AS count FROM miniservers WHERE folder_id=?").get(id).count);
+        const promotedChildren = Number(db.prepare("SELECT COUNT(*) AS count FROM project_folders WHERE parent_id=?").get(id).count);
         transaction(db, () => {
             db.prepare("UPDATE miniservers SET folder_id=NULL,updated_at=? WHERE folder_id=?").run(new Date().toISOString(), id);
+            db.prepare("UPDATE project_folders SET parent_id=?,updated_at=? WHERE parent_id=?").run(folder.parentId, new Date().toISOString(), id);
             db.prepare("DELETE FROM project_folders WHERE id=?").run(id);
         });
-        audit(db, "folder.deleted", user.id, null, { id, name: folder.name, unassignedServers: moved });
-        return { ok: true, unassignedServers: moved };
+        audit(db, "folder.deleted", user.id, null, { id, name: folder.name, unassignedServers: moved, promotedChildFolders: promotedChildren });
+        return { ok: true, unassignedServers: moved, promotedChildFolders: promotedChildren };
     });
     app.get("/api/miniservers/:serial", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -222,7 +242,7 @@ export async function registerApi(app, db, jobs) {
             folderId: z.string().uuid().nullable().optional(),
             gatewayRole: z.enum(["automatic", "standalone", "gateway", "client"]).optional(),
             gatewaySerial: serialSchema.nullable().optional(),
-            localUrl: z.string().url().nullable().optional(),
+            localUrl: z.string().url().refine(isSafeLocalMiniserverUrl, "Povolená je jen privátní LAN IP bez cesty a parametrů.").nullable().optional(),
         })
             .strict()
             .parse(request.body);
@@ -582,7 +602,16 @@ export async function registerApi(app, db, jobs) {
         return {
             items: db
                 .prepare("SELECT id,email,role,immutable,active,mfa_enabled AS mfaEnabled,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY email")
-                .all(),
+                .all()
+                .map((row) => {
+                const user = row;
+                return {
+                    ...user,
+                    immutable: user.immutable === 1,
+                    active: user.active === 1,
+                    mfaEnabled: user.mfaEnabled === 1,
+                };
+            }),
         };
     });
     app.post("/api/users", async (request, reply) => {
@@ -689,4 +718,3 @@ export async function registerApi(app, db, jobs) {
         return { ok: true };
     });
 }
-//# sourceMappingURL=api.js.map

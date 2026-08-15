@@ -12,4 +12,3 @@ export function replaceProjectFolderMembers(db, folderId, serials, updatedAt = n
         return Number(result.changes);
     });
 }
-//# sourceMappingURL=folder-members.js.map

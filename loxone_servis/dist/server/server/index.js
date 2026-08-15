@@ -14,6 +14,7 @@ import { JobQueue } from "./jobs.js";
 import { registerEncryptedBackup } from "./backup.js";
 import { registerCanonicalProxy } from "./proxy.js";
 import { registerApplicationErrorHandler } from "./error-handler.js";
+import { cacheControlForStaticPath, isSpaNavigationRequest } from "./static-assets.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -48,11 +49,11 @@ await app.register(helmet, {
         directives: {
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
+            styleSrc: ["'self'"],
             imgSrc: ["'self'", "data:"],
             fontSrc: ["'self'", "data:"],
             connectSrc: ["'self'"],
-            frameAncestors: ["'self'", "http://homeassistant.local:8123", "https:"],
+            frameAncestors: ["'self'"],
             baseUri: ["'self'"],
             formAction: ["'self'"],
             objectSrc: ["'none'"],
@@ -93,14 +94,19 @@ else {
             wildcard: false,
             cacheControl: false,
             immutable: false,
-            setHeaders(reply) {
-                reply.header("Cache-Control", "no-store, max-age=0");
-                reply.header("Pragma", "no-cache");
+            setHeaders(reply, path) {
+                const cacheControl = cacheControlForStaticPath(path);
+                reply.header("Cache-Control", cacheControl);
+                if (cacheControl === "no-cache")
+                    reply.header("Pragma", "no-cache");
             },
         });
         app.setNotFoundHandler(async (request, reply) => {
             if (request.url.startsWith("/api/"))
                 return reply.code(404).send({ error: "API cesta neexistuje.", code: "NOT_FOUND" });
+            if (!isSpaNavigationRequest(request.url, request.headers.accept)) {
+                return reply.code(404).send({ error: "Soubor nebyl nalezen.", code: "NOT_FOUND" });
+            }
             reply.header("Cache-Control", "no-cache");
             return reply.sendFile("index.html");
         });
@@ -118,4 +124,3 @@ async function shutdown(signal) {
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
-//# sourceMappingURL=index.js.map

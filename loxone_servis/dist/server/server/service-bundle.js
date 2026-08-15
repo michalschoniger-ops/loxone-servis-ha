@@ -12,6 +12,60 @@ function anonymize(value, prefix) {
 function json(value) {
     return `${JSON.stringify(value, null, 2)}\n`;
 }
+function replaceKnownIdentifiers(value, replacements) {
+    let result = value;
+    for (const [source, replacement] of Object.entries(replacements)) {
+        if (source)
+            result = result.replaceAll(source, replacement);
+    }
+    return redactSensitiveText(result);
+}
+export function redactServiceBundleSecrets(value) {
+    if (Array.isArray(value))
+        return value.map(redactServiceBundleSecrets);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+            if (/password|secret|token|credential|authorization|jwt/i.test(key))
+                return [key, "[REDACTED]"];
+            if (typeof item === "string" && /_json$/i.test(key)) {
+                try {
+                    return [key, JSON.stringify(redactServiceBundleSecrets(JSON.parse(item)))];
+                }
+                catch {
+                    return [key, redactSensitiveText(item)];
+                }
+            }
+            return [key, redactServiceBundleSecrets(item)];
+        }));
+    }
+    return typeof value === "string" ? redactSensitiveText(value) : value;
+}
+export function anonymizeServiceBundleValue(value, context) {
+    if (Array.isArray(value))
+        return value.map((item) => anonymizeServiceBundleValue(item, context));
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+            if (/password|secret|token|credential|authorization|jwt/i.test(key))
+                return [key, "[REDACTED]"];
+            if (typeof item === "string" && /(?:^|_)(?:ip|address|url|host)(?:_|$)/i.test(key))
+                return [key, "[REDACTED]"];
+            if (typeof item === "string" && /_json$/i.test(key)) {
+                try {
+                    return [key, JSON.stringify(anonymizeServiceBundleValue(JSON.parse(item), context))];
+                }
+                catch {
+                    return [key, replaceKnownIdentifiers(item, context.replacements)];
+                }
+            }
+            if (typeof item === "string" && /(?:^|_)(?:serial|name|project|room|category)(?:_|$)/i.test(key)) {
+                const knownReplacement = context.replacements[item];
+                return [key, knownReplacement ?? anonymize(replaceKnownIdentifiers(item, context.replacements), key.replaceAll("_", "-"))];
+            }
+            return [key, anonymizeServiceBundleValue(item, context)];
+        }));
+    }
+    return typeof value === "string" ? replaceKnownIdentifiers(value, context.replacements) : value;
+}
 export async function createServiceBundle(db, serial, actorUserId, anonymized = true) {
     const server = db
         .prepare(`SELECT serial,type,project,registered,target_firmware,current_firmware,connection_state,last_checked_at,last_error,
@@ -23,7 +77,16 @@ export async function createServiceBundle(db, serial, actorUserId, anonymized = 
     const bundleDirectory = join(config.dataDirectory, "service-bundles");
     mkdirSync(bundleDirectory, { recursive: true, mode: 0o700 });
     const id = randomUUID();
-    const fileName = `loxone-servis-${serial}-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+    const anonymousSerial = anonymize(serial, "miniserver");
+    const anonymousProject = anonymize(String(server.project ?? "project"), "projekt");
+    const redactionContext = {
+        replacements: {
+            [serial]: anonymousSerial,
+            [String(server.project ?? "")]: anonymousProject,
+        },
+    };
+    const fileSerial = anonymized ? anonymousSerial : serial;
+    const fileName = `loxone-servis-${fileSerial}-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
     const filePath = join(bundleDirectory, `${id}.zip`);
     const output = createWriteStream(filePath, { mode: 0o600 });
     const archive = archiver("zip", { zlib: { level: 9 } });
@@ -33,44 +96,39 @@ export async function createServiceBundle(db, serial, actorUserId, anonymized = 
         archive.on("error", reject);
     });
     archive.pipe(output);
-    const safeServer = {
-        ...server,
-        project: anonymized ? anonymize(String(server.project ?? "project"), "projekt") : server.project,
-        notes: anonymized ? "[ANONYMIZED]" : server.notes,
-    };
+    const safeServer = anonymized ? anonymizeServiceBundleValue(server, redactionContext) : redactServiceBundleSecrets(server);
     archive.append(json({
         generatedAt: new Date().toISOString(),
         generator: `EVORA Loxone Servis ${config.appVersion}`,
         anonymized,
         containsCredentials: false,
         containsTokens: false,
+        containsCustomerIdentifiers: !anonymized,
         files: ["miniserver.json", "health.json", "devices.json", "availability.json", "project-changes.json", "def.log"],
     }), { name: "manifest.json" });
     archive.append(json(safeServer), { name: "miniserver.json" });
     const health = db
         .prepare("SELECT * FROM health_snapshots WHERE serial=? ORDER BY checked_at DESC LIMIT 25")
         .all(serial);
-    archive.append(json(health), { name: "health.json" });
+    archive.append(json(anonymized ? anonymizeServiceBundleValue(health, redactionContext) : redactServiceBundleSecrets(health)), { name: "health.json" });
     const devices = db
         .prepare(`SELECT device_serial,parent_serial,name,type,firmware,online,first_offline_at,last_seen_at,system_message,source,updated_at
        FROM device_inventory WHERE serial=? ORDER BY online,name`)
         .all(serial);
-    const safeDevices = devices.map((device) => ({
-        ...device,
-        name: anonymized ? anonymize(String(device.name ?? device.device_serial), "prvek") : device.name,
-    }));
+    const safeDevices = anonymized ? anonymizeServiceBundleValue(devices, redactionContext) : redactServiceBundleSecrets(devices);
     archive.append(json(safeDevices), { name: "devices.json" });
     const availability = db
         .prepare("SELECT state,error_code,latency_ms,created_at FROM availability_events WHERE serial=? ORDER BY created_at DESC LIMIT 500")
         .all(serial);
-    archive.append(json(availability), { name: "availability.json" });
+    archive.append(json(redactServiceBundleSecrets(availability)), { name: "availability.json" });
     const projectChanges = db
         .prepare(`SELECT change_type,summary,details_json,created_at FROM project_changes WHERE serial=? ORDER BY created_at DESC LIMIT 100`)
         .all(serial);
-    archive.append(json(projectChanges), { name: "project-changes.json" });
+    archive.append(json(anonymized ? anonymizeServiceBundleValue(projectChanges, redactionContext) : redactServiceBundleSecrets(projectChanges)), { name: "project-changes.json" });
     try {
         const definitionLog = await readDefinitionLog(db, serial);
-        archive.append(redactSensitiveText(definitionLog), { name: "def.log" });
+        const safeDefinitionLog = redactSensitiveText(definitionLog);
+        archive.append(anonymized ? replaceKnownIdentifiers(safeDefinitionLog, redactionContext.replacements) : safeDefinitionLog, { name: "def.log" });
     }
     catch (error) {
         archive.append(`Log se nepodařilo načíst: ${error.code ?? "error"}\n`, { name: "def.log.error.txt" });
@@ -111,4 +169,3 @@ export function cleanupServiceBundles(db) {
         db.prepare("DELETE FROM service_bundles WHERE id=?").run(id);
     }
 }
-//# sourceMappingURL=service-bundle.js.map

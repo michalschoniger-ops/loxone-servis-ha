@@ -40,4 +40,3 @@ export async function notifyHomeAssistant(options) {
         return false;
     }
 }
-//# sourceMappingURL=home-assistant.js.map

@@ -243,9 +243,11 @@ function applyMigrations(db) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL COLLATE NOCASE UNIQUE,
       description TEXT NOT NULL DEFAULT '',
+      parent_id TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(parent_id) REFERENCES project_folders(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_miniservers_folder ON miniservers(folder_id);
     CREATE INDEX IF NOT EXISTS idx_miniservers_gateway ON miniservers(gateway_serial);
@@ -457,7 +459,10 @@ function applyMigrations(db) {
       updated_at TEXT NOT NULL
     );
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, new Date().toISOString());
+    // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
+    addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(4, new Date().toISOString());
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();
@@ -511,4 +516,3 @@ export function sqlValues(values) {
 export function databaseLabel() {
     return basename(config.databasePath);
 }
-//# sourceMappingURL=database.js.map

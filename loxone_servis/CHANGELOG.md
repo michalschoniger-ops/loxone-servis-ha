@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.7
+
+- Složky lze vkládat do dalších složek; výběry ukazují úplnou cestu jako `Dolní Morava / Melori` a API brání cyklům.
+- Migrace zachová všechna dosavadní přiřazení Miniserverů; při smazání rodiče se podsložky bezpečně posunou o úroveň výš.
+- Safari používá pro textová pole i výběry shodnou výšku 44 px a nativní výběr už nerozbíjí dvousloupcový formulář.
+- Otevření Loxone App probíhá přímo z klepnutí bez prázdného okna; citlivé přístupy se dál načítají jen na vyžádání.
+- UI respektuje oprávnění rolí a nenabízí divákům či technikům operace, které backend nepovoluje.
+- Lokální URL Miniserveru je omezena na soukromé adresy a odkazy na Loxone Config pouze na oficiální domény Loxone.
+- Anonymizovaný servisní balíček odstraňuje identifikátory i z vnořených dat; statická aktiva mají bezpečnou cache politiku a přísnější CSP.
+- Skrytá karta neprovádí zbytečné 30sekundové obnovování a selhání načtení je v UI zřetelně označeno jako zastaralý stav.
+- Přidána automatická kontrola ESLint a rozšířené testy zabezpečení, hierarchie, rolí a responzivního rozhraní.
+
 ## 0.4.6
 
 - Formulářové dialogy už v Safari a Home Assistant Ingressu nepřetékají vodorovně mimo dostupnou plochu.

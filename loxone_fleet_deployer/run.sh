@@ -8,11 +8,14 @@ EXPECTED_VERSION="0.4.12"
 if [ "${EVORA_DEPLOY_TEST_MODE:-0}" = "1" ]; then
   : "${EVORA_TEST_ADDONS_ROOT:?Chybí testovací adresář add-onů.}"
   : "${EVORA_TEST_PAYLOAD_ARCHIVE:?Chybí testovací payload.}"
+  : "${EVORA_TEST_DATA_ROOT:?Chybí testovací datový adresář.}"
   ADDONS_ROOT="$EVORA_TEST_ADDONS_ROOT"
   PAYLOAD_ARCHIVE="$EVORA_TEST_PAYLOAD_ARCHIVE"
+  DATA_ROOT="$EVORA_TEST_DATA_ROOT"
 else
   ADDONS_ROOT="/addons"
   PAYLOAD_ARCHIVE="/opt/evora/payload.tar.gz"
+  DATA_ROOT="/data"
 fi
 
 log() {
@@ -25,7 +28,63 @@ fail() {
 }
 
 [ -d "$ADDONS_ROOT" ] || fail "Adresář /addons není připojen."
+[ -d "$DATA_ROOT" ] || fail "Datový adresář helperu není připojen."
 [ -f "$PAYLOAD_ARCHIVE" ] || fail "Chybí instalační payload."
+
+OPERATION="deploy"
+if [ -f "$DATA_ROOT/options.json" ]; then
+  CONFIGURED_OPERATION="$(sed -n 's/.*"operation"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DATA_ROOT/options.json")"
+  [ -z "$CONFIGURED_OPERATION" ] || OPERATION="$CONFIGURED_OPERATION"
+fi
+case "$OPERATION" in
+  deploy|rollback) ;;
+  *) fail "Nepovolená operace: $OPERATION." ;;
+esac
+
+if [ "$OPERATION" = "rollback" ]; then
+  [ -f "$DATA_ROOT/last-target-name" ] || fail "Chybí identifikátor posledního cíle."
+  [ -f "$DATA_ROOT/last-backup-dir" ] || fail "Chybí cesta poslední zálohy."
+  TARGET_NAME="$(sed -n '1p' "$DATA_ROOT/last-target-name")"
+  BACKUP_DIR="$(sed -n '1p' "$DATA_ROOT/last-backup-dir")"
+  case "$TARGET_NAME" in
+    ""|*/*|.*) fail "Neplatný název cíle pro rollback." ;;
+  esac
+  case "$BACKUP_DIR" in
+    "$ADDONS_ROOT/.evora-smart-hub-rollback/$TARGET_NAME"-*) ;;
+    *) fail "Neplatná cesta zálohy pro rollback." ;;
+  esac
+  TARGET_DIR="$ADDONS_ROOT/$TARGET_NAME"
+  ORIGINAL_DIR="$BACKUP_DIR/original"
+  [ -d "$TARGET_DIR" ] || fail "Aktuální cílový adresář neexistuje."
+  [ -d "$ORIGINAL_DIR" ] || fail "Původní zdroj pro rollback neexistuje."
+  [ ! -L "$TARGET_DIR" ] || fail "Aktuální cílový adresář je symbolický odkaz."
+  [ ! -L "$ORIGINAL_DIR" ] || fail "Původní zdroj je symbolický odkaz."
+  grep -Eq '^slug:[[:space:]]*"?loxone_fleet"?[[:space:]]*$' "$TARGET_DIR/config.yaml" || fail "Aktuální cíl nemá očekávaný slug."
+  grep -Eq '^slug:[[:space:]]*"?loxone_fleet"?[[:space:]]*$' "$ORIGINAL_DIR/config.yaml" || fail "Záloha nemá očekávaný slug."
+  CURRENT_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$TARGET_DIR/config.yaml")"
+  ORIGINAL_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ORIGINAL_DIR/config.yaml")"
+  [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ] || fail "Rollback odmítnut: aktivní zdroj není ${EXPECTED_VERSION}."
+  case "$ORIGINAL_VERSION" in
+    0.4.8|0.4.9|0.4.10|0.4.11|0.4.12) ;;
+    *) fail "Rollback odmítnut: neočekávaná původní verze $ORIGINAL_VERSION." ;;
+  esac
+  TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+  FAILED_ROOT="$ADDONS_ROOT/.evora-failed-deployment"
+  FAILED_DIR="$FAILED_ROOT/${TARGET_NAME}-${CURRENT_VERSION}-${TIMESTAMP}"
+  [ ! -e "$FAILED_DIR" ] || fail "Cílová složka neúspěšného zdroje už existuje."
+  mkdir -p "$FAILED_DIR"
+  log "Obnovuji ${TARGET_NAME}: ${CURRENT_VERSION} -> ${ORIGINAL_VERSION}."
+  mv "$TARGET_DIR" "$FAILED_DIR/replaced-source"
+  if ! mv "$ORIGINAL_DIR" "$TARGET_DIR"; then
+    mv "$FAILED_DIR/replaced-source" "$TARGET_DIR"
+    fail "Původní zdroj nešel obnovit; nový zdroj byl vrácen na místo."
+  fi
+  printf '%s\n' "rollback" > "$DATA_ROOT/last-result"
+  printf '%s\n' "$ORIGINAL_VERSION" > "$DATA_ROOT/last-restored-version"
+  log "HOTOVO: zdroj ${ORIGINAL_VERSION} byl obnoven."
+  log "Nahrazený zdroj zůstal v: $FAILED_DIR/replaced-source"
+  exit 0
+fi
 
 ACTUAL_SHA256="$(sha256sum "$PAYLOAD_ARCHIVE" | awk '{print $1}')"
 [ "$ACTUAL_SHA256" = "$PAYLOAD_SHA256" ] || fail "Kontrolní součet payloadu nesouhlasí."
@@ -100,3 +159,6 @@ EOF
 
 log "HOTOVO: zdroj ${EXPECTED_VERSION} je připraven k Supervisor rebuild."
 log "Původní zdroj zůstal v: $BACKUP_DIR/original"
+printf '%s\n' "$TARGET_NAME" > "$DATA_ROOT/last-target-name"
+printf '%s\n' "$BACKUP_DIR" > "$DATA_ROOT/last-backup-dir"
+printf '%s\n' "deploy" > "$DATA_ROOT/last-result"

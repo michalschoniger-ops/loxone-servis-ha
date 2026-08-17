@@ -12,5 +12,7 @@ init: false
 map:
   - type: addons
     read_only: false
-options: {}
-schema: {}
+options:
+  operation: deploy
+schema:
+  operation: str

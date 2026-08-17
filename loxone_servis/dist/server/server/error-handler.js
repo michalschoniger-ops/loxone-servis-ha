@@ -17,6 +17,18 @@ function validationIssues(error) {
         return null;
     return candidate.issues;
 }
+function clientError(error) {
+    if (!error || typeof error !== "object")
+        return null;
+    const candidate = error;
+    if (!Number.isInteger(candidate.statusCode) || Number(candidate.statusCode) < 400 || Number(candidate.statusCode) > 499)
+        return null;
+    const status = Number(candidate.statusCode);
+    if (status === 415 || candidate.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
+        return { status: 415, message: "Typ odeslaných dat není podporován.", code: "UNSUPPORTED_MEDIA_TYPE" };
+    }
+    return { status, message: "Požadavek nelze zpracovat.", code: "BAD_REQUEST" };
+}
 export function registerApplicationErrorHandler(app) {
     app.setErrorHandler(async (error, request, reply) => {
         const requestId = request.id;
@@ -30,8 +42,17 @@ export function registerApplicationErrorHandler(app) {
             });
         }
         if (error instanceof LoxoneError) {
-            const status = error.code === "no_access" ? 403 : error.code === "unsupported" ? 409 : 502;
+            const status = error.code === "no_access" ? 403 : error.code === "unsupported" ? 409 : error.code === "export_busy" ? 429 : 502;
             return reply.code(status).send({ error: error.message, code: error.code, requestId });
+        }
+        const safeClientError = clientError(error);
+        if (safeClientError) {
+            request.log.warn({ err: error }, "client request rejected");
+            return reply.code(safeClientError.status).send({
+                error: safeClientError.message,
+                code: safeClientError.code,
+                requestId,
+            });
         }
         request.log.error({ err: error }, "request failed");
         return reply.code(500).send({ error: "Vnitřní chyba aplikace.", code: "INTERNAL_ERROR", requestId });

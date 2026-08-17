@@ -5,7 +5,8 @@ import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, saveCredentials } from "./repository.js";
-import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readStatisticRaw, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
+import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
+import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
@@ -28,6 +29,16 @@ function parseJson(value) {
     catch {
         return value;
     }
+}
+function sendDownload(reply, exported) {
+    const fileName = exported.fileName.replace(/[^A-Za-z0-9._-]/g, "_");
+    return reply
+        .header("Cache-Control", "no-store, max-age=0")
+        .header("Pragma", "no-cache")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Content-Disposition", `attachment; filename="${fileName}"`)
+        .type(exported.contentType)
+        .send(exported.content);
 }
 export async function registerApi(app, db, jobs) {
     app.get("/api/overview", async (request, reply) => {
@@ -188,8 +199,9 @@ export async function registerApi(app, db, jobs) {
         const id = homeAssistantIdSchema.parse(request.params.id);
         if (!getHomeAssistantInstance(db, id))
             return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
-        const existing = jobs.list(200).find((job) => job.kind === "ha_check" && job.serial === id && ["queued", "running"].includes(job.state));
-        return reply.code(202).send({ job: existing ?? jobs.enqueue("ha_check", id, user.id, { manual: true }) });
+        return reply.code(202).send({
+            job: jobs.enqueueUniqueByPayload("ha_check", "homeAssistantId", id, user.id, { manual: true }),
+        });
     });
     app.post("/api/home-assistant/check", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -506,21 +518,20 @@ export async function registerApi(app, db, jobs) {
         const serial = serialSchema.parse(request.params.serial);
         if (!getMiniserver(db, serial))
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
-        return reply.code(202).send({ job: jobs.enqueue("check", serial, user.id) });
+        const existing = jobs.findActive("bulk_check", null) ?? jobs.findActive("check", serial);
+        return reply.code(202).send({ job: existing ?? jobs.enqueueUnique("check", serial, user.id) });
     });
     app.post("/api/fleet/check", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
-        const existing = jobs.list(200).find((job) => job.kind === "bulk_check" && ["queued", "running"].includes(job.state));
-        return reply.code(202).send({ job: existing ?? jobs.enqueue("bulk_check", null, user.id, { manual: true }) });
+        return reply.code(202).send({ job: jobs.enqueueUnique("bulk_check", null, user.id, { manual: true }) });
     });
     app.post("/api/fleet/discover-topology", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
-        const existing = jobs.list(200).find((job) => job.kind === "topology_discovery" && ["queued", "running"].includes(job.state));
-        return reply.code(202).send({ job: existing ?? jobs.enqueue("topology_discovery", null, user.id, { manual: true }) });
+        return reply.code(202).send({ job: jobs.enqueueUnique("topology_discovery", null, user.id, { manual: true }) });
     });
     app.post("/api/miniservers/:serial/update", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -618,6 +629,114 @@ export async function registerApi(app, db, jobs) {
         reply.header("Cache-Control", "no-store");
         return { log };
     });
+    app.get("/api/miniservers/:serial/exports/manifest", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const manifest = await readExportManifest(db, serial);
+        audit(db, "miniserver.export_manifest_read", user.id, serial, {
+            legacyStatistics: manifest.legacyCount,
+            v2Statistics: manifest.v2Count,
+        });
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return { manifest };
+    });
+    app.get("/api/miniservers/:serial/exports/loxapp3", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readLoxApp3Export(db, serial);
+        audit(db, "miniserver.loxapp3_exported", user.id, serial, { bytes: exported.content.length });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/system-statistics", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readSystemStatisticsExport(db, serial);
+        audit(db, "miniserver.system_statistics_exported", user.id, serial, { bytes: exported.content.length });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/statistics-catalog", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readStatisticsCatalogExport(db, serial);
+        audit(db, "miniserver.statistics_catalog_exported", user.id, serial, { bytes: exported.content.length });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/statistics/legacy/:uuid/:period", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const params = z.object({
+            serial: serialSchema,
+            uuid: z.string().regex(/^[A-Fa-f0-9-]{20,40}$/),
+            period: z.string().regex(/^\d{6}(?:\d{2})?$/),
+        }).parse(request.params);
+        if (!getMiniserver(db, params.serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readLegacyStatisticExport(db, params.serial, params.uuid, params.period);
+        audit(db, "miniserver.legacy_statistics_exported", user.id, params.serial, {
+            controlUuid: params.uuid,
+            period: params.period,
+            bytes: exported.content.length,
+        });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/statistics/v2/:uuid", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const params = z.object({ serial: serialSchema, uuid: z.string().regex(/^[A-Fa-f0-9-]{20,40}$/) }).parse(request.params);
+        const query = z.object({
+            from: z.coerce.number().int().min(0),
+            to: z.coerce.number().int().min(1),
+            dataPointUnit: z.enum(["all", "hour", "day", "month", "year"]),
+            groupId: z.coerce.number().int().min(0),
+            outputName: z.string().trim().min(1).max(200),
+        }).parse(request.query);
+        if (!getMiniserver(db, params.serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readV2StatisticExport(db, params.serial, { controlUuid: params.uuid, ...query });
+        audit(db, "miniserver.v2_statistics_exported", user.id, params.serial, {
+            controlUuid: params.uuid,
+            from: query.from,
+            to: query.to,
+            dataPointUnit: query.dataPointUnit,
+            groupId: query.groupId,
+            outputName: query.outputName,
+            bytes: exported.content.length,
+        });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/current-program", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readCurrentProgramArchive(db, serial);
+        audit(db, "miniserver.current_program_exported", user.id, serial, {
+            fileName: exported.fileName,
+            bytes: exported.content.length,
+            verifiedAgainstLiveLoxApp3: true,
+        });
+        return sendDownload(reply, exported);
+    });
     app.get("/api/miniservers/:serial/controls/:uuid/history", async (request, reply) => {
         if (!requireUser(request, reply))
             return;
@@ -633,14 +752,28 @@ export async function registerApi(app, db, jobs) {
         return { info: await readStatisticInfo(db, serial, params.uuid) };
     });
     app.post("/api/miniservers/:serial/statistics/:uuid/raw", async (request, reply) => {
-        if (!requireUser(request, reply))
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
             return;
         const params = request.params;
         const serial = serialSchema.parse(params.serial);
         const input = z
-            .object({ from: z.number().int(), to: z.number().int(), dataPointUnit: z.number().int().min(1), groupId: z.number().int().min(0), outputName: z.string() })
+            .object({
+            from: z.number().int().min(0),
+            to: z.number().int().min(1),
+            dataPointUnit: z.enum(["all", "hour", "day", "month", "year"]),
+            groupId: z.number().int().min(0),
+            outputName: z.string().trim().min(1).max(200),
+        })
             .parse(request.body);
-        return { values: await readStatisticRaw(db, serial, { controlUuid: params.uuid, ...input }) };
+        const exported = await readV2StatisticExport(db, serial, { controlUuid: params.uuid, ...input });
+        audit(db, "miniserver.v2_statistics_exported", user.id, serial, {
+            controlUuid: params.uuid,
+            ...input,
+            bytes: exported.content.length,
+            compatibilityRoute: true,
+        });
+        return sendDownload(reply, exported);
     });
     app.post("/api/miniservers/:serial/user-audit", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);

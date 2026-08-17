@@ -111,6 +111,7 @@ export function listReleases(db) {
 }
 export function fleetOverview(db) {
     const servers = listMiniservers(db);
+    const availability = connectionAvailabilityCounts(servers);
     const counts = {
         current: 0,
         newer: 0,
@@ -139,10 +140,25 @@ export function fleetOverview(db) {
         : null;
     return {
         total: servers.length,
+        ...availability,
         ...counts,
         updating: servers.filter((server) => !["idle", "done", "failed"].includes(server.updateStatus)).length,
         officialReleases: listReleases(db),
         lastFullCheckAt,
         nextFullCheckAt,
     };
+}
+export function connectionAvailabilityCounts(servers) {
+    let responding = 0;
+    let notResponding = 0;
+    let availabilityUnknown = 0;
+    for (const server of servers) {
+        if (server.connectionState === "online" || server.connectionState === "no_access")
+            responding += 1;
+        else if (server.connectionState === "unavailable" || server.connectionState === "error")
+            notResponding += 1;
+        else
+            availabilityUnknown += 1;
+    }
+    return { responding, notResponding, availabilityUnknown };
 }

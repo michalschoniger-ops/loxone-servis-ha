@@ -49,6 +49,11 @@ export function hashToken(token) {
 export function randomToken(bytes = 32) {
     return randomBytes(bytes).toString("base64url");
 }
+export function sessionCsrfToken(rawSessionToken) {
+    return createHmac("sha256", rawSessionToken)
+        .update("loxone-servis-csrf-v1", "utf8")
+        .digest("base64url");
+}
 export function fingerprint(value) {
     return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
 }

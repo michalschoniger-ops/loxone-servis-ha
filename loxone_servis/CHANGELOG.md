@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.12
+
+- Detail Miniserveru má novou záložku Exporty pro strukturu LoxAPP3, systémové statistiky, katalog statistik a měsíční XML statistiky.
+- Statistiky V2 lze stáhnout v oficiálním binárním raw formátu s výběrem prvku, skupiny, výstupu, období a seskupení.
+- Správce může stáhnout aktuální kompilovaný programový ZIP ze SD karty. Aplikace jej vydá jen po přesném porovnání vloženého LoxAPP3 s právě běžícím projektem a nezaměňuje jej za editovatelný soubor `.Loxone`.
+- Všechny exporty jsou pouze na vyžádání, zapisují se do auditu, mají pevné limity velikosti a v celé centrální instalaci probíhá nejvýše jeden vzdálený export současně.
+- Souběžné požadavky na stejný export se sloučí a omezená fronta brání tomu, aby HA Domov nebo více otevřených prohlížečů zatížilo Remote Connect duplicitními dotazy.
+- Otevření Loxone App na iPhonu už necílí na nadřazený rámec Home Assistantu. Přímé klepnutí naviguje aktivní rámec, takže Safari i HA Companion mohou předat oficiální `loxone://ms` odkaz nainstalované aplikaci.
+
+## 0.4.11
+
+- Opravené přístupy k monitorovaným Home Assistantům používají správné HTTPS Tailscale adresy; dlouhodobé tokeny zůstávají uložené šifrovaně pouze na centrálním HA Práce.
+- Individuální kontrola Home Assistantu už neukládá jeho UUID do vazby určené pro sériová čísla Miniserverů, takže neselhává chybou databázového cizího klíče.
+- Potvrzené smazání Home Assistantu posílá platný JSON požadavek; server už chybu nepodporovaného typu dat nevydává za vnitřní selhání aplikace.
+- Bezpečnostní CSRF token je stabilní v rámci jedné přihlášené relace, takže otevření aplikace ve druhé kartě nezneplatní formulář v první kartě.
+- Pokud klient přesto narazí na zastaralý CSRF token po aktualizaci, bezpečně jej jednou obnoví a původní změnu jednou zopakuje bez duplicitních zápisů.
+
+## 0.4.10
+
+- Po restartu čekají automatická hromadná kontrola i automatické opakování chyb celý nastavený interval. Restart tak nemůže okamžitě spustit vlnu dotazů na Remote Connect; ruční kontrola jednoho Miniserveru zůstává dostupná.
+
+- Opraveno kritické zahlcování Remote Connect: pravidelná kontrola nejprve používá naposledy funkční dynamickou trasu a resolver zavolá pouze po skutečném selhání této trasy.
+- Resolverové požadavky jsou globálně řazené nejvýše po jednom za 10 sekund, souběžné dotazy na stejné SN se sloučí a odpověď HTTP 429 aktivuje nejméně 30minutovou pojistku bez dalších pokusů.
+- HA Práce je jediný vykonavatel kontrol LOXONE: HA Domov zůstává bezstavový klient bez vlastního plánovače a všechny požadavky z klienta i webu se na centrálním serveru sloučí podle SN nebo hromadné úlohy.
+- Ověřování probíhající aktualizace kontroluje firmware nejvýše jednou za 2 minuty; automatické denní procházení topologie bylo zrušeno a zůstává jen jako vědomě spuštěná servisní akce.
+- Odkaz „Otevřít a přihlásit“ už nevkládá do Loxone App zastaralý dynamický Remote Connect port; stabilní CloudDNS adresa podle SN vyřeší aktuální trasu až při otevření.
+- Přehled LOXONE nově samostatně ukazuje počet Miniserverů, které odpovídají, které potvrzeně neodpovídají a kolik jich ještě nebylo ověřeno.
+- Odpověď s odmítnutým přihlášením se správně počítá jako síťově odpovídající Miniserver, ale zůstává označená „Bez přístupu“.
+
 ## 0.4.9
 
 - Aplikace se nově jmenuje Evora Smart Hub a používá diagonálně spojenou identitu LOXONE a Home Assistant.

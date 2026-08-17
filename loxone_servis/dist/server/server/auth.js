@@ -3,7 +3,7 @@ import { z } from "zod";
 import * as OTPAuth from "otpauth";
 import { config } from "./config.js";
 import { audit } from "./database.js";
-import { decryptSecret, encryptSecret, hashPassword, hashToken, randomToken, verifyPassword } from "./crypto.js";
+import { decryptSecret, encryptSecret, hashPassword, hashToken, randomToken, sessionCsrfToken, verifyPassword, } from "./crypto.js";
 const SESSION_COOKIE = "loxone_servis_session";
 const SESSION_HOURS = 12;
 function stableJson(value) {
@@ -133,7 +133,7 @@ export async function registerAuth(app, db) {
         }
         db.prepare("DELETE FROM login_attempts WHERE email=?").run(email);
         const rawToken = randomToken(36);
-        const csrf = randomToken(24);
+        const csrf = sessionCsrfToken(rawToken);
         const now = new Date();
         const expires = new Date(now.getTime() + SESSION_HOURS * 60 * 60_000);
         db.prepare(`INSERT INTO sessions(token_hash,user_id,expires_at,created_at,last_seen_at,csrf_hash,ip_hash,user_agent_hash)
@@ -153,8 +153,16 @@ export async function registerAuth(app, db) {
         const user = requireUser(request, reply);
         if (!user)
             return;
-        const csrf = randomToken(24);
-        db.prepare("UPDATE sessions SET csrf_hash=? WHERE token_hash=?").run(hashToken(csrf), request.sessionTokenHash);
+        const rawToken = request.cookies[SESSION_COOKIE];
+        if (!rawToken)
+            return reply.code(401).send({ error: "Přihlášení vypršelo.", code: "AUTH_REQUIRED" });
+        // The token is stable for the lifetime of one authenticated session. This
+        // prevents one browser tab from invalidating forms already open in another.
+        const csrf = sessionCsrfToken(rawToken);
+        const csrfHash = hashToken(csrf);
+        if (request.csrfToken !== csrfHash) {
+            db.prepare("UPDATE sessions SET csrf_hash=? WHERE token_hash=?").run(csrfHash, request.sessionTokenHash);
+        }
         return { user, csrfToken: csrf, appVersion: config.appVersion };
     });
     app.post("/api/auth/logout", async (request, reply) => {

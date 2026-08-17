@@ -6,6 +6,16 @@ import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
 import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } from "./home-assistant.js";
 import { stabilizeAvailability } from "./availability.js";
+export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
+export function firmwarePollDue(lastPollAt, now = Date.now()) {
+    if (!lastPollAt)
+        return true;
+    const parsed = Date.parse(lastPollAt);
+    return !Number.isFinite(parsed) || now - parsed >= FIRMWARE_POLL_INTERVAL_MS;
+}
+export function automaticFleetChecksAllowed(startedAt, now = Date.now(), intervalMs = config.fullCheckIntervalMinutes * 60_000) {
+    return now - startedAt >= intervalMs;
+}
 function mapJob(row) {
     return {
         id: row.id,
@@ -76,6 +86,7 @@ export class JobQueue {
     running = 0;
     timer = null;
     ticking = false;
+    startedAt = Date.now();
     constructor(db) {
         this.db = db;
         db.prepare("UPDATE action_jobs SET state='queued',message='Obnoveno po restartu',started_at=NULL WHERE state='running'").run();
@@ -113,6 +124,25 @@ export class JobQueue {
            ORDER BY j.created_at DESC LIMIT ?`)
             .all(Math.max(1, Math.min(500, limit))).map(mapJob);
     }
+    findActive(kind, serial) {
+        const row = this.db.prepare(`SELECT j.*,u.email AS actor_email FROM action_jobs j LEFT JOIN users u ON u.id=j.actor_user_id
+       WHERE j.kind=? AND j.serial IS ? AND j.state IN ('queued','running','waiting')
+       ORDER BY j.created_at LIMIT 1`).get(kind, serial);
+        return row ? mapJob(row) : null;
+    }
+    enqueueUnique(kind, serial, actorUserId, payload = {}, deadlineAt = null) {
+        return this.findActive(kind, serial) ?? this.enqueue(kind, serial, actorUserId, payload, deadlineAt);
+    }
+    findActiveByPayload(kind, key, value) {
+        const rows = this.db.prepare(`SELECT j.*,u.email AS actor_email FROM action_jobs j LEFT JOIN users u ON u.id=j.actor_user_id
+       WHERE j.kind=? AND j.state IN ('queued','running','waiting') ORDER BY j.created_at`).all(kind);
+        const row = rows.find((candidate) => safeJson(candidate.payload_json)[key] === value);
+        return row ? mapJob(row) : null;
+    }
+    enqueueUniqueByPayload(kind, key, value, actorUserId, payload = {}, deadlineAt = null) {
+        return this.findActiveByPayload(kind, key, value)
+            ?? this.enqueue(kind, null, actorUserId, { ...payload, [key]: value }, deadlineAt);
+    }
     async tick(forceFullCheck = false) {
         if (this.ticking)
             return;
@@ -123,7 +153,6 @@ export class JobQueue {
             await this.maybeScheduleFullCheck(forceFullCheck);
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
-            await this.maybeScheduleTopologyDiscovery();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
                     .prepare("SELECT * FROM action_jobs WHERE state='queued' ORDER BY created_at LIMIT 1")
@@ -153,17 +182,17 @@ export class JobQueue {
             this.enqueue("check", null, null, { releaseOnly: true });
     }
     async maybeScheduleFullCheck(force) {
+        if (!force && !automaticFleetChecksAllowed(this.startedAt))
+            return;
         const last = this.db.prepare("SELECT value FROM settings WHERE key='last_full_check_at'").get();
         const due = !last?.value || Date.now() - Date.parse(last.value) >= config.fullCheckIntervalMinutes * 60_000;
         if (!force && !due)
             return;
-        const existing = this.db
-            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')")
-            .get();
-        if (!existing?.ok)
-            this.enqueue("bulk_check", null, null, { scheduled: !force });
+        this.enqueueUnique("bulk_check", null, null, { scheduled: !force });
     }
     async maybeScheduleRetryChecks() {
+        if (!automaticFleetChecksAllowed(this.startedAt))
+            return;
         const bulkCheck = this.db
             .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')")
             .get();
@@ -179,7 +208,7 @@ export class JobQueue {
          )
        ORDER BY m.next_check_at,m.serial LIMIT ?`).all(new Date().toISOString(), config.checkConcurrency);
         for (const { serial } of due)
-            this.enqueue("check", serial, null, { automaticRetry: true });
+            this.enqueueUnique("check", serial, null, { automaticRetry: true });
     }
     async maybeScheduleHomeAssistantCheck(force) {
         const monitored = this.db.prepare("SELECT COUNT(*) AS count FROM home_assistant_instances WHERE monitoring_enabled=1").get();
@@ -263,9 +292,12 @@ export class JobQueue {
                     await this.executeTopologyDiscovery(job);
                     return;
                 case "ha_check":
-                    if (!job.serial)
-                        throw new Error("Chybí identifikátor Home Assistantu.");
-                    await this.executeHomeAssistantCheck(job, job.serial);
+                    {
+                        const homeAssistantId = typeof payload.homeAssistantId === "string" ? payload.homeAssistantId : job.serial;
+                        if (!homeAssistantId)
+                            throw new Error("Chybí identifikátor Home Assistantu.");
+                        await this.executeHomeAssistantCheck(job, homeAssistantId);
+                    }
                     return;
                 case "ha_bulk_check":
                     await this.executeHomeAssistantBulkCheck(job);
@@ -425,6 +457,10 @@ export class JobQueue {
                 });
                 continue;
             }
+            const lastPoll = this.db.prepare("SELECT created_at FROM action_steps WHERE job_id=? AND step='firmware-poll' ORDER BY id DESC LIMIT 1").get(job.id);
+            if (!firmwarePollDue(lastPoll?.created_at))
+                continue;
+            this.step(job.id, "firmware-poll", "running", "Ověřuji firmware po dvouminutovém bezpečném intervalu.");
             const result = await checkMiniserver(this.db, job.serial);
             persistCheck(this.db, job.serial, result);
             if (result.state !== "online")

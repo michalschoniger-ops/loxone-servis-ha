@@ -15,10 +15,17 @@ export class LoxoneError extends Error {
     }
 }
 const CACHED_CONNECTION_MAX_AGE_MS = 6 * 60 * 60_000;
+const RESOLVER_MIN_INTERVAL_MS = 10_000;
+const RESOLVER_RATE_LIMIT_BACKOFF_MS = 30 * 60_000;
+const resolverInFlight = new Map();
+let resolverQueue = Promise.resolve();
+let resolverNextAllowedAt = 0;
+let resolverBlockedUntil = 0;
+const checkInFlight = new Map();
 export function connectionStateForError(code) {
     if (code === "no_access" || code === "credentials_missing")
         return "no_access";
-    if (code === "resolver_error" || code === "resolver_timeout")
+    if (code === "resolver_error" || code === "resolver_timeout" || code === "resolver_rate_limited")
         return "unknown";
     return "unavailable";
 }
@@ -88,6 +95,18 @@ export function cachedConnection(row, now = Date.now()) {
     const resolvedAt = Date.parse(row.connection_resolved_at);
     if (!Number.isFinite(resolvedAt) || resolvedAt > now + 60_000 || now - resolvedAt > CACHED_CONNECTION_MAX_AGE_MS)
         return null;
+    return storedConnection(row);
+}
+/**
+ * A previously verified relay route is safe to try before contacting the
+ * central resolver again. It is only a hint: callers must refresh it after a
+ * transport failure. This is deliberately age-independent so a fleet check
+ * does not create a resolver burst merely because many routes expired at the
+ * same time.
+ */
+export function storedConnection(row) {
+    if (row.local_url || !row.connection_url)
+        return null;
     const source = row.connection_transport;
     if (source !== "connect" && source !== "legacy")
         return null;
@@ -104,15 +123,52 @@ export function cachedConnection(row, now = Date.now()) {
         return null;
     }
 }
+function resolverRateLimitDelay(response) {
+    const retryAfter = response.headers.get("retry-after")?.trim() ?? "";
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds > 0)
+        return Math.max(RESOLVER_RATE_LIMIT_BACKOFF_MS, seconds * 1_000);
+    const timestamp = Date.parse(retryAfter);
+    if (Number.isFinite(timestamp))
+        return Math.max(RESOLVER_RATE_LIMIT_BACKOFF_MS, timestamp - Date.now());
+    return RESOLVER_RATE_LIMIT_BACKOFF_MS;
+}
+function resolverRateLimitedError() {
+    const remainingMinutes = Math.max(1, Math.ceil((resolverBlockedUntil - Date.now()) / 60_000));
+    return new LoxoneError("resolver_rate_limited", `Remote Connect dočasně odmítá další dotazy. Automatické resolverové požadavky jsou pozastavené přibližně na ${remainingMinutes} min.`, 429);
+}
+async function waitForResolverPermit() {
+    const permit = resolverQueue.then(async () => {
+        if (Date.now() < resolverBlockedUntil)
+            throw resolverRateLimitedError();
+        const waitMs = Math.max(0, resolverNextAllowedAt - Date.now());
+        if (waitMs > 0)
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+        if (Date.now() < resolverBlockedUntil)
+            throw resolverRateLimitedError();
+        resolverNextAllowedAt = Date.now() + RESOLVER_MIN_INTERVAL_MS;
+    });
+    resolverQueue = permit.catch(() => undefined);
+    return permit;
+}
+async function resolverFetch(url) {
+    await waitForResolverPermit();
+    const response = await fetch(url, {
+        redirect: "manual",
+        signal: timeoutSignal(12_000),
+        headers: { Accept: "application/json", "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}` },
+    });
+    if (response.status === 429) {
+        resolverBlockedUntil = Math.max(resolverBlockedUntil, Date.now() + resolverRateLimitDelay(response));
+        throw resolverRateLimitedError();
+    }
+    return response;
+}
 async function resolveConnectionAttempt(serial, localUrl) {
     if (localUrl)
         return normalizeLocalUrl(localUrl);
     try {
-        const response = await fetch(`https://connect.loxonecloud.com/getip?snr=${encodeURIComponent(serial)}`, {
-            redirect: "manual",
-            signal: timeoutSignal(12_000),
-            headers: { Accept: "application/json", "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}` },
-        });
+        const response = await resolverFetch(`https://connect.loxonecloud.com/getip?snr=${encodeURIComponent(serial)}`);
         if (response.status === 404)
             throw new LoxoneError("relay_not_connected", "Miniserver není připojený k Remote Connect.", 404);
         if (response.status === 504)
@@ -140,11 +196,7 @@ async function resolveConnectionAttempt(serial, localUrl) {
     }
     try {
         const query = new URLSearchParams({ getip: "", snr: serial, json: "true" });
-        const response = await fetch(`https://dns.loxonecloud.com/?${query}`, {
-            redirect: "manual",
-            signal: timeoutSignal(12_000),
-            headers: { Accept: "application/json", "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}` },
-        });
+        const response = await resolverFetch(`https://dns.loxonecloud.com/?${query}`);
         if (!response.ok)
             throw new LoxoneError("resolver_error", `CloudDNS odpověděl HTTP ${response.status}.`, response.status);
         const payload = (await response.json());
@@ -172,21 +224,45 @@ function resolverRetryDelay(serial, attempt) {
     return 650 * (attempt + 1) + jitter;
 }
 export async function resolveConnection(serial, localUrl) {
-    let lastError;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            return await resolveConnectionAttempt(serial, localUrl);
+    if (localUrl)
+        return normalizeLocalUrl(localUrl);
+    const key = serial.toUpperCase();
+    const existing = resolverInFlight.get(key);
+    if (existing)
+        return existing;
+    const pending = (async () => {
+        let lastError;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                return await resolveConnectionAttempt(key);
+            }
+            catch (error) {
+                lastError = error;
+                const retryable = error instanceof LoxoneError
+                    && (error.code === "resolver_error" || error.code === "resolver_timeout");
+                if (!retryable || attempt === 2)
+                    throw error;
+                await new Promise((resolve) => setTimeout(resolve, resolverRetryDelay(key, attempt)));
+            }
         }
-        catch (error) {
-            lastError = error;
-            const retryable = error instanceof LoxoneError
-                && (error.code === "resolver_error" || error.code === "resolver_timeout");
-            if (!retryable || attempt === 2)
-                throw error;
-            await new Promise((resolve) => setTimeout(resolve, resolverRetryDelay(serial, attempt)));
-        }
+        throw lastError;
+    })();
+    resolverInFlight.set(key, pending);
+    try {
+        return await pending;
     }
-    throw lastError;
+    finally {
+        if (resolverInFlight.get(key) === pending)
+            resolverInFlight.delete(key);
+    }
+}
+/** Reset module protection state for isolated unit tests only. */
+export function resetResolverProtectionForTests() {
+    resolverInFlight.clear();
+    checkInFlight.clear();
+    resolverQueue = Promise.resolve();
+    resolverNextAllowedAt = 0;
+    resolverBlockedUntil = 0;
 }
 function decodeXml(value) {
     return value
@@ -224,7 +300,7 @@ export function extractLoxoneValue(body) {
         return decodeXml(element[1]);
     return trimmed;
 }
-export async function requestLoxone(connection, credentials, path, options = {}) {
+async function fetchLoxoneResponse(connection, credentials, path, options = {}) {
     if (!path.startsWith("/"))
         throw new LoxoneError("invalid_response", "Neplatná cesta webservice.");
     let response;
@@ -250,8 +326,42 @@ export async function requestLoxone(connection, credentials, path, options = {})
         throw new LoxoneError("unsupported", "Webservice není tímto firmware podporovaný.", 404);
     if (!response.ok)
         throw new LoxoneError("http_error", `Webservice odpověděl HTTP ${response.status}.`, response.status);
+    return response;
+}
+export async function requestLoxone(connection, credentials, path, options = {}) {
+    const response = await fetchLoxoneResponse(connection, credentials, path, options);
     const body = await response.text();
     return options.raw ? body : extractLoxoneValue(body);
+}
+export async function requestLoxoneBuffer(connection, credentials, path, options) {
+    const response = await fetchLoxoneResponse(connection, credentials, path, options);
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
+        await response.body?.cancel();
+        throw new LoxoneError("invalid_response", "Soubor je větší než povolený limit exportu.");
+    }
+    if (!response.body)
+        return Buffer.alloc(0);
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            total += value.byteLength;
+            if (total > options.maxBytes) {
+                await reader.cancel();
+                throw new LoxoneError("invalid_response", "Soubor je větší než povolený limit exportu.");
+            }
+            chunks.push(Buffer.from(value));
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
 }
 function attribute(attributes, name) {
     const match = attributes.match(new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i"));
@@ -309,7 +419,11 @@ function parseFirmware(value) {
     const text = typeof value === "string" ? value : JSON.stringify(value);
     return text.match(/\b\d+\.\d+\.\d+\.\d+\b/)?.[0] ?? null;
 }
-export async function checkMiniserver(db, serial) {
+function shouldRefreshStoredRoute(error) {
+    return error instanceof LoxoneError
+        && ["connection_timeout", "connection_refused", "tls_error", "http_error", "unsupported"].includes(error.code);
+}
+async function performMiniserverCheck(db, serial) {
     const row = db.prepare("SELECT local_url,connection_url,connection_transport,connection_resolved_at FROM miniservers WHERE serial=?").get(serial);
     const credentials = getStoredCredentials(db, serial);
     if (!credentials) {
@@ -328,18 +442,21 @@ export async function checkMiniserver(db, serial) {
     const started = Date.now();
     let connection = null;
     try {
+        const localConnection = row?.local_url ? normalizeLocalUrl(row.local_url) : null;
+        const savedConnection = row ? storedConnection(row) : null;
+        connection = localConnection ?? savedConnection ?? await resolveConnection(serial);
+        let versionValue;
         try {
-            connection = await resolveConnection(serial, row?.local_url ?? null);
+            versionValue = await requestLoxone(connection, credentials, "/dev/cfg/version");
         }
         catch (error) {
-            const transientResolverFailure = error instanceof LoxoneError
-                && (error.code === "resolver_error" || error.code === "resolver_timeout");
-            const cached = transientResolverFailure && row ? cachedConnection(row) : null;
-            if (!cached)
+            // A relay address/port is dynamic. Refresh only this Miniserver after its
+            // previously working route actually stops responding.
+            if (!savedConnection || localConnection || !shouldRefreshStoredRoute(error))
                 throw error;
-            connection = cached;
+            connection = await resolveConnection(serial);
+            versionValue = await requestLoxone(connection, credentials, "/dev/cfg/version");
         }
-        const versionValue = await requestLoxone(connection, credentials, "/dev/cfg/version");
         const firmware = parseFirmware(versionValue);
         if (!firmware)
             throw new LoxoneError("invalid_response", "Odpověď neobsahuje platnou verzi firmware.");
@@ -382,12 +499,42 @@ export async function checkMiniserver(db, serial) {
         };
     }
 }
+/**
+ * All callers in the central HA Práce process share one physical check per SN.
+ * Requests arriving through HA Domov and the public web UI therefore cannot
+ * create duplicate WebService traffic while a check is already running.
+ */
+export async function checkMiniserver(db, serial) {
+    const key = serial.toUpperCase();
+    const existing = checkInFlight.get(key);
+    if (existing)
+        return existing;
+    const pending = performMiniserverCheck(db, key);
+    checkInFlight.set(key, pending);
+    try {
+        return await pending;
+    }
+    finally {
+        if (checkInFlight.get(key) === pending)
+            checkInFlight.delete(key);
+    }
+}
 async function context(db, serial) {
-    const row = db.prepare("SELECT local_url FROM miniservers WHERE serial=?").get(serial);
+    const row = db.prepare("SELECT local_url,connection_url,connection_transport,connection_resolved_at FROM miniservers WHERE serial=?").get(serial);
     const credentials = getStoredCredentials(db, serial);
     if (!credentials)
         throw new LoxoneError("credentials_missing", "Miniserver nemá uložené přístupy.");
-    return { connection: await resolveConnection(serial, row?.local_url ?? null), credentials };
+    const localConnection = row?.local_url ? normalizeLocalUrl(row.local_url) : null;
+    const recentConnection = row ? cachedConnection(row) : null;
+    const connection = localConnection ?? recentConnection ?? await resolveConnection(serial);
+    if (!localConnection && !recentConnection) {
+        db.prepare("UPDATE miniservers SET connection_url=?,connection_transport=?,connection_resolved_at=?,updated_at=? WHERE serial=?").run(connection.baseUrl, connection.source, new Date().toISOString(), new Date().toISOString(), serial);
+    }
+    return { connection, credentials };
+}
+/** Read-only helper for tightly scoped server-side export modules. */
+export async function getLoxoneContext(db, serial) {
+    return context(db, serial);
 }
 export async function miniserverCommand(db, serial, command) {
     const { connection, credentials } = await context(db, serial);
@@ -506,18 +653,6 @@ export async function readStatisticInfo(db, serial, controlUuid) {
         throw new LoxoneError("invalid_response", "Neplatné UUID statistiky.");
     const { connection, credentials } = await context(db, serial);
     return requestLoxone(connection, credentials, `/jdev/sps/getStatisticInfo/${encodeURIComponent(controlUuid)}`);
-}
-export async function readStatisticRaw(db, serial, request) {
-    if (!/^[A-F0-9-]{20,40}$/i.test(request.controlUuid))
-        throw new LoxoneError("invalid_response", "Neplatné UUID statistiky.");
-    if (!Number.isInteger(request.from) || !Number.isInteger(request.to) || request.from >= request.to) {
-        throw new LoxoneError("invalid_response", "Neplatný interval statistiky.");
-    }
-    if (!/^[A-Za-z0-9_]{1,64}$/.test(request.outputName))
-        throw new LoxoneError("invalid_response", "Neplatný název výstupu statistiky.");
-    const { connection, credentials } = await context(db, serial);
-    const path = `/dev/sps/getStatistic/${encodeURIComponent(request.controlUuid)}/raw/${request.from}/${request.to}/${request.dataPointUnit}/${request.groupId}/${request.outputName}`;
-    return requestLoxone(connection, credentials, path, { timeoutMs: 45_000 });
 }
 export async function readUserAudit(db, serial) {
     const { connection, credentials } = await context(db, serial);

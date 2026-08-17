@@ -2,6 +2,7 @@
 
 ## 0.4.12
 
+- iPhone už při práci s formuláři automaticky nepřibližuje stránku a celé rozhraní respektuje horní výřez, stavovou lištu, spodní indikátor i dynamickou výšku Safari a HA Companion.
 - Detail Miniserveru má novou záložku Exporty pro strukturu LoxAPP3, systémové statistiky, katalog statistik a měsíční XML statistiky.
 - Statistiky V2 lze stáhnout v oficiálním binárním raw formátu s výběrem prvku, skupiny, výstupu, období a seskupení.
 - Správce může stáhnout aktuální kompilovaný programový ZIP ze SD karty. Aplikace jej vydá jen po přesném porovnání vloženého LoxAPP3 s právě běžícím projektem a nezaměňuje jej za editovatelný soubor `.Loxone`.

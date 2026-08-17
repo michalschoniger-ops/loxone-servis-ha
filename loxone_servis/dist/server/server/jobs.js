@@ -7,11 +7,18 @@ import { firmwareRelation } from "./version.js";
 import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } from "./home-assistant.js";
 import { stabilizeAvailability } from "./availability.js";
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
+export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export function firmwarePollDue(lastPollAt, now = Date.now()) {
     if (!lastPollAt)
         return true;
     const parsed = Date.parse(lastPollAt);
     return !Number.isFinite(parsed) || now - parsed >= FIRMWARE_POLL_INTERVAL_MS;
+}
+export function officialReleaseRefreshDue(lastCheckedAt, now = Date.now()) {
+    if (!lastCheckedAt)
+        return true;
+    const parsed = Date.parse(lastCheckedAt);
+    return !Number.isFinite(parsed) || now - parsed >= OFFICIAL_RELEASE_REFRESH_INTERVAL_MS;
 }
 export function automaticFleetChecksAllowed(startedAt, now = Date.now(), intervalMs = config.fullCheckIntervalMinutes * 60_000) {
     return now - startedAt >= intervalMs;
@@ -50,7 +57,11 @@ function updateDevices(db, serial, result, now) {
        last_seen_at=excluded.last_seen_at,system_message=excluded.system_message,device_index=excluded.device_index,
        source=excluded.source,payload_json=excluded.payload_json,updated_at=excluded.updated_at`);
     for (const device of result.devices) {
-        upsert.run(serial, device.serial, device.parentSerial, device.name, device.type, device.firmware, device.online ? 1 : 0, device.online ? null : now, device.online ? now : null, device.systemMessage, device.deviceIndex, device.source, "{}", now);
+        upsert.run(serial, device.serial, device.parentSerial, device.name, device.type, device.firmware, device.online ? 1 : 0, device.online ? null : now, device.online ? now : null, device.systemMessage, device.deviceIndex, device.source, JSON.stringify({
+            family: device.family,
+            temperatureC: device.temperatureC,
+            temperatureUpdatedAt: device.temperatureUpdatedAt,
+        }), now);
     }
     if (seen.size) {
         for (const row of db.prepare("SELECT device_serial FROM device_inventory WHERE serial=?").all(serial)) {
@@ -173,7 +184,8 @@ export class JobQueue {
     }
     async maybeRefreshRelease() {
         const row = this.db.prepare("SELECT checked_at FROM firmware_releases WHERE channel='stable'").get();
-        if (row && Date.now() - Date.parse(row.checked_at) < 6 * 60 * 60_000)
+        const attempt = this.db.prepare("SELECT value FROM settings WHERE key='official_release_attempted_at'").get();
+        if (!officialReleaseRefreshDue(attempt?.value ?? row?.checked_at))
             return;
         const existing = this.db
             .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='check' AND state IN ('queued','running') AND serial IS NULL")

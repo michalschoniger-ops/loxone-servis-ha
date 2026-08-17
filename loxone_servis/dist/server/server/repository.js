@@ -109,6 +109,26 @@ export function listReleases(db) {
         };
     });
 }
+export function listReleaseArchive(db, limit = 300) {
+    const rows = db.prepare(`SELECT h.id,h.channel,h.version,h.config_url,h.first_seen_at,h.last_seen_at,h.source_url
+     FROM firmware_release_history h
+     LEFT JOIN firmware_releases current ON current.channel=h.channel
+     WHERE current.version IS NULL
+        OR h.version<>current.version
+        OR h.config_url<>COALESCE(current.config_url,'')
+     ORDER BY CASE h.channel WHEN 'stable' THEN 1 WHEN 'beta' THEN 2 ELSE 3 END,
+              h.first_seen_at DESC,h.id DESC
+     LIMIT ?`).all(Math.max(1, Math.min(limit, 1_000)));
+    return rows.map((row) => ({
+        id: row.id,
+        channel: row.channel,
+        version: row.version,
+        configUrl: row.config_url || null,
+        firstSeenAt: row.first_seen_at,
+        lastSeenAt: row.last_seen_at,
+        source: row.source_url,
+    }));
+}
 export function fleetOverview(db) {
     const servers = listMiniservers(db);
     const availability = connectionAvailabilityCounts(servers);

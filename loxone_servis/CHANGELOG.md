@@ -1,8 +1,15 @@
 # Changelog
 
+## 0.4.13
+
+- Složky projektů jsou po otevření přehledu ve výchozím stavu sbalené; podsložky se zobrazí až po rozbalení svého rodiče.
+- V seznamu se role zobrazuje pouze u skutečné Gateway nebo Clienta. Samostatný Miniserver nemá zbytečný štítek a z názvu se samostatně zvýrazní projektové číslo `ESM-26-001` nebo `PRO-21-0029`.
+- Online teplotní 1-Wire čidla rodiny 28 zobrazují aktuální hodnotu ve stupních Celsia; hodnota se načítá postupně přes uloženou trasu a bez dalšího volání Remote Connect resolveru.
+- Offline 1-Wire čidlo se započítá mezi offline prvky. Chyba samostatného čtení teploty ale nevytváří falešný offline stav Miniserveru ani čidla.
+- Stable, Beta a Alpha kanály z `updatecheck.xml` se kontrolují nejvýše jednou za 4 hodiny i při chybě zdroje. Při změně se původní verze a její oficiální odkaz přesunou do trvalého archivu ke stažení.
+
 ## 0.4.12
 
-- iPhone už při práci s formuláři automaticky nepřibližuje stránku a celé rozhraní respektuje horní výřez, stavovou lištu, spodní indikátor i dynamickou výšku Safari a HA Companion.
 - Detail Miniserveru má novou záložku Exporty pro strukturu LoxAPP3, systémové statistiky, katalog statistik a měsíční XML statistiky.
 - Statistiky V2 lze stáhnout v oficiálním binárním raw formátu s výběrem prvku, skupiny, výstupu, období a seskupení.
 - Správce může stáhnout aktuální kompilovaný programový ZIP ze SD karty. Aplikace jej vydá jen po přesném porovnání vloženého LoxAPP3 s právě běžícím projektem a nezaměňuje jej za editovatelný soubor `.Loxone`.

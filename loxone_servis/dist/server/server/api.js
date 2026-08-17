@@ -4,7 +4,7 @@ import { actionPayloadHash, consumeConfirmation, requireRole, requireUser } from
 import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
-import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, saveCredentials } from "./repository.js";
+import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, saveCredentials } from "./repository.js";
 import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
 import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
@@ -45,6 +45,11 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return fleetOverview(db);
+    });
+    app.get("/api/releases/history", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        return { items: listReleaseArchive(db) };
     });
     app.get("/api/miniservers", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -354,7 +359,9 @@ export async function registerApi(app, db, jobs) {
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
         const devices = db
             .prepare(`SELECT device_serial AS serial,parent_serial AS parentSerial,name,type,firmware,online,first_offline_at AS firstOfflineAt,
-                last_seen_at AS lastSeenAt,system_message AS systemMessage,device_index AS deviceIndex,source,updated_at AS updatedAt
+                last_seen_at AS lastSeenAt,system_message AS systemMessage,device_index AS deviceIndex,source,updated_at AS updatedAt,
+                json_extract(payload_json,'$.temperatureC') AS temperatureC,
+                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt
          FROM device_inventory WHERE serial=? ORDER BY online,name COLLATE NOCASE`)
             .all(serial);
         const health = db

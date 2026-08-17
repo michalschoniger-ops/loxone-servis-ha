@@ -405,8 +405,11 @@ export function parseStatusXml(xml) {
             serial,
             name: attribute(attrs, "Name") ?? attribute(attrs, "Title") ?? serial,
             type: attribute(attrs, "Type") ?? tag,
+            family: attribute(attrs, "Family"),
             online: online && !offline,
             firmware: attribute(attrs, "Version") ?? attribute(attrs, "Firmware"),
+            temperatureC: null,
+            temperatureUpdatedAt: null,
             parentSerial: normalizeDeviceSerial(attribute(attrs, "Parent") ?? attribute(attrs, "ParentSerial")),
             deviceIndex: Number.isFinite(Number(attribute(attrs, "DeviceIndex"))) ? Number(attribute(attrs, "DeviceIndex")) : null,
             systemMessage: message,
@@ -414,6 +417,38 @@ export function parseStatusXml(xml) {
         });
     }
     return { online: genericOnline, total: genericTotal, devices, messages: [...new Set(messages)] };
+}
+export function parseTemperatureC(value) {
+    const match = String(value ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+    if (!match)
+        return null;
+    const temperature = Number(match[0]);
+    return Number.isFinite(temperature) && temperature >= -55 && temperature <= 125 ? temperature : null;
+}
+function isOneWireTemperatureSensor(device) {
+    const family = (device.family ?? "").replace(/[^a-f0-9]/gi, "").toUpperCase();
+    return device.online
+        && device.type.toLowerCase().includes("onewire")
+        && family.endsWith("28")
+        && device.name.length > 0
+        && device.name.length <= 120;
+}
+async function enrichOneWireTemperatures(connection, credentials, devices) {
+    const checkedAt = new Date().toISOString();
+    for (const device of devices.filter(isOneWireTemperatureSensor)) {
+        try {
+            const value = await requestLoxone(connection, credentials, `/dev/sps/io/${encodeURIComponent(device.name)}/state`, { timeoutMs: 5_000 });
+            const temperature = parseTemperatureC(value);
+            if (temperature === null)
+                continue;
+            device.temperatureC = temperature;
+            device.temperatureUpdatedAt = checkedAt;
+        }
+        catch {
+            // Dostupnost čidla určuje /data/status. Chyba čtení hodnoty nesmí
+            // vytvořit falešný offline stav ani shodit kontrolu Miniserveru.
+        }
+    }
 }
 function parseFirmware(value) {
     const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -467,6 +502,7 @@ async function performMiniserverCheck(db, serial) {
                 accept: "application/xml, text/xml, text/plain",
             }));
             status = parseStatusXml(xml);
+            await enrichOneWireTemperatures(connection, credentials, status.devices);
         }
         catch (error) {
             if (error instanceof LoxoneError && error.code === "no_access")

@@ -260,6 +260,18 @@ function applyMigrations(db) {
       checked_at TEXT NOT NULL,
       error_code TEXT
     );
+    CREATE TABLE IF NOT EXISTS firmware_release_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL CHECK(channel IN ('stable','beta','alpha')),
+      version TEXT NOT NULL,
+      config_url TEXT NOT NULL DEFAULT '',
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      UNIQUE(channel,version,config_url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_release_history_channel_time
+      ON firmware_release_history(channel, first_seen_at DESC);
     CREATE TABLE IF NOT EXISTS jwt_tokens (
       id TEXT PRIMARY KEY,
       serial TEXT NOT NULL,
@@ -482,7 +494,15 @@ function applyMigrations(db) {
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
     db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
+    db.exec(`
+    INSERT OR IGNORE INTO firmware_release_history(
+      channel,version,config_url,first_seen_at,last_seen_at,source_url
+    )
+    SELECT channel,version,COALESCE(config_url,''),checked_at,checked_at,source_url
+    FROM firmware_releases
+    WHERE version IS NOT NULL
+  `);
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();

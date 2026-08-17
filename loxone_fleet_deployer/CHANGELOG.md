@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.13.1
+
+- Připravuje ověřený balíček Evora Smart Hub 0.4.13 a před výměnou zachová kompletní vratný zdroj 0.4.12.
+- Opakované spuštění bezpečně rozpozná už připravený zdroj 0.4.13.
+
 ## 0.4.12.4
 
 - Obnovovací archiv nyní obsahuje i Dockerfile a vstupní skript nutné k opětovnému sestavení 0.4.10.

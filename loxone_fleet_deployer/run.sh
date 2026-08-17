@@ -2,7 +2,7 @@
 set -eu
 
 PAYLOAD_SHA256="c0612df46909cfaa34b92b69cc016676c29f41bc3f38449eb1fcd2a144ce0a0f"
-ROLLBACK_PAYLOAD_SHA256="a912cefe288018afbfe041a8e1c196c4e0be946b5dd4f8dc52ec7fa909023adc"
+ROLLBACK_PAYLOAD_SHA256="8c732936749dbd037107e0b639e6119b4a1bd4aabd1db4ae726cf6ca726932e9"
 EXPECTED_SLUG="loxone_fleet"
 EXPECTED_VERSION="0.4.12"
 ROLLBACK_VERSION="0.4.10"
@@ -29,6 +29,35 @@ log() {
 fail() {
   log "CHYBA: $*"
   exit 1
+}
+
+prepare_verified_rollback() {
+  DESTINATION="$1"
+  TEMP_ROOT="$2"
+  [ -n "$ROLLBACK_ARCHIVE" ] || fail "Chybí cesta obnovovacího payloadu."
+  [ -f "$ROLLBACK_ARCHIVE" ] || fail "Chybí obnovovací payload ${ROLLBACK_VERSION}."
+  ACTUAL_ROLLBACK_SHA256="$(sha256sum "$ROLLBACK_ARCHIVE" | awk '{print $1}')"
+  [ "$ACTUAL_ROLLBACK_SHA256" = "$ROLLBACK_PAYLOAD_SHA256" ] || fail "Kontrolní součet obnovovacího payloadu nesouhlasí."
+  if tar -tzf "$ROLLBACK_ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    fail "Obnovovací payload obsahuje nepovolenou cestu."
+  fi
+  [ ! -e "$TEMP_ROOT" ] || fail "Dočasná složka obnovovacího payloadu už existuje."
+  [ ! -e "$DESTINATION" ] || fail "Cíl obnovovacího payloadu už existuje."
+  mkdir -p "$TEMP_ROOT"
+  tar -xzf "$ROLLBACK_ARCHIVE" -C "$TEMP_ROOT"
+  ROLLBACK_DIR="$TEMP_ROOT/loxone_servis"
+  ROLLBACK_CONFIG="$ROLLBACK_DIR/config.yaml"
+  [ -f "$ROLLBACK_CONFIG" ] || fail "Obnovovací payload nemá config.yaml."
+  [ -f "$ROLLBACK_DIR/Dockerfile" ] || fail "Obnovovací payload nemá Dockerfile."
+  [ -f "$ROLLBACK_DIR/docker-entrypoint.sh" ] || fail "Obnovovací payload nemá vstupní skript."
+  [ -f "$ROLLBACK_DIR/dist/server/server/index.js" ] || fail "Obnovovací payload nemá serverový build."
+  [ -f "$ROLLBACK_DIR/dist/client/index.html" ] || fail "Obnovovací payload nemá klientský build."
+  RESTORED_SLUG="$(awk -F: '/^slug:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ROLLBACK_CONFIG")"
+  RESTORED_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ROLLBACK_CONFIG")"
+  [ "$RESTORED_SLUG" = "$EXPECTED_SLUG" ] || fail "Obnovovací payload má neočekávaný slug."
+  [ "$RESTORED_VERSION" = "$ROLLBACK_VERSION" ] || fail "Obnovovací payload má neočekávanou verzi."
+  mv "$ROLLBACK_DIR" "$DESTINATION"
+  rmdir "$TEMP_ROOT"
 }
 
 [ -d "$ADDONS_ROOT" ] || fail "Adresář /addons není připojen."
@@ -125,6 +154,7 @@ esac
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE_ROOT="$ADDONS_ROOT/.evora-deploy-stage-$TIMESTAMP"
+ROLLBACK_STAGE_ROOT="$ADDONS_ROOT/.evora-rollback-stage-$TIMESTAMP"
 BACKUP_ROOT="$ADDONS_ROOT/.evora-smart-hub-rollback"
 BACKUP_DIR="$BACKUP_ROOT/${TARGET_NAME}-${CURRENT_VERSION}-${TIMESTAMP}"
 
@@ -132,26 +162,8 @@ BACKUP_DIR="$BACKUP_ROOT/${TARGET_NAME}-${CURRENT_VERSION}-${TIMESTAMP}"
 [ ! -e "$BACKUP_DIR" ] || fail "Záložní složka už existuje."
 
 if [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ]; then
-  [ -n "$ROLLBACK_ARCHIVE" ] || fail "Chybí cesta obnovovacího payloadu."
-  [ -f "$ROLLBACK_ARCHIVE" ] || fail "Chybí obnovovací payload ${ROLLBACK_VERSION}."
-  ACTUAL_ROLLBACK_SHA256="$(sha256sum "$ROLLBACK_ARCHIVE" | awk '{print $1}')"
-  [ "$ACTUAL_ROLLBACK_SHA256" = "$ROLLBACK_PAYLOAD_SHA256" ] || fail "Kontrolní součet obnovovacího payloadu nesouhlasí."
-  if tar -tzf "$ROLLBACK_ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
-    fail "Obnovovací payload obsahuje nepovolenou cestu."
-  fi
-  mkdir -p "$STAGE_ROOT" "$BACKUP_DIR"
-  tar -xzf "$ROLLBACK_ARCHIVE" -C "$STAGE_ROOT"
-  ROLLBACK_DIR="$STAGE_ROOT/loxone_servis"
-  ROLLBACK_CONFIG="$ROLLBACK_DIR/config.yaml"
-  [ -f "$ROLLBACK_CONFIG" ] || fail "Obnovovací payload nemá config.yaml."
-  [ -f "$ROLLBACK_DIR/dist/server/server/index.js" ] || fail "Obnovovací payload nemá serverový build."
-  [ -f "$ROLLBACK_DIR/dist/client/index.html" ] || fail "Obnovovací payload nemá klientský build."
-  RESTORED_SLUG="$(awk -F: '/^slug:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ROLLBACK_CONFIG")"
-  RESTORED_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ROLLBACK_CONFIG")"
-  [ "$RESTORED_SLUG" = "$EXPECTED_SLUG" ] || fail "Obnovovací payload má neočekávaný slug."
-  [ "$RESTORED_VERSION" = "$ROLLBACK_VERSION" ] || fail "Obnovovací payload má neočekávanou verzi."
-  mv "$ROLLBACK_DIR" "$BACKUP_DIR/original"
-  rmdir "$STAGE_ROOT"
+  mkdir -p "$BACKUP_DIR"
+  prepare_verified_rollback "$BACKUP_DIR/original" "$ROLLBACK_STAGE_ROOT"
   cat > "$BACKUP_DIR/receipt.txt" <<EOF
 target=$TARGET_DIR
 previous_version=$ROLLBACK_VERSION
@@ -183,9 +195,16 @@ STAGED_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2;
 [ "$STAGED_VERSION" = "$EXPECTED_VERSION" ] || fail "Payload má neočekávanou verzi."
 
 log "Připravuji vratnou výměnu ${TARGET_NAME}: ${CURRENT_VERSION} -> ${EXPECTED_VERSION}."
-mv "$TARGET_DIR" "$BACKUP_DIR/original"
+if [ "$CURRENT_VERSION" = "$ROLLBACK_VERSION" ]; then
+  prepare_verified_rollback "$BACKUP_DIR/original" "$ROLLBACK_STAGE_ROOT"
+  mv "$TARGET_DIR" "$BACKUP_DIR/displaced-source"
+  SOURCE_TO_RESTORE="$BACKUP_DIR/displaced-source"
+else
+  mv "$TARGET_DIR" "$BACKUP_DIR/original"
+  SOURCE_TO_RESTORE="$BACKUP_DIR/original"
+fi
 if ! mv "$STAGED_DIR" "$TARGET_DIR"; then
-  mv "$BACKUP_DIR/original" "$TARGET_DIR"
+  mv "$SOURCE_TO_RESTORE" "$TARGET_DIR"
   fail "Nový zdroj nešel přesunout; původní zdroj byl obnoven."
 fi
 rmdir "$STAGE_ROOT"

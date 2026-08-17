@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.12.3
+
+- Přidává ověřený obnovovací zdroj 0.4.10 pro situaci, kdy je nový zdroj už připravený, ale kontejner ještě běží na 0.4.10.
+- Zabraňuje přepsání vratné zálohy novým zdrojem při opakovaném nasazení stejné verze.
+
 ## 0.4.12.2
 
 - Payload je vytvořen bez macOS rozšířených atributů, které na Linuxu zanechávaly skrytý soubor v dočasné složce a chybně ukončily jinak hotovou výměnu.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.12.2
+
+- Payload je vytvořen bez macOS rozšířených atributů, které na Linuxu zanechávaly skrytý soubor v dočasné složce a chybně ukončily jinak hotovou výměnu.
+
 ## 0.4.12.1
 
 - Payload obsahuje mobilní opravu bezpečných zón iPhonu a ochranu proti automatickému přibližování formulářů.

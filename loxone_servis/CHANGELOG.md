@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- LOXONE v navigaci nyní funguje jako rozbalovací rodič položky Config bez spojovací grafiky.
+- Přechod na Home Assistant podnabídku Config automaticky skryje.
+- 1-Wire teploty se ukládají samostatně každých 10 minut přes poslední ověřenou trasu bez dalších dotazů na Remote Connect.
+- Offline 1-Wire čidlo se dál promítá jako offline prvek.
+
 ## 0.5.0
 
 - Mobilní karty Miniserverů jsou výrazně kompaktnější; stav spojení a počet online prvků jsou v horním řádku a verze firmware je vedlejší údaj.

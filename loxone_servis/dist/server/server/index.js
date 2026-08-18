@@ -79,6 +79,7 @@ else {
         database: "ready",
         databaseSchema: 7,
         oneWireHistory: "ready",
+        oneWireSampleIntervalMinutes: 10,
         homeAssistantServiceMonitors: Number(database.prepare("SELECT COUNT(*) AS count FROM home_assistant_monitors WHERE enabled=1").get().count),
         encryptedBackup: config.backupEnabled ? "ready" : "disabled",
     }));

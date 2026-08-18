@@ -555,6 +555,32 @@ export async function checkMiniserver(db, serial) {
             checkInFlight.delete(key);
     }
 }
+/**
+ * Read the current 1-Wire state through an already verified route only.
+ *
+ * This sampler deliberately never calls Remote Connect or CloudDNS. A stale
+ * relay address is refreshed by the normal fleet check, while this faster
+ * telemetry pass simply skips the sample. That keeps the 10-minute history
+ * independent from resolver traffic and prevents parallel installations from
+ * amplifying cloud requests.
+ */
+export async function sampleOneWireTemperaturesFromStoredRoute(db, serial) {
+    const row = db.prepare("SELECT local_url,connection_url,connection_transport,connection_resolved_at FROM miniservers WHERE serial=?").get(serial.toUpperCase());
+    const credentials = getStoredCredentials(db, serial.toUpperCase());
+    if (!row || !credentials)
+        return null;
+    const connection = row.local_url ? normalizeLocalUrl(row.local_url) : storedConnection(row);
+    if (!connection)
+        return null;
+    const xml = (await requestLoxone(connection, credentials, "/data/status", {
+        raw: true,
+        accept: "application/xml, text/xml, text/plain",
+        timeoutMs: Math.min(config.requestTimeoutMs, 12_000),
+    }));
+    const status = parseStatusXml(xml);
+    await enrichOneWireTemperatures(connection, credentials, status.devices);
+    return status.devices;
+}
 async function context(db, serial) {
     const row = db.prepare("SELECT local_url,connection_url,connection_transport,connection_resolved_at FROM miniservers WHERE serial=?").get(serial);
     const credentials = getStoredCredentials(db, serial);

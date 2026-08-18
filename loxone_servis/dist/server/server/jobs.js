@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { audit, setSetting, transaction } from "./database.js";
-import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, readLoxApp3, } from "./loxone/client.js";
+import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, readLoxApp3, sampleOneWireTemperaturesFromStoredRoute, } from "./loxone/client.js";
 import { config } from "./config.js";
 import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
@@ -11,6 +11,7 @@ import { checkHomeAssistantMonitors, persistHomeAssistantMonitorCheck, purgeHome
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
+export const ONE_WIRE_SAMPLE_INTERVAL_MS = 10 * 60_000;
 export function firmwarePollDue(lastPollAt, now = Date.now()) {
     if (!lastPollAt)
         return true;
@@ -22,6 +23,12 @@ export function officialReleaseRefreshDue(lastCheckedAt, now = Date.now()) {
         return true;
     const parsed = Date.parse(lastCheckedAt);
     return !Number.isFinite(parsed) || now - parsed >= OFFICIAL_RELEASE_REFRESH_INTERVAL_MS;
+}
+export function oneWireSampleDue(lastAttemptAt, now = Date.now()) {
+    if (!lastAttemptAt)
+        return true;
+    const parsed = Date.parse(lastAttemptAt);
+    return !Number.isFinite(parsed) || now - parsed >= ONE_WIRE_SAMPLE_INTERVAL_MS;
 }
 export function automaticFleetChecksAllowed(startedAt, now = Date.now(), intervalMs = config.fullCheckIntervalMinutes * 60_000) {
     return now - startedAt >= intervalMs;
@@ -102,6 +109,7 @@ export class JobQueue {
     timer = null;
     ticking = false;
     monitorChecking = false;
+    oneWireSampling = false;
     startedAt = Date.now();
     constructor(db) {
         this.db = db;
@@ -170,6 +178,7 @@ export class JobQueue {
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeCheckHomeAssistantServices(forceFullCheck);
+            void this.maybeSampleOneWireTemperatures();
             this.maybePurgeHistory();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
@@ -271,6 +280,53 @@ export class JobQueue {
         }
         finally {
             this.monitorChecking = false;
+        }
+    }
+    async maybeSampleOneWireTemperatures() {
+        if (this.oneWireSampling)
+            return;
+        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_onewire_sample_attempt_at'").get();
+        if (!oneWireSampleDue(last?.value))
+            return;
+        const fullCheck = this.db.prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')").get();
+        if (fullCheck?.ok)
+            return;
+        const rows = this.db.prepare(`SELECT DISTINCT d.serial FROM device_inventory d
+       WHERE lower(d.type) LIKE '%onewire%'
+         AND EXISTS (SELECT 1 FROM miniservers m WHERE m.serial=d.serial)
+         AND NOT EXISTS (
+           SELECT 1 FROM action_jobs j
+           WHERE j.serial=d.serial AND j.kind='check' AND j.state IN ('queued','running')
+         )
+       ORDER BY d.serial`).all();
+        const attemptedAt = new Date().toISOString();
+        setSetting(this.db, "last_onewire_sample_attempt_at", attemptedAt);
+        if (!rows.length) {
+            setSetting(this.db, "last_onewire_sample_completed_at", attemptedAt);
+            return;
+        }
+        this.oneWireSampling = true;
+        try {
+            for (let offset = 0; offset < rows.length; offset += config.checkConcurrency) {
+                const batch = rows.slice(offset, offset + config.checkConcurrency);
+                const results = await Promise.allSettled(batch.map(async ({ serial }) => ({
+                    serial,
+                    devices: await sampleOneWireTemperaturesFromStoredRoute(this.db, serial),
+                })));
+                for (const result of results) {
+                    if (result.status !== "fulfilled" || !result.value.devices)
+                        continue;
+                    const now = new Date().toISOString();
+                    transaction(this.db, () => {
+                        updateDevices(this.db, result.value.serial, { devices: result.value.devices }, now);
+                        persistOneWireSamples(this.db, result.value.serial, result.value.devices, now);
+                    });
+                }
+            }
+            setSetting(this.db, "last_onewire_sample_completed_at", new Date().toISOString());
+        }
+        finally {
+            this.oneWireSampling = false;
         }
     }
     maybePurgeHistory() {
@@ -407,6 +463,8 @@ export class JobQueue {
         }
         const now = new Date().toISOString();
         setSetting(this.db, "last_full_check_at", now);
+        setSetting(this.db, "last_onewire_sample_attempt_at", now);
+        setSetting(this.db, "last_onewire_sample_completed_at", now);
         this.finish(job.id, "succeeded", `Kontrola dokončena: ${online}/${rows.length} online.`, { online, total: rows.length });
         audit(this.db, "fleet.check_completed", job.actor_user_id, null, { online, total: rows.length, jobId: job.id });
         const hardFailures = Number(this.db.prepare("SELECT COUNT(*) AS count FROM miniservers WHERE connection_state IN ('unavailable','no_access','error')").get().count);

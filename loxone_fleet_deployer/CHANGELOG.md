@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1.1
+
+- Nasazuje Evora Smart Hub 0.5.1 s rozbalovací sekcí LOXONE bez spojovací grafiky.
+- Přidává samostatný desetiminutový sběr teplot 1-Wire přes poslední ověřenou trasu bez dotazů na Remote Connect.
+- Zachovává datový adresář i vratnou kopii předchozího zdroje.
+
 ## 0.5.0.2
 
 - Obsahuje finální sestavení 0.5.0 s vlastním nastavením hesla, českými názvy rolí a omezením servisních interních údajů pouze na správce.

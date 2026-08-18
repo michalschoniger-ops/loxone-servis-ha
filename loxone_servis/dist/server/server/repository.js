@@ -10,6 +10,11 @@ function mapMiniServer(row) {
         hasCredentials: Boolean(row.username_encrypted && row.password_encrypted),
         accessPolicy: row.access_policy,
         targetFirmware: row.target_firmware,
+        firmwarePolicy: row.firmware_policy === "pinned" ? "pinned" : "follow_stable",
+        firmwareChannel: ["beta", "alpha"].includes(row.firmware_channel)
+            ? row.firmware_channel
+            : "stable",
+        manualOnly: row.manual_only === 1,
         currentFirmware: row.current_firmware,
         firmwareRelation: firmwareRelation(row.current_firmware, row.target_firmware),
         connectionState: row.connection_state,
@@ -162,6 +167,12 @@ export function fleetOverview(db) {
         total: servers.length,
         ...availability,
         ...counts,
+        updateEligible: servers.filter((server) => server.connectionState === "online"
+            && server.firmwareRelation === "older"
+            && server.firmwarePolicy === "follow_stable"
+            && server.firmwareChannel === "stable"
+            && !server.excluded
+            && !server.manualOnly).length,
         updating: servers.filter((server) => !["idle", "done", "failed"].includes(server.updateStatus)).length,
         officialReleases: listReleases(db),
         lastFullCheckAt,

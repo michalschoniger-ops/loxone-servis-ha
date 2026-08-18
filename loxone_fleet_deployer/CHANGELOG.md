@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0.2
+
+- Obsahuje finální sestavení 0.5.0 s vlastním nastavením hesla, českými názvy rolí a omezením servisních interních údajů pouze na správce.
+- Přidává cílovou politiku firmwaru a kompaktnější mobilní karty bez změny uložených dat aplikace.
+
+## 0.5.0.1
+
+- Připravuje ověřený balíček Evora Smart Hub 0.5.0 a před výměnou zachová kompletní vratný zdroj stávající instalace.
+- Podporuje bezpečný přechod z lokálních verzí 0.4.14 a 0.4.15 na 0.5.0 bez změny datového adresáře aplikace.
+
 ## 0.4.13.1
 
 - Připravuje ověřený balíček Evora Smart Hub 0.4.13 a před výměnou zachová kompletní vratný zdroj 0.4.12.

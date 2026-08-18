@@ -140,6 +140,7 @@ function applyMigrations(db) {
         credential_source TEXT NOT NULL DEFAULT 'manual',
         access_policy TEXT NOT NULL DEFAULT 'managed',
         target_firmware TEXT NOT NULL DEFAULT '',
+        firmware_policy TEXT NOT NULL DEFAULT 'follow_stable',
         current_firmware TEXT,
         connection_state TEXT NOT NULL DEFAULT 'unknown',
         last_checked_at TEXT,
@@ -222,6 +223,7 @@ function applyMigrations(db) {
     addColumn(db, "miniservers", "loxapp_version TEXT");
     addColumn(db, "miniservers", "current_project_hash TEXT");
     addColumn(db, "miniservers", "firmware_channel TEXT NOT NULL DEFAULT 'stable'");
+    addColumn(db, "miniservers", "firmware_policy TEXT NOT NULL DEFAULT 'follow_stable'");
     addColumn(db, "miniservers", "last_success_at TEXT");
     addColumn(db, "miniservers", "consecutive_failures INTEGER NOT NULL DEFAULT 0");
     addColumn(db, "miniservers", "next_check_at TEXT");

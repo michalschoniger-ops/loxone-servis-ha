@@ -18,7 +18,7 @@ export function persistOfficialReleases(db, releases, checkedAt = new Date().toI
         throw new Error("Chybí stabilní verze Miniserveru");
     db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES('target_firmware',?,?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(stable.version, checkedAt);
-    db.prepare("UPDATE miniservers SET target_firmware=? WHERE firmware_channel='stable' AND excluded=0").run(stable.version);
+    db.prepare("UPDATE miniservers SET target_firmware=? WHERE firmware_channel='stable' AND firmware_policy='follow_stable'").run(stable.version);
     db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES('official_release_checked_at',?,?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(checkedAt, checkedAt);
     db.prepare("DELETE FROM settings WHERE key='official_release_error'").run();

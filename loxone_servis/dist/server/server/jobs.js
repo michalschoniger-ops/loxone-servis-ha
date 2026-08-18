@@ -470,9 +470,9 @@ export class JobQueue {
     }
     async executeFirmwareUpdate(job, serial) {
         const server = this.db
-            .prepare("SELECT current_firmware,target_firmware,excluded,manual_only,firmware_channel FROM miniservers WHERE serial=?")
+            .prepare("SELECT current_firmware,target_firmware,firmware_policy,excluded,manual_only,firmware_channel FROM miniservers WHERE serial=?")
             .get(serial);
-        if (server.excluded || server.manual_only || server.firmware_channel !== "stable") {
+        if (server.excluded || server.manual_only || server.firmware_channel !== "stable" || server.firmware_policy !== "follow_stable") {
             throw new Error("Miniserver je vyřazený z automatických aktualizací.");
         }
         if (firmwareRelation(server.current_firmware, server.target_firmware) !== "older") {
@@ -490,7 +490,8 @@ export class JobQueue {
     async executeBulkFirmwareUpdate(job) {
         const candidates = this.db
             .prepare(`SELECT serial,current_firmware,target_firmware FROM miniservers
-         WHERE excluded=0 AND manual_only=0 AND firmware_channel='stable' AND connection_state='online'`)
+         WHERE excluded=0 AND manual_only=0 AND firmware_channel='stable'
+           AND firmware_policy='follow_stable' AND connection_state='online'`)
             .all();
         const outdated = candidates.filter((row) => firmwareRelation(row.current_firmware, row.target_firmware) === "older");
         for (const row of outdated) {

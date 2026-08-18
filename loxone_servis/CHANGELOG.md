@@ -2,6 +2,9 @@
 
 ## 0.5.0
 
+- Mobilní karty Miniserverů jsou výrazně kompaktnější; stav spojení a počet online prvků jsou v horním řádku a verze firmware je vedlejší údaj.
+- Každý Miniserver může sledovat vždy aktuální Stable verzi, nebo zůstat připnutý na právě zjištěném firmware. Hromadná aktualizace zahrne jen online zařízení s cílem `Vždy aktuální`.
+- Každý přihlášený uživatel si může bezpečně změnit vlastní heslo. Role Technik nevidí servisní úlohy, integrace, schopnosti backendu ani jejich chráněná API.
 - Všech šest souhrnných karet flotily je klikacích. Každá vysvětlí přesnou definici ukazatele a otevře odpovídající filtrovaný seznam Miniserverů.
 - Config je v navigaci vizuálně vnořený pod LOXONE. Složky zůstávají ve výchozím stavu sbalené a samostatný Miniserver se nezobrazuje s nadbytečnou rolí.
 - MELCloud dohled běží každých 30 sekund a zobrazuje aktuální i cílovou teplotu, výkon ventilátoru a svislou i vodorovnou polohu lamel.

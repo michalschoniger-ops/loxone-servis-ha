@@ -434,6 +434,7 @@ export async function registerApi(app, db, jobs) {
             project: z.string().min(1).max(250).optional(),
             registered: z.string().max(40).optional(),
             targetFirmware: z.string().regex(/^\d+\.\d+\.\d+\.\d+$/).optional(),
+            firmwarePolicy: z.enum(["follow_stable", "pinned"]).optional(),
             firmwareChannel: z.enum(["stable", "beta", "alpha"]).optional(),
             accessPolicy: z.enum(["managed", "manual", "no_access"]).optional(),
             excluded: z.boolean().optional(),
@@ -446,8 +447,23 @@ export async function registerApi(app, db, jobs) {
         })
             .strict()
             .parse(request.body);
-        if (!getMiniserver(db, serial))
+        const existingServer = getMiniserver(db, serial);
+        if (!existingServer)
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        if (input.firmwarePolicy === "pinned") {
+            if (!existingServer.currentFirmware) {
+                return reply.code(409).send({ error: "Firmware nelze připnout, dokud nebyla zjištěna aktuální verze.", code: "FIRMWARE_UNKNOWN" });
+            }
+            input.targetFirmware = existingServer.currentFirmware;
+        }
+        else if (input.firmwarePolicy === "follow_stable") {
+            const release = db.prepare("SELECT value FROM settings WHERE key='target_firmware'").get();
+            if (!release?.value) {
+                return reply.code(409).send({ error: "Oficiální stabilní verze zatím nebyla načtena.", code: "RELEASE_UNKNOWN" });
+            }
+            input.targetFirmware = release.value;
+            input.firmwareChannel = "stable";
+        }
         if (input.folderId && !db.prepare("SELECT 1 AS ok FROM project_folders WHERE id=?").get(input.folderId)) {
             return reply.code(404).send({ error: "Vybraná složka neexistuje.", code: "FOLDER_NOT_FOUND" });
         }
@@ -467,6 +483,7 @@ export async function registerApi(app, db, jobs) {
             project: "project",
             registered: "registered",
             targetFirmware: "target_firmware",
+            firmwarePolicy: "firmware_policy",
             firmwareChannel: "firmware_channel",
             accessPolicy: "access_policy",
             excluded: "excluded",
@@ -890,13 +907,13 @@ export async function registerApi(app, db, jobs) {
         return reply.send(serviceBundleStream(bundle));
     });
     app.get("/api/jobs", async (request, reply) => {
-        if (!requireRole(request, reply, ["admin", "technician"]))
+        if (!requireRole(request, reply, ["admin"]))
             return;
         const query = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(request.query);
         return { items: jobs.list(query.limit) };
     });
     app.get("/api/jobs/:id", async (request, reply) => {
-        if (!requireRole(request, reply, ["admin", "technician"]))
+        if (!requireRole(request, reply, ["admin"]))
             return;
         const id = z.string().uuid().parse(request.params.id);
         const job = jobs.get(id);
@@ -1000,7 +1017,7 @@ export async function registerApi(app, db, jobs) {
         return { ok: true };
     });
     app.get("/api/capabilities", async (request, reply) => {
-        if (!requireUser(request, reply))
+        if (!requireRole(request, reply, ["admin"]))
             return;
         return {
             features: {

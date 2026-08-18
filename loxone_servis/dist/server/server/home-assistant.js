@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
+import { listHomeAssistantMonitorMap, listHomeAssistantMonitors } from "./ha-service-monitors.js";
 function notificationTarget() {
     if (!config.haNotifyService)
         return null;
@@ -74,7 +75,7 @@ export function normalizeHomeAssistantUrl(value) {
     parsed.pathname = "";
     return parsed.toString().replace(/\/$/, "");
 }
-function mapRow(row) {
+function mapRow(row, monitors = []) {
     return {
         id: row.id,
         name: row.name,
@@ -90,16 +91,19 @@ function mapRow(row) {
         lastSuccessAt: row.last_success_at,
         lastLatencyMs: row.last_latency_ms,
         lastErrorCode: row.last_error,
+        monitors,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
 }
 export function listHomeAssistantInstances(db) {
-    return db.prepare("SELECT * FROM home_assistant_instances ORDER BY name COLLATE NOCASE,id").all().map(mapRow);
+    const monitors = listHomeAssistantMonitorMap(db);
+    return db.prepare("SELECT * FROM home_assistant_instances ORDER BY name COLLATE NOCASE,id").all()
+        .map((row) => mapRow(row, monitors.get(row.id) ?? []));
 }
 export function getHomeAssistantInstance(db, id) {
     const row = db.prepare("SELECT * FROM home_assistant_instances WHERE id=?").get(id);
-    return row ? mapRow(row) : null;
+    return row ? mapRow(row, listHomeAssistantMonitors(db, id)) : null;
 }
 function decryptOptional(value, id, field) {
     return value ? decryptSecret(value, config.masterKey, `home-assistant:${id}:${field}`) : null;

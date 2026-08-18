@@ -77,6 +77,9 @@ else {
         version: config.appVersion,
         mode: "main",
         database: "ready",
+        databaseSchema: 7,
+        oneWireHistory: "ready",
+        homeAssistantServiceMonitors: Number(database.prepare("SELECT COUNT(*) AS count FROM home_assistant_monitors WHERE enabled=1").get().count),
         encryptedBackup: config.backupEnabled ? "ready" : "disabled",
     }));
     await registerEncryptedBackup(app, database);

@@ -324,6 +324,29 @@ function applyMigrations(db) {
       FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_devices_online ON device_inventory(serial, online);
+    CREATE TABLE IF NOT EXISTS onewire_samples (
+      serial TEXT NOT NULL,
+      device_serial TEXT NOT NULL,
+      sampled_at TEXT NOT NULL,
+      temperature_c REAL NOT NULL,
+      PRIMARY KEY(serial,device_serial,sampled_at),
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_onewire_samples_time
+      ON onewire_samples(serial,device_serial,sampled_at DESC);
+    CREATE TABLE IF NOT EXISTS onewire_daily (
+      serial TEXT NOT NULL,
+      device_serial TEXT NOT NULL,
+      day TEXT NOT NULL,
+      sample_count INTEGER NOT NULL,
+      sum_c REAL NOT NULL,
+      min_c REAL NOT NULL,
+      max_c REAL NOT NULL,
+      last_c REAL NOT NULL,
+      last_sampled_at TEXT NOT NULL,
+      PRIMARY KEY(serial,device_serial,day),
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS project_snapshots (
       id TEXT PRIMARY KEY,
       serial TEXT NOT NULL,
@@ -490,6 +513,37 @@ function applyMigrations(db) {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_home_assistant_state ON home_assistant_instances(connection_state);
+    CREATE TABLE IF NOT EXISTS home_assistant_monitors (
+      id TEXT PRIMARY KEY,
+      home_assistant_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('melcloud','solarinvert')),
+      name TEXT NOT NULL,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      state TEXT NOT NULL DEFAULT 'unknown' CHECK(state IN ('unknown','online','warning','unavailable')),
+      last_checked_at TEXT,
+      last_success_at TEXT,
+      last_latency_ms INTEGER,
+      last_error TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(home_assistant_id,kind),
+      FOREIGN KEY(home_assistant_id) REFERENCES home_assistant_instances(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_home_assistant_monitors_state
+      ON home_assistant_monitors(home_assistant_id,state);
+    CREATE TABLE IF NOT EXISTS home_assistant_monitor_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      monitor_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      error_code TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(monitor_id) REFERENCES home_assistant_monitors(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_home_assistant_monitor_events_time
+      ON home_assistant_monitor_events(monitor_id,created_at DESC);
   `);
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
@@ -502,7 +556,30 @@ function applyMigrations(db) {
     FROM firmware_releases
     WHERE version IS NOT NULL
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
+}
+function ensureBuiltInHomeAssistantMonitors(db) {
+    const now = new Date().toISOString();
+    const instances = db.prepare("SELECT id,name FROM home_assistant_instances").all();
+    const insert = db.prepare(`INSERT INTO home_assistant_monitors(id,home_assistant_id,kind,name,config_json,enabled,created_at,updated_at)
+     VALUES(?,?,?,?,?,1,?,?) ON CONFLICT(home_assistant_id,kind) DO UPDATE SET
+       name=excluded.name,config_json=excluded.config_json,enabled=1,updated_at=excluded.updated_at`);
+    for (const instance of instances) {
+        const normalized = instance.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        if (normalized.includes("vagner")) {
+            insert.run(randomUUID(), instance.id, "melcloud", "MELCloud · klimatizace", JSON.stringify({
+                configEntryId: "01KV581K7EQT1JZKYNCG20XXVY",
+                units: ["obyvak", "holka", "kluk", "loznice", "kuchyn"],
+            }), now, now);
+        }
+        if (normalized.includes("herskovic")) {
+            insert.run(randomUUID(), instance.id, "solarinvert", "Větrná elektrárna · SolarInvert", JSON.stringify({
+                transport: "ha_ingress",
+                addonSlug: "local_solarinvert_logger",
+                baseUrl: "http://homeassistant-herskovic.skunk-atria.ts.net:8765",
+            }), now, now);
+        }
+    }
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();
@@ -525,6 +602,7 @@ export function openDatabase() {
     if (integrity.integrity_check !== "ok")
         throw new Error(`Databáze neprošla kontrolou integrity: ${integrity.integrity_check}`);
     ensureBootstrapAdmin(database);
+    ensureBuiltInHomeAssistantMonitors(database);
     return database;
 }
 export function transaction(db, operation) {

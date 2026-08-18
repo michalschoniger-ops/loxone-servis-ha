@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0
+
+- Všech šest souhrnných karet flotily je klikacích. Každá vysvětlí přesnou definici ukazatele a otevře odpovídající filtrovaný seznam Miniserverů.
+- Config je v navigaci vizuálně vnořený pod LOXONE. Složky zůstávají ve výchozím stavu sbalené a samostatný Miniserver se nezobrazuje s nadbytečnou rolí.
+- MELCloud dohled běží každých 30 sekund a zobrazuje aktuální i cílovou teplotu, výkon ventilátoru a svislou i vodorovnou polohu lamel.
+- Dohled větrné elektrárny na HA Herškovič používá autorizovaný Home Assistant Ingress a samostatně vyhodnocuje logger i oba střídače.
+- Detail 1-Wire čidel zobrazuje teploty a offline čidlo se započítá mezi offline prvky Miniserveru.
+- Stable, Beta a Alpha Config se kontrolují každé 4 hodiny a předchozí oficiální odkazy se uchovávají v archivu verzí.
+
+## 0.4.15
+
+- SolarInvert Logger na HA Herškovič se kontroluje přes autorizovaný Home Assistant Ingress, takže centrální HA Práce nepotřebuje přímý přístup na vzdálený port 8765.
+- Dohled dál vyhodnocuje health/ready stav loggeru a oba střídače samostatně; Ingress relace ani dlouhodobý HA token se neukládají do výsledků nebo logů.
+
+## 0.4.14
+
+- Levá nabídka používá originální značky LOXONE a Home Assistant; přihlašovací karta už nezobrazuje nadbytečné pravé logo EVORA SMART.
+- Stránky LOXONE a Home Assistant mají výraznější zelený a modrý nádech. Nezařazené projekty se zobrazují jako `Ostatní`.
+- Projektové číslo lze upravit přímo v seznamu. Miniservery bez přístupu nebo nedostupné se v každé složce automaticky řadí na konec.
+- Zelený stav `Aktuální` se zobrazí jen při shodě online a celkového počtu prvků; chybějící prvek přepne stav do oranžového upozornění.
+- Teploty online 1-Wire čidel rodiny 28 se ukládají do centrální databáze na HA Práce. Detailní vzorky se uchovávají 13 měsíců a denní minimum, průměr a maximum 5 let; HA Domov zůstává bezstavovým klientem.
+- Detail Miniserveru má záložku `1-Wire` s grafem a rozsahy 24 hodin, 7 dní, 30 dní, 13 měsíců a 5 let.
+- HA Vágner samostatně hlídá stav integrace MELCloud, všech pět klimatizačních jednotek, lokální ping a příliš dlouho čekající zápis.
+- HA Herškovič samostatně hlídá větrnou elektrárnu přes SolarInvert Logger na `homeassistant-herskovic.skunk-atria.ts.net:8765`, jeho health/ready stav, USB, cloud, Loxone spojení a každý ze dvou střídačů zvlášť.
+- Specializované aplikační dohledy běží každé 2 minuty; běžný dohled Home Assistant instalací zůstává dvouhodinový.
+
 ## 0.4.13
 
 - Složky projektů jsou po otevření přehledu ve výchozím stavu sbalené; podsložky se zobrazí až po rozbalení svého rodiče.

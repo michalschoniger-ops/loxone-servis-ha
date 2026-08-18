@@ -6,8 +6,11 @@ import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
 import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } from "./home-assistant.js";
 import { stabilizeAvailability } from "./availability.js";
+import { persistOneWireSamples, purgeOneWireHistory } from "./onewire-history.js";
+import { checkHomeAssistantMonitors, persistHomeAssistantMonitorCheck, purgeHomeAssistantMonitorEvents, } from "./ha-service-monitors.js";
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
+export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
 export function firmwarePollDue(lastPollAt, now = Date.now()) {
     if (!lastPollAt)
         return true;
@@ -89,6 +92,7 @@ function persistCheck(db, serial, result) {
        next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, stabilized.connectionState, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.state === "online" ? result.connection?.baseUrl ?? null : null, now, result.latencyMs, result.state, now, stabilized.consecutiveFailures, stabilized.nextCheckAt, now, serial);
         db.prepare("INSERT INTO availability_events(serial,state,error_code,latency_ms,created_at) VALUES(?,?,?,?,?)").run(serial, result.state, result.errorCode, result.latencyMs, now);
         updateDevices(db, serial, result, now);
+        persistOneWireSamples(db, serial, result.devices, now);
         return stabilized;
     });
 }
@@ -97,6 +101,7 @@ export class JobQueue {
     running = 0;
     timer = null;
     ticking = false;
+    monitorChecking = false;
     startedAt = Date.now();
     constructor(db) {
         this.db = db;
@@ -164,6 +169,8 @@ export class JobQueue {
             await this.maybeScheduleFullCheck(forceFullCheck);
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
+            await this.maybeCheckHomeAssistantServices(forceFullCheck);
+            this.maybePurgeHistory();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
                     .prepare("SELECT * FROM action_jobs WHERE state='queued' ORDER BY created_at LIMIT 1")
@@ -235,6 +242,44 @@ export class JobQueue {
             .get();
         if (!existing?.ok)
             this.enqueue("ha_bulk_check", null, null, { scheduled: !force });
+    }
+    async maybeCheckHomeAssistantServices(force) {
+        if (this.monitorChecking)
+            return;
+        const table = this.db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='home_assistant_monitors'").get();
+        if (!table?.ok)
+            return;
+        const count = Number(this.db.prepare("SELECT COUNT(*) AS count FROM home_assistant_monitors WHERE enabled=1").get().count);
+        if (!count)
+            return;
+        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_ha_service_monitor_at'").get();
+        if (!force && last?.value && Date.now() - Date.parse(last.value) < HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS)
+            return;
+        this.monitorChecking = true;
+        try {
+            const instances = this.db.prepare(`SELECT DISTINCT h.id FROM home_assistant_instances h
+         JOIN home_assistant_monitors m ON m.home_assistant_id=h.id
+         WHERE h.monitoring_enabled=1 AND m.enabled=1 ORDER BY h.id`).all();
+            for (let offset = 0; offset < instances.length; offset += config.checkConcurrency) {
+                const batch = instances.slice(offset, offset + config.checkConcurrency);
+                const results = await Promise.all(batch.map(({ id }) => checkHomeAssistantMonitors(this.db, id)));
+                for (const monitorResults of results)
+                    for (const result of monitorResults)
+                        persistHomeAssistantMonitorCheck(this.db, result);
+            }
+            setSetting(this.db, "last_ha_service_monitor_at", new Date().toISOString());
+        }
+        finally {
+            this.monitorChecking = false;
+        }
+    }
+    maybePurgeHistory() {
+        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_history_purge_at'").get();
+        if (last?.value && Date.now() - Date.parse(last.value) < 24 * 60 * 60_000)
+            return;
+        purgeOneWireHistory(this.db);
+        purgeHomeAssistantMonitorEvents(this.db);
+        setSetting(this.db, "last_history_purge_at", new Date().toISOString());
     }
     async maybeScheduleTopologyDiscovery() {
         const fleetCheck = this.db
@@ -378,6 +423,9 @@ export class JobQueue {
         this.step(job.id, "connect", "running", "Ověřuji adresu a API Home Assistantu.");
         const result = await checkHomeAssistant(this.db, id);
         persistHomeAssistantCheck(this.db, id, result);
+        const monitorResults = result.connectionState === "online" ? await checkHomeAssistantMonitors(this.db, id) : [];
+        for (const monitorResult of monitorResults)
+            persistHomeAssistantMonitorCheck(this.db, monitorResult);
         if (result.connectionState === "online") {
             const version = result.version ? ` · Core ${result.version}` : "";
             this.finish(job.id, "succeeded", `Home Assistant je online${version}.`, result);
@@ -396,6 +444,11 @@ export class JobQueue {
             const results = await Promise.all(batch.map(async ({ id }) => ({ id, result: await checkHomeAssistant(this.db, id) })));
             for (const { id, result } of results) {
                 persistHomeAssistantCheck(this.db, id, result);
+                if (result.connectionState === "online") {
+                    const monitorResults = await checkHomeAssistantMonitors(this.db, id);
+                    for (const monitorResult of monitorResults)
+                        persistHomeAssistantMonitorCheck(this.db, monitorResult);
+                }
                 completed += 1;
                 if (result.connectionState === "online")
                     online += 1;

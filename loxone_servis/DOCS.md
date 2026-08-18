@@ -29,7 +29,13 @@ Při použití Tailscale Funnel nastavte `share_homeassistant: funnel`, zvolený
 
 Tlačítko **Zjistit strukturu** vědomě načte z každého dostupného Miniserveru `/data/LoxAPP3.json`. Hodnota `msInfo.gatewayType` určí roli a známá SN nalezená v projektu Gateway vytvoří vazbu na Clienta pouze tehdy, když je výsledek jednoznačný. Neurčené nebo neodpovídající Clienty aplikace ponechá bez rodiče. Procházení topologie se automaticky nespouští a nikdy nepřepíše ručně nastavenou roli či vazbu.
 
-Tlačítko **Složky** vytváří společné skupiny pro projekty s více samostatnými Miniservery nebo více systémy Gateway/Client. Smazání složky nemaže Miniservery; pouze je přesune do skupiny **Bez složky**.
+Tlačítko **Složky** vytváří společné skupiny pro projekty s více samostatnými Miniservery nebo více systémy Gateway/Client. Smazání složky nemaže Miniservery; pouze je přesune do skupiny **Ostatní**.
+
+## 1-Wire historie a aplikační dohled
+
+Online teplotní 1-Wire čidla rodiny 28 se při pravidelné kontrole Miniserveru ukládají pouze do centrální databáze HA Práce. Jednotlivé vzorky se uchovávají 13 měsíců a denní minimum, průměr a maximum 5 let. HA Domov data pouze zobrazuje přes `canonical_base_url` a nic lokálně neukládá.
+
+U instalace **HA Vágner** se každých 30 sekund samostatně kontroluje integrace MELCloud, pět klimatizačních jednotek, jejich lokální ping, příliš dlouho čekající zápis, teploty, ventilátor a polohy lamel. U instalace **HA Herškovič** se stejným intervalem kontroluje větrná elektrárna přes autorizovaný Home Assistant Ingress doplňku SolarInvert Logger: health/ready stav, USB, cloud, spojení s Loxone a každý ze dvou střídačů zvlášť. Centrální HA Práce proto nemusí otevírat ani opakovaně oslovovat vzdálený port 8765.
 
 ## Data a zálohy
 

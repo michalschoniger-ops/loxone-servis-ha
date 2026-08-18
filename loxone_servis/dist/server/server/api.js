@@ -11,6 +11,7 @@ import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBu
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { clearHomeAssistantSecrets, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
+import { readOneWireHistory } from "./onewire-history.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 function confirmationHeader(headers) {
@@ -376,6 +377,15 @@ export async function registerApi(app, db, jobs) {
             .prepare("SELECT state,error_code,latency_ms,created_at FROM availability_events WHERE serial=? ORDER BY created_at DESC LIMIT 200")
             .all(serial);
         return { server, devices, health, projectChanges, availability };
+    });
+    app.get("/api/miniservers/:serial/onewire", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const query = z.object({ range: z.enum(["24h", "7d", "30d", "13m", "5y"]).default("30d") }).parse(request.query);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        return readOneWireHistory(db, serial, query.range);
     });
     app.post("/api/miniservers", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);

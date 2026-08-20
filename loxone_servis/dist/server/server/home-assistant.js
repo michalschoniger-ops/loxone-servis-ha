@@ -43,6 +43,30 @@ export async function notifyHomeAssistant(options) {
         return false;
     }
 }
+function parseUpdates(value) {
+    if (!value)
+        return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.filter((item) => Boolean(item && typeof item === "object" && typeof item.entityId === "string")) : [];
+    }
+    catch {
+        return [];
+    }
+}
+function updateCategory(entityId) {
+    if (entityId === "update.home_assistant_core_update")
+        return "core";
+    if (entityId === "update.home_assistant_supervisor_update")
+        return "supervisor";
+    if (entityId === "update.home_assistant_operating_system_update")
+        return "os";
+    if (entityId.includes("addon"))
+        return "addon";
+    if (entityId.includes("integration"))
+        return "integration";
+    return "other";
+}
 function isPrivateIpv4(hostname) {
     if (isIP(hostname) !== 4)
         return false;
@@ -76,6 +100,7 @@ export function normalizeHomeAssistantUrl(value) {
     return parsed.toString().replace(/\/$/, "");
 }
 function mapRow(row, monitors = []) {
+    const updates = parseUpdates(row.updates_json);
     return {
         id: row.id,
         name: row.name,
@@ -91,6 +116,9 @@ function mapRow(row, monitors = []) {
         lastSuccessAt: row.last_success_at,
         lastLatencyMs: row.last_latency_ms,
         lastErrorCode: row.last_error,
+        updates,
+        pendingUpdates: updates.length,
+        updatesCheckedAt: row.updates_checked_at,
         monitors,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -116,6 +144,34 @@ export function getHomeAssistantCredentials(db, id) {
         username: decryptOptional(row.username_encrypted, id, "username"),
         password: decryptOptional(row.password_encrypted, id, "password"),
     };
+}
+export function getHomeAssistantAccessToken(db, id) {
+    const row = db.prepare("SELECT base_url,access_token_encrypted FROM home_assistant_instances WHERE id=?").get(id);
+    if (!row?.access_token_encrypted)
+        return null;
+    return { baseUrl: row.base_url, token: decryptOptional(row.access_token_encrypted, id, "access-token") };
+}
+export async function callHomeAssistantService(db, id, domain, service, data = {}) {
+    const allowed = (domain === "homeassistant" && service === "restart") || (domain === "update" && service === "install");
+    if (!allowed)
+        throw new Error("Tato služba Home Assistantu není povolena.");
+    const access = getHomeAssistantAccessToken(db, id);
+    if (!access)
+        throw new Error("Home Assistant nemá uložený dlouhodobý token.");
+    const response = await fetch(`${access.baseUrl}/api/services/${domain}/${service}`, {
+        method: "POST",
+        redirect: "manual",
+        signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 20_000)),
+        headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${access.token}`,
+            "Content-Type": "application/json",
+            "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}`,
+        },
+        body: JSON.stringify(data),
+    });
+    if (!response.ok)
+        throw new Error(`Home Assistant odmítl službu (${response.status}).`);
 }
 export function saveHomeAssistantSecrets(db, id, secrets) {
     const fields = [];
@@ -169,10 +225,10 @@ export async function checkHomeAssistant(db, id) {
             headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}` },
         });
         if (response.status < 200 || response.status >= 400) {
-            return { connectionState: "unavailable", authState: row.auth_state, version: null, locationName: null, latencyMs: Date.now() - started, errorCode: `http_${response.status}` };
+            return { connectionState: "unavailable", authState: row.auth_state, version: null, locationName: null, latencyMs: Date.now() - started, errorCode: `http_${response.status}`, updates: [] };
         }
         if (!row.access_token_encrypted) {
-            return { connectionState: "online", authState: "not_configured", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: null };
+            return { connectionState: "online", authState: "not_configured", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: null, updates: [] };
         }
         token = decryptOptional(row.access_token_encrypted, id, "access-token");
         const configResponse = await fetch(`${row.base_url}/api/config`, {
@@ -185,12 +241,34 @@ export async function checkHomeAssistant(db, id) {
             },
         });
         if (configResponse.status === 401 || configResponse.status === 403) {
-            return { connectionState: "online", authState: "invalid", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: "token_rejected" };
+            return { connectionState: "online", authState: "invalid", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: "token_rejected", updates: [] };
         }
         if (!configResponse.ok) {
-            return { connectionState: "online", authState: "unknown", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: `api_http_${configResponse.status}` };
+            return { connectionState: "online", authState: "unknown", version: null, locationName: null, latencyMs: Date.now() - started, errorCode: `api_http_${configResponse.status}`, updates: [] };
         }
         const payload = await configResponse.json();
+        let updates = parseUpdates(row.updates_json);
+        try {
+            const statesResponse = await fetch(`${row.base_url}/api/states`, {
+                redirect: "manual",
+                signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 15_000)),
+                headers: { Accept: "application/json", Authorization: `Bearer ${token}`, "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}` },
+            });
+            if (statesResponse.ok) {
+                const states = await statesResponse.json();
+                updates = states.filter((state) => typeof state.entity_id === "string" && state.entity_id.startsWith("update.") && state.state === "on")
+                    .map((state) => ({
+                    entityId: String(state.entity_id),
+                    title: String(state.attributes?.friendly_name ?? state.attributes?.title ?? state.entity_id),
+                    installedVersion: typeof state.attributes?.installed_version === "string" ? state.attributes.installed_version : null,
+                    latestVersion: typeof state.attributes?.latest_version === "string" ? state.attributes.latest_version : null,
+                    category: updateCategory(String(state.entity_id)),
+                }));
+            }
+        }
+        catch {
+            // Krátký výpadek stavového API nesmí smazat naposledy ověřený seznam aktualizací.
+        }
         return {
             connectionState: "online",
             authState: "valid",
@@ -198,6 +276,7 @@ export async function checkHomeAssistant(db, id) {
             locationName: typeof payload.location_name === "string" ? payload.location_name : null,
             latencyMs: Date.now() - started,
             errorCode: null,
+            updates,
         };
     }
     catch (error) {
@@ -208,6 +287,7 @@ export async function checkHomeAssistant(db, id) {
             locationName: null,
             latencyMs: Date.now() - started,
             errorCode: classifyFetchError(error),
+            updates: parseUpdates(row.updates_json),
         };
     }
 }
@@ -215,5 +295,5 @@ export function persistHomeAssistantCheck(db, id, result) {
     const now = new Date().toISOString();
     db.prepare(`UPDATE home_assistant_instances SET connection_state=?,auth_state=?,version=COALESCE(?,version),
       location_name=COALESCE(?,location_name),last_checked_at=?,last_success_at=CASE WHEN ?='online' THEN ? ELSE last_success_at END,
-      last_latency_ms=?,last_error=?,updated_at=? WHERE id=?`).run(result.connectionState, result.authState, result.version, result.locationName, now, result.connectionState, now, result.latencyMs, result.errorCode, now, id);
+      last_latency_ms=?,last_error=?,updates_json=?,updates_checked_at=?,updated_at=? WHERE id=?`).run(result.connectionState, result.authState, result.version, result.locationName, now, result.connectionState, now, result.latencyMs, result.errorCode, JSON.stringify(result.updates), now, now, id);
 }

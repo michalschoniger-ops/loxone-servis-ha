@@ -28,6 +28,8 @@ function publicUser(row) {
         role: row.role,
         immutable: row.immutable === 1,
         mfaEnabled: row.mfa_enabled === 1,
+        hasAvatar: Boolean(row.avatar_mime),
+        avatarUpdatedAt: row.avatar_updated_at,
     };
 }
 function secureCookie(request) {

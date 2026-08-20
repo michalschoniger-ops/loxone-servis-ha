@@ -67,7 +67,7 @@ export function getMiniserver(db, serial) {
 }
 export function listProjectFolders(db) {
     return db.prepare(`
-    SELECT f.id,f.name,f.description,f.parent_id,p.name AS parent_name,f.sort_order,f.created_at,f.updated_at,
+    SELECT f.id,f.name,f.description,f.color,f.parent_id,p.name AS parent_name,f.sort_order,f.created_at,f.updated_at,
       COUNT(m.serial) AS server_count,
       SUM(CASE WHEN m.gateway_role='gateway' THEN 1 ELSE 0 END) AS gateway_count,
       SUM(CASE WHEN m.gateway_role='client' THEN 1 ELSE 0 END) AS client_count
@@ -80,6 +80,7 @@ export function listProjectFolders(db) {
         id: row.id,
         name: row.name,
         description: row.description,
+        color: row.color || "#58D73A",
         parentId: row.parent_id,
         parentName: row.parent_name,
         sortOrder: row.sort_order,

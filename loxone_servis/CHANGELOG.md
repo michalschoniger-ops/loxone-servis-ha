@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0
+
+- Přidán viditelný bezpečný prostup do Loxone Configu: aplikace nabídne odpovídající verzi Configu, aktuální projekt, adresu Miniserveru a kopírování přístupů bez vkládání hesla do URL nebo příkazové řádky.
+- Složky a podsložky mají volitelnou barvu; barevná hierarchie se propisuje do přehledu i správce složek.
+- Home Assistant Fleet se jmenuje `Servery`, rozlišuje aktuální a čekající aktualizace a po potvrzení umí instalovat HA Core, Supervisor, OS, add-on i integrační aktualizace a restartovat vybraný Home Assistant.
+- Miniservery se automaticky řadí: online a aktuální, ostatní online, nedostupné a nakonec zařízení bez přístupu.
+- LOXONE navigace obsahuje Miniservery, Config, Partner Portal, tickety a podporu včetně dnešní pracovní doby, oficiálního chatu a bezpečného náhradního otevření oficiální stránky.
+- Kontakty na českou LOXONE podporu a LOXONE Vácha jsou dostupné v postranní i mobilní nabídce včetně přímého volání a WhatsAppu.
+- Známé rodiny Loxone prvků zobrazují při najetí nebo klepnutí oficiální produktový náhled; neznámý typ používá bezpečný obecný obrázek.
+- Uživatelé mohou nahrát, změnit a odstranit vlastní profilovou fotografii. Fotografie se zobrazuje jako kruhový avatar u účtu a ve správě uživatelů.
+- Interní servis, správa uživatelů a schopnosti backendu zůstávají skryté technikům podle rolí; restarty a aktualizace vyžadují opětovné potvrzení heslem a zapisují se do auditu.
+
 ## 0.5.2
 
 - Počty Loxone prvků vycházejí pouze z posledního úplného `/data/status` snapshotu: fyzické SN se deduplikují, souhrnné řádky se ignorují a prvky odstraněné z nového snapshotu už nezůstávají falešně offline.

@@ -229,6 +229,9 @@ function applyMigrations(db) {
     addColumn(db, "miniservers", "next_check_at TEXT");
     addColumn(db, "miniservers", "remote_app_url TEXT");
     addColumn(db, "miniservers", "manual_only INTEGER NOT NULL DEFAULT 0");
+    addColumn(db, "users", "avatar_mime TEXT");
+    addColumn(db, "users", "avatar_data TEXT");
+    addColumn(db, "users", "avatar_updated_at TEXT");
     if (!db.prepare("PRAGMA table_info(users)").all().some((column) => column.name === "mfa_enabled")) {
         addColumn(db, "users", "mfa_secret_encrypted TEXT");
         addColumn(db, "users", "mfa_enabled INTEGER NOT NULL DEFAULT 0");
@@ -547,6 +550,9 @@ function applyMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_home_assistant_monitor_events_time
       ON home_assistant_monitor_events(monitor_id,created_at DESC);
   `);
+    addColumn(db, "project_folders", "color TEXT NOT NULL DEFAULT '#58D73A'");
+    addColumn(db, "home_assistant_instances", "updates_json TEXT NOT NULL DEFAULT '[]'");
+    addColumn(db, "home_assistant_instances", "updates_checked_at TEXT");
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
     db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
@@ -587,7 +593,7 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at);
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(8, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(9, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

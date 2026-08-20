@@ -10,7 +10,7 @@ import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExpor
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
-import { clearHomeAssistantSecrets, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
+import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -260,6 +260,41 @@ export async function registerApi(app, db, jobs) {
         const existing = jobs.list(200).find((job) => job.kind === "ha_bulk_check" && ["queued", "running"].includes(job.state));
         return reply.code(202).send({ job: existing ?? jobs.enqueue("ha_bulk_check", null, user.id, { manual: true }) });
     });
+    app.post("/api/home-assistant/:id/restart", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        const item = getHomeAssistantInstance(db, id);
+        if (!item)
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const payload = { id };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "home_assistant_restart", null, payload)) {
+            return reply.code(428).send({ error: "Restart Home Assistantu je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        await callHomeAssistantService(db, id, "homeassistant", "restart");
+        audit(db, "home_assistant.restarted", user.id, null, { id, name: item.name });
+        return { ok: true };
+    });
+    app.post("/api/home-assistant/:id/updates/:entityId/install", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const params = z.object({ id: homeAssistantIdSchema, entityId: z.string().min(1).max(255) }).parse(request.params);
+        const item = getHomeAssistantInstance(db, params.id);
+        if (!item)
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        const update = item.updates.find((candidate) => candidate.entityId === params.entityId);
+        if (!update)
+            return reply.code(409).send({ error: "Aktualizace už není dostupná. Nejprve obnovte kontrolu.", code: "UPDATE_NOT_AVAILABLE" });
+        const payload = { id: params.id, entityId: params.entityId };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "home_assistant_update", null, payload)) {
+            return reply.code(428).send({ error: "Aktualizaci Home Assistantu je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        await callHomeAssistantService(db, params.id, "update", "install", { entity_id: params.entityId, backup: true });
+        audit(db, "home_assistant.update_started", user.id, null, { ...payload, title: update.title, target: update.latestVersion });
+        return { ok: true };
+    });
     app.delete("/api/home-assistant/:id", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
         if (!user)
@@ -283,6 +318,7 @@ export async function registerApi(app, db, jobs) {
         const input = z.object({
             name: z.string().trim().min(1).max(120),
             description: z.string().max(500).default(""),
+            color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#58D73A"),
             parentId: z.string().uuid().nullable().default(null),
         }).strict().parse(request.body);
         if (input.parentId && !db.prepare("SELECT 1 AS ok FROM project_folders WHERE id=?").get(input.parentId)) {
@@ -292,8 +328,8 @@ export async function registerApi(app, db, jobs) {
         const id = randomUUID();
         const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order),-10)+10 AS value FROM project_folders").get().value);
         try {
-            db.prepare("INSERT INTO project_folders(id,name,description,parent_id,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
-                .run(id, input.name, input.description, input.parentId, sortOrder, now, now);
+            db.prepare("INSERT INTO project_folders(id,name,description,color,parent_id,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+                .run(id, input.name, input.description, input.color, input.parentId, sortOrder, now, now);
         }
         catch (error) {
             if (error.message.includes("UNIQUE"))
@@ -311,6 +347,7 @@ export async function registerApi(app, db, jobs) {
         const input = z.object({
             name: z.string().trim().min(1).max(120).optional(),
             description: z.string().max(500).optional(),
+            color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
             parentId: z.string().uuid().nullable().optional(),
             sortOrder: z.number().int().min(0).max(1_000_000).optional(),
         }).strict().parse(request.body);
@@ -325,7 +362,7 @@ export async function registerApi(app, db, jobs) {
         }
         const fields = [];
         const values = [];
-        const columns = { name: "name", description: "description", parentId: "parent_id", sortOrder: "sort_order" };
+        const columns = { name: "name", description: "description", color: "color", parentId: "parent_id", sortOrder: "sort_order" };
         for (const [key, value] of Object.entries(input)) {
             fields.push(`${columns[key]}=?`);
             values.push(value);
@@ -590,6 +627,33 @@ export async function registerApi(app, db, jobs) {
         if (query.purpose === "copy-password")
             return { password: credentials.password };
         return credentials;
+    });
+    app.get("/api/miniservers/:serial/config-bridge", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const server = getMiniserver(db, serial);
+        if (!server)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const credentials = getStoredCredentials(db, serial);
+        const release = fleetOverview(db).officialReleases.find((item) => item.version === server.currentFirmware)
+            ?? fleetOverview(db).officialReleases.find((item) => item.channel === server.firmwareChannel)
+            ?? null;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        audit(db, "miniserver.config_bridge_opened", user.id, serial, { firmware: server.currentFirmware, hasCredentials: Boolean(credentials) });
+        return {
+            serial,
+            project: server.project,
+            firmware: server.currentFirmware,
+            connectionUrl: server.connectionUrl ?? `https://dns.loxonecloud.com/${serial}`,
+            configUrl: release?.configUrl ?? null,
+            configVersion: release?.version ?? server.currentFirmware,
+            currentProgramUrl: user.role === "admin" ? `/api/miniservers/${serial}/exports/current-program` : null,
+            credentials,
+            automaticLaunchSupported: false,
+            launchNote: "Loxone nezveřejňuje podporovaný odkaz pro bezpečné automatické předání hesla do Configu. Bridge proto připraví správnou verzi, projekt, adresu a přístupy ke zkopírování.",
+        };
     });
     app.post("/api/miniservers/:serial/check", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -985,7 +1049,7 @@ export async function registerApi(app, db, jobs) {
             return;
         return {
             items: db
-                .prepare("SELECT id,email,role,immutable,active,mfa_enabled AS mfaEnabled,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY email")
+                .prepare("SELECT id,email,role,immutable,active,mfa_enabled AS mfaEnabled,avatar_mime AS avatarMime,avatar_updated_at AS avatarUpdatedAt,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY email")
                 .all()
                 .map((row) => {
                 const user = row;
@@ -994,9 +1058,50 @@ export async function registerApi(app, db, jobs) {
                     immutable: user.immutable === 1,
                     active: user.active === 1,
                     mfaEnabled: user.mfaEnabled === 1,
+                    hasAvatar: Boolean(user.avatarMime),
                 };
             }),
         };
+    });
+    app.get("/api/users/:id/avatar", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const row = db.prepare("SELECT avatar_mime AS mime,avatar_data AS data,avatar_updated_at AS updatedAt FROM users WHERE id=?").get(id);
+        if (!row?.mime || !row.data)
+            return reply.code(404).send({ error: "Profilová fotografie není nastavena.", code: "AVATAR_NOT_FOUND" });
+        return reply.header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff").type(row.mime).send(Buffer.from(row.data, "base64"));
+    });
+    app.put("/api/users/me/avatar", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const input = z.object({
+            mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+            data: z.string().min(8).max(1_500_000),
+        }).strict().parse(request.body);
+        const data = Buffer.from(input.data, "base64");
+        if (!data.length || data.length > 1_000_000)
+            return reply.code(413).send({ error: "Fotografie může mít nejvýše 1 MB.", code: "AVATAR_TOO_LARGE" });
+        const valid = input.mime === "image/png" ? data.subarray(0, 4).toString("hex") === "89504e47"
+            : input.mime === "image/jpeg" ? data.subarray(0, 3).toString("hex") === "ffd8ff"
+                : data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+        if (!valid)
+            return reply.code(400).send({ error: "Soubor neodpovídá zvolenému formátu fotografie.", code: "INVALID_AVATAR" });
+        const now = new Date().toISOString();
+        db.prepare("UPDATE users SET avatar_mime=?,avatar_data=?,avatar_updated_at=?,updated_at=? WHERE id=?")
+            .run(input.mime, data.toString("base64"), now, now, user.id);
+        audit(db, "user.avatar_updated", user.id, null, { mime: input.mime, bytes: data.length });
+        return { ok: true, avatarUpdatedAt: now };
+    });
+    app.delete("/api/users/me/avatar", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        db.prepare("UPDATE users SET avatar_mime=NULL,avatar_data=NULL,avatar_updated_at=NULL,updated_at=? WHERE id=?")
+            .run(new Date().toISOString(), user.id);
+        audit(db, "user.avatar_removed", user.id, null, {});
+        return { ok: true };
     });
     app.post("/api/users", async (request, reply) => {
         const actor = requireRole(request, reply, ["admin"]);

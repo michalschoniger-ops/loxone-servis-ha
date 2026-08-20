@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0.2
+
+- Odstraňuje z instalačního payloadu rozšířená metadata macOS, která na Linuxu zanechávala skryté soubory v dočasné složce.
+- Doplňuje bezpečné opakované předání cílového Miniserveru při studeném startu Loxone App na iOS.
+
 ## 1.0.0.1
 
 - Připravuje vratné nasazení Evora Smart Hubu 1.0.0 s Config Bridge, Home Assistant Fleet, barevnými složkami, LOXONE podporou, produktovými náhledy a profilovými fotografiemi.

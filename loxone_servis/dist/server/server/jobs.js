@@ -8,6 +8,7 @@ import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } f
 import { stabilizeAvailability } from "./availability.js";
 import { persistOneWireSamples, purgeOneWireHistory } from "./onewire-history.js";
 import { checkHomeAssistantMonitors, persistHomeAssistantMonitorCheck, purgeHomeAssistantMonitorEvents, } from "./ha-service-monitors.js";
+import { portalSyncDue, syncPortal } from "./portal-sync.js";
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
@@ -178,6 +179,7 @@ export class JobQueue {
         try {
             await this.pollFirmwareUpdates();
             await this.maybeRefreshRelease();
+            await this.maybeSchedulePortalSync();
             await this.maybeScheduleFullCheck(forceFullCheck);
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
@@ -212,6 +214,15 @@ export class JobQueue {
             .get();
         if (!existing?.ok)
             this.enqueue("check", null, null, { releaseOnly: true });
+    }
+    async maybeSchedulePortalSync() {
+        if (!portalSyncDue(this.db))
+            return;
+        const existing = this.db
+            .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='portal_sync' AND state IN ('queued','running')")
+            .get();
+        if (!existing?.ok)
+            this.enqueue("portal_sync", null, null, { scheduled: true });
     }
     async maybeScheduleFullCheck(force) {
         if (!force && !automaticFleetChecksAllowed(this.startedAt))
@@ -420,6 +431,13 @@ export class JobQueue {
                     return;
                 case "ha_bulk_check":
                     await this.executeHomeAssistantBulkCheck(job);
+                    return;
+                case "portal_sync":
+                    {
+                        const status = await syncPortal(this.db);
+                        this.finish(job.id, "succeeded", `Loxone Portál: synchronizováno ${status.productCount} zařízení.`, status);
+                        audit(this.db, "portal.sync_completed", job.actor_user_id, null, { productCount: status.productCount, jobId: job.id });
+                    }
                     return;
                 default:
                     throw new Error(`Úloha ${job.kind} zatím nemá obsluhu.`);

@@ -12,6 +12,7 @@ import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
+import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 function confirmationHeader(headers) {
@@ -46,6 +47,37 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return fleetOverview(db);
+    });
+    app.get("/api/portal-sync", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin"]))
+            return;
+        return getPortalSyncStatus(db);
+    });
+    app.post("/api/portal-sync/connect", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const body = z.object({
+            email: z.string().email(),
+            portalPassword: z.string().min(1).max(512),
+        }).parse(request.body);
+        const status = await connectPortal(db, body.email, body.portalPassword);
+        audit(db, "portal.connected", user.id, null, { email: body.email, productCount: status.productCount });
+        return status;
+    });
+    app.post("/api/portal-sync/run", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const existing = jobs.findActive("portal_sync", null);
+        return reply.code(202).send({ job: existing ?? jobs.enqueueUnique("portal_sync", null, user.id, { manual: true }) });
+    });
+    app.delete("/api/portal-sync", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        audit(db, "portal.disconnected", user.id, null, {});
+        return disconnectPortal(db);
     });
     app.get("/api/releases/history", async (request, reply) => {
         if (!requireUser(request, reply))

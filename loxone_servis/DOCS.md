@@ -31,6 +31,14 @@ Tlačítko **Zjistit strukturu** vědomě načte z každého dostupného Miniser
 
 Tlačítko **Složky** vytváří společné skupiny pro projekty s více samostatnými Miniservery nebo více systémy Gateway/Client. Smazání složky nemaže Miniservery; pouze je přesune do skupiny **Ostatní**.
 
+## Denní synchronizace Loxone Partner Portalu
+
+Správce může v **Nástroje → Synchronizace Loxone Partner Portalu** propojit firemní účet a okamžitě načíst seznam registrovaných Miniserverů. Další synchronizace proběhne automaticky jednou za 24 hodin pouze na centrálním HA Práce; HA Domov i weboví klienti používají stejná centrální data a nevytvářejí další požadavky.
+
+Heslo se odešle jen při navázání relace a aplikace je neukládá do databáze, logu ani konfigurace. Ukládá pouze obnovovací token zašifrovaný stejným AES-256-GCM klíčem jako ostatní servisní přístupy. Pokud Loxone relaci zneplatní nebo změní přihlašovací rozhraní, synchronizace se bezpečně zastaví a správce musí účet znovu propojit.
+
+Import porovnává záznamy podle sériového čísla. Nový Miniserver založí bez servisního hesla; u již známého záznamu aktualizuje typ, datum registrace a název projektu pouze dokud jej stále spravuje portál. Ruční změny přístupů, složek, Gateway/Client vazeb, poznámek a cíle firmware nepřepisuje a záznamy, které z portálu zmizí, automaticky nemaže.
+
 ## 1-Wire historie a aplikační dohled
 
 Online teplotní 1-Wire čidla rodiny 28 se při pravidelné kontrole Miniserveru ukládají pouze do centrální databáze HA Práce. Jednotlivé vzorky se uchovávají 13 měsíců a denní minimum, průměr a maximum 5 let. HA Domov data pouze zobrazuje přes `canonical_base_url` a nic lokálně neukládá.

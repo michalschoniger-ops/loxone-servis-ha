@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- Správce může bezpečně propojit Loxone Partner Portal a jednou denně synchronizovat nově registrované Miniservery podle sériového čísla, typu, názvu projektu a data registrace.
+- Heslo k Partner Portalu se používá pouze pro jednorázové přihlášení a nikdy se neukládá. Obnovovací token je uložený šifrovaně v centrálním HA Práce; při vypršení přístupu aplikace vyžádá nové připojení.
+- Synchronizace je nedestruktivní: doplní nové záznamy a portálem spravované názvy, ale nepřepisuje servisní přístupy, složky, topologii, poznámky ani politiku firmware a sama nic nemaže.
+- Mobilní nabídka má vždy dostupné odhlášení, Config se na telefonu nezobrazuje a profilová fotografie se správně načte i přes Home Assistant Ingress.
+- Kontakty podpory používají přímé ikony telefonu a WhatsAppu; nefunkční prázdné vložení cizího chatu bylo odstraněno.
+- Opraveno zarovnání ukazatele v grafu 1-Wire a přímý odkaz na seznam tiketů v Loxone Partner Portalu.
+
 ## 1.0.0
 
 - Přidán viditelný bezpečný prostup do Loxone Configu: aplikace nabídne odpovídající verzi Configu, aktuální projekt, adresu Miniserveru a kopírování přístupů bez vkládání hesla do URL nebo příkazové řádky.

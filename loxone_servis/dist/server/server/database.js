@@ -553,6 +553,11 @@ function applyMigrations(db) {
     addColumn(db, "project_folders", "color TEXT NOT NULL DEFAULT '#58D73A'");
     addColumn(db, "home_assistant_instances", "updates_json TEXT NOT NULL DEFAULT '[]'");
     addColumn(db, "home_assistant_instances", "updates_checked_at TEXT");
+    addColumn(db, "miniservers", "portal_product_id TEXT");
+    addColumn(db, "miniservers", "portal_last_seen_at TEXT");
+    addColumn(db, "miniservers", "portal_synced_project TEXT");
+    addColumn(db, "miniservers", "portal_synced_type TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_miniservers_portal_seen ON miniservers(portal_last_seen_at)");
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
     db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
@@ -593,7 +598,7 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at);
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(9, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(10, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

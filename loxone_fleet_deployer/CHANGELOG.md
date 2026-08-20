@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1.1
+
+- Nasazuje Evora Smart Hub 1.0.1 s bezpečnou denní synchronizací Loxone Partner Portalu a opravami mobilního odhlášení, profilových fotografií, podpory a grafu 1-Wire.
+- Před výměnou zachová kompletní vratný zdroj 1.0.0 a nijak nemění datový adresář ani uložené šifrované přístupy.
+
 ## 1.0.0.2
 
 - Odstraňuje z instalačního payloadu rozšířená metadata macOS, která na Linuxu zanechávala skryté soubory v dočasné složce.

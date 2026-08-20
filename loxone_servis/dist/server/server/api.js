@@ -9,7 +9,7 @@ import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOp
 import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
-import { wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
+import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { clearHomeAssistantSecrets, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
@@ -61,6 +61,50 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listProjectFolders(db) };
+    });
+    app.get("/api/folders/:id/detail", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const query = z.object({ range: z.enum(["24h", "7d", "30d", "13m", "5y"]).default("30d") }).parse(request.query);
+        const folders = listProjectFolders(db);
+        const folder = folders.find((item) => item.id === id);
+        if (!folder)
+            return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
+        const folderIds = new Set([id, ...projectFolderDescendantIds(folders, id)]);
+        const servers = listMiniservers(db).filter((server) => server.folderId && folderIds.has(server.folderId));
+        const serials = servers.map((server) => server.serial);
+        const serverBySerial = new Map(servers.map((server) => [server.serial, server]));
+        const devices = serials.length
+            ? db.prepare(`SELECT serial AS serverSerial,device_serial AS serial,parent_serial AS parentSerial,name,type,firmware,online,
+                first_offline_at AS firstOfflineAt,last_seen_at AS lastSeenAt,system_message AS systemMessage,
+                device_index AS deviceIndex,source,updated_at AS updatedAt,
+                json_extract(payload_json,'$.temperatureC') AS temperatureC,
+                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt
+         FROM device_inventory
+         WHERE serial IN (${serials.map(() => "?").join(",")})
+           AND device_serial NOT GLOB '*[^0-9A-F]*' AND length(device_serial) BETWEEN 6 AND 16
+         ORDER BY online,name COLLATE NOCASE`).all(...serials).map((row) => {
+                const item = row;
+                const server = serverBySerial.get(String(item.serverSerial));
+                return { ...item, serverProject: server?.project ?? String(item.serverSerial) };
+            })
+            : [];
+        const oneWireSensors = servers.flatMap((server) => readOneWireHistory(db, server.serial, query.range).sensors.map((sensor) => ({
+            ...sensor,
+            serverSerial: server.serial,
+            serverProject: server.project,
+        })));
+        const online = devices.filter((device) => Number(device.online) === 1).length;
+        return {
+            folder,
+            folderIds: [...folderIds],
+            servers,
+            devices,
+            totals: { servers: servers.length, devices: devices.length, online, offline: devices.length - online },
+            range: query.range,
+            oneWireSensors,
+        };
     });
     app.get("/api/home-assistant", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -363,7 +407,9 @@ export async function registerApi(app, db, jobs) {
                 last_seen_at AS lastSeenAt,system_message AS systemMessage,device_index AS deviceIndex,source,updated_at AS updatedAt,
                 json_extract(payload_json,'$.temperatureC') AS temperatureC,
                 json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt
-         FROM device_inventory WHERE serial=? ORDER BY online,name COLLATE NOCASE`)
+         FROM device_inventory
+         WHERE serial=? AND device_serial NOT GLOB '*[^0-9A-F]*' AND length(device_serial) BETWEEN 6 AND 16
+         ORDER BY online,name COLLATE NOCASE`)
             .all(serial);
         const health = db
             .prepare("SELECT * FROM health_snapshots WHERE serial=? ORDER BY checked_at DESC LIMIT 20")

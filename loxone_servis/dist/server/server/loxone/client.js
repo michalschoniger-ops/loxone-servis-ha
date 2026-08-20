@@ -374,10 +374,8 @@ function normalizeDeviceSerial(value) {
     return normalized.length >= 6 && normalized.length <= 16 ? normalized : null;
 }
 export function parseStatusXml(xml) {
-    const devices = [];
+    const devicesBySerial = new Map();
     const messages = [];
-    let genericOnline = 0;
-    let genericTotal = 0;
     for (const match of xml.matchAll(/<([A-Za-z0-9_:-]+)\b([^>]*)>/g)) {
         const tag = match[1];
         const attrs = match[2];
@@ -391,9 +389,6 @@ export function parseStatusXml(xml) {
             continue;
         const online = onlineValue?.toLowerCase() === "true" || onlineValue === "1" || stateValue === "online";
         const offline = offlineValue?.toLowerCase() === "true" || offlineValue === "1" || stateValue === "offline";
-        genericTotal += 1;
-        if (online && !offline)
-            genericOnline += 1;
         const serial = normalizeDeviceSerial(attribute(attrs, "Serial") ?? attribute(attrs, "SerialNr") ?? attribute(attrs, "SN") ?? attribute(attrs, "Mac"));
         const message = attribute(attrs, "Message") ?? attribute(attrs, "Error") ?? attribute(attrs, "StatusText");
         if (message && !online)
@@ -401,7 +396,7 @@ export function parseStatusXml(xml) {
         if (!serial)
             continue;
         const tagLower = tag.toLowerCase();
-        devices.push({
+        const candidate = {
             serial,
             name: attribute(attrs, "Name") ?? attribute(attrs, "Title") ?? serial,
             type: attribute(attrs, "Type") ?? tag,
@@ -414,9 +409,35 @@ export function parseStatusXml(xml) {
             deviceIndex: Number.isFinite(Number(attribute(attrs, "DeviceIndex"))) ? Number(attribute(attrs, "DeviceIndex")) : null,
             systemMessage: message,
             source: tagLower.includes("extension") ? "extension" : tagLower.includes("tree") || tagLower.includes("air") ? "device" : "status",
+        };
+        const existing = devicesBySerial.get(serial);
+        if (!existing) {
+            devicesBySerial.set(serial, candidate);
+            continue;
+        }
+        const sourceRank = { status: 0, device: 1, extension: 2 };
+        devicesBySerial.set(serial, {
+            ...existing,
+            name: existing.name === serial && candidate.name !== serial ? candidate.name : existing.name,
+            type: sourceRank[candidate.source] > sourceRank[existing.source] ? candidate.type : existing.type,
+            family: existing.family ?? candidate.family,
+            // A duplicated physical element must never be reported online when any
+            // authoritative status row says it is offline.
+            online: existing.online && candidate.online,
+            firmware: existing.firmware ?? candidate.firmware,
+            parentSerial: existing.parentSerial ?? candidate.parentSerial,
+            deviceIndex: existing.deviceIndex ?? candidate.deviceIndex,
+            systemMessage: candidate.systemMessage ?? existing.systemMessage,
+            source: sourceRank[candidate.source] > sourceRank[existing.source] ? candidate.source : existing.source,
         });
     }
-    return { online: genericOnline, total: genericTotal, devices, messages: [...new Set(messages)] };
+    const devices = [...devicesBySerial.values()];
+    return {
+        online: devices.filter((device) => device.online).length,
+        total: devices.length,
+        devices,
+        messages: [...new Set(messages)],
+    };
 }
 export function parseTemperatureC(value) {
     const match = String(value ?? "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);

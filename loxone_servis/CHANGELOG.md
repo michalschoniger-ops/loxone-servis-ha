@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.2
+
+- Počty Loxone prvků vycházejí pouze z posledního úplného `/data/status` snapshotu: fyzické SN se deduplikují, souhrnné řádky se ignorují a prvky odstraněné z nového snapshotu už nezůstávají falešně offline.
+- Stav Miniserveru je oddělen od stavu jeho prvků. Řádek ukazuje `Odpovídá` nebo `Neodpovídá`; skutečný výpadek prvku se zobrazí oranžově jako `Online: x/y prvků`.
+- Detail složky slučuje Miniservery všech podsložek a nabízí společný přehled prvků, souhrnný počet online/offline, vyhledávání a historii 1-Wire teplot.
+- Graf 1-Wire má časovou a teplotní stupnici a při najetí nebo dotyku ukáže přesný čas a hodnotu vzorku. Jednotlivé prvky i 1-Wire lze vyhledávat.
+- Sériové číslo je v přehledu zvýrazněné, firmware je kompaktnější a mobilní karty respektují iPhone safe-area bez automatického přiblížení.
+- Přihlašování podporuje Passkeys přes WebAuthn: Face ID, Touch ID a Windows Hello. Registrace i přihlášení vyžadují ověření uživatele a jednorázovou krátce platnou challenge.
+- Generátor hesel má jako výchozí délku 32 znaků, velká písmena a čísla; malá písmena a symboly zůstávají volitelné.
+- Technik nevidí servisní úlohy, uživatelskou správu ani interní schopnosti backendu; chráněná API používají stejná oprávnění jako rozhraní.
+- Zelené LOXONE a modré Home Assistant pozadí plynule vyplňuje dostupnou plochu na iPhonu, iPadu i Macu.
+
 ## 0.5.1
 
 - LOXONE v navigaci nyní funguje jako rozbalovací rodič položky Config bez spojovací grafiky.

@@ -56,7 +56,7 @@ function safeJson(value) {
         return {};
     }
 }
-function updateDevices(db, serial, result, now) {
+export function syncDeviceInventory(db, serial, result, now, completeSnapshot = false) {
     const seen = new Set(result.devices.map((device) => device.serial));
     const upsert = db.prepare(`INSERT INTO device_inventory(serial,device_serial,parent_serial,name,type,firmware,online,first_offline_at,last_seen_at,
        system_message,device_index,source,payload_json,updated_at)
@@ -73,10 +73,14 @@ function updateDevices(db, serial, result, now) {
             temperatureUpdatedAt: device.temperatureUpdatedAt,
         }), now);
     }
-    if (seen.size) {
+    if (completeSnapshot) {
+        const remove = db.prepare("DELETE FROM device_inventory WHERE serial=? AND device_serial=?");
         for (const row of db.prepare("SELECT device_serial FROM device_inventory WHERE serial=?").all(serial)) {
             if (!seen.has(row.device_serial)) {
-                db.prepare("UPDATE device_inventory SET online=0,first_offline_at=COALESCE(first_offline_at,?),updated_at=? WHERE serial=? AND device_serial=?").run(now, now, serial, row.device_serial);
+                // /data/status is the complete current inventory and already contains
+                // devices that are genuinely offline. A serial missing from the next
+                // successful snapshot is stale, not another offline element.
+                remove.run(serial, row.device_serial);
             }
         }
     }
@@ -98,7 +102,7 @@ function persistCheck(db, serial, result) {
        consecutive_failures=?,
        next_check_at=?,updated_at=? WHERE serial=?`).run(result.firmware, stabilized.connectionState, now, result.errorCode, result.elementsOnline, result.elementsTotal, JSON.stringify(result.rawStatusSummary), now, result.elementsTotal === null ? result.errorCode : null, result.connection?.baseUrl ?? null, result.connection?.source ?? null, result.state === "online" ? result.connection?.baseUrl ?? null : null, now, result.latencyMs, result.state, now, stabilized.consecutiveFailures, stabilized.nextCheckAt, now, serial);
         db.prepare("INSERT INTO availability_events(serial,state,error_code,latency_ms,created_at) VALUES(?,?,?,?,?)").run(serial, result.state, result.errorCode, result.latencyMs, now);
-        updateDevices(db, serial, result, now);
+        syncDeviceInventory(db, serial, result, now, result.state === "online" && result.elementsTotal !== null);
         persistOneWireSamples(db, serial, result.devices, now);
         return stabilized;
     });
@@ -318,7 +322,9 @@ export class JobQueue {
                         continue;
                     const now = new Date().toISOString();
                     transaction(this.db, () => {
-                        updateDevices(this.db, result.value.serial, { devices: result.value.devices }, now);
+                        // The fast sampler also reads the complete /data/status document;
+                        // only the temperature enrichment is partial.
+                        syncDeviceInventory(this.db, result.value.serial, { devices: result.value.devices }, now, true);
                         persistOneWireSamples(this.db, result.value.serial, result.value.devices, now);
                     });
                 }

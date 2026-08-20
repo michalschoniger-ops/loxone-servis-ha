@@ -558,7 +558,36 @@ function applyMigrations(db) {
     FROM firmware_releases
     WHERE version IS NOT NULL
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS passkey_credentials (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      credential_id TEXT NOT NULL UNIQUE,
+      public_key BLOB NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports_json TEXT NOT NULL DEFAULT '[]',
+      device_type TEXT NOT NULL,
+      backed_up INTEGER NOT NULL DEFAULT 0,
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_passkey_credentials_user ON passkey_credentials(user_id);
+    CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('registration','authentication')),
+      challenge TEXT NOT NULL,
+      rp_id TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at);
+  `);
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(8, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

@@ -22,8 +22,8 @@ function mapMiniServer(row) {
         lastSuccessAt: row.last_success_at,
         consecutiveFailures: Number(row.consecutive_failures ?? 0),
         lastErrorCode: row.last_error,
-        elementsOnline: row.elements_online,
-        elementsTotal: row.elements_total,
+        elementsOnline: row.inventory_total > 0 ? Number(row.inventory_online) : row.elements_online,
+        elementsTotal: row.inventory_total > 0 ? Number(row.inventory_total) : row.elements_total,
         updateStatus: row.update_status,
         excluded: row.excluded === 1,
         notes: row.notes,
@@ -45,7 +45,14 @@ function mapMiniServer(row) {
 }
 const miniserverSelect = `
   SELECT m.*,f.name AS folder_name,f.sort_order AS folder_sort_order,
-    (SELECT COUNT(*) FROM device_inventory d WHERE d.serial=m.serial AND d.online=0) AS offline_devices
+    (SELECT COUNT(*) FROM device_inventory d
+      WHERE d.serial=m.serial AND d.device_serial NOT GLOB '*[^0-9A-F]*' AND length(d.device_serial) BETWEEN 6 AND 16
+        AND d.online=0) AS offline_devices,
+    (SELECT COUNT(*) FROM device_inventory d
+      WHERE d.serial=m.serial AND d.device_serial NOT GLOB '*[^0-9A-F]*' AND length(d.device_serial) BETWEEN 6 AND 16
+        AND d.online=1) AS inventory_online,
+    (SELECT COUNT(*) FROM device_inventory d
+      WHERE d.serial=m.serial AND d.device_serial NOT GLOB '*[^0-9A-F]*' AND length(d.device_serial) BETWEEN 6 AND 16) AS inventory_total
   FROM miniservers m LEFT JOIN project_folders f ON f.id=m.folder_id`;
 export function listMiniservers(db) {
     return db.prepare(`${miniserverSelect} ORDER BY

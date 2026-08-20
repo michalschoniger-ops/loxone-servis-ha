@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import * as OTPAuth from "otpauth";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, } from "@simplewebauthn/server";
 import { config } from "./config.js";
 import { audit } from "./database.js";
 import { decryptSecret, encryptSecret, hashPassword, hashToken, randomToken, sessionCsrfToken, verifyPassword, } from "./crypto.js";
@@ -41,6 +42,67 @@ function ipHash(request) {
 }
 function userAgentHash(request) {
     return hashToken(request.headers["user-agent"] ?? "unknown");
+}
+function webauthnContext(request) {
+    const forwardedProto = String(request.headers["x-forwarded-proto"] ?? request.protocol).split(",")[0].trim();
+    const forwardedHost = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "").split(",")[0].trim();
+    const rawOrigin = typeof request.headers.origin === "string"
+        ? request.headers.origin
+        : `${forwardedProto}://${forwardedHost}`;
+    const origin = new URL(rawOrigin);
+    const local = origin.hostname === "localhost" || origin.hostname === "127.0.0.1" || origin.hostname === "::1";
+    if (origin.protocol !== "https:" && !local)
+        throw new Error("Passkey vyžaduje zabezpečené HTTPS připojení.");
+    return { origin: origin.origin, rpID: origin.hostname };
+}
+function establishSession(db, row, request, reply) {
+    const rawToken = randomToken(36);
+    const csrf = sessionCsrfToken(rawToken);
+    const now = new Date();
+    const expires = new Date(now.getTime() + SESSION_HOURS * 60 * 60_000);
+    db.prepare(`INSERT INTO sessions(token_hash,user_id,expires_at,created_at,last_seen_at,csrf_hash,ip_hash,user_agent_hash)
+     VALUES(?,?,?,?,?,?,?,?)`).run(hashToken(rawToken), row.id, expires.toISOString(), now.toISOString(), now.toISOString(), hashToken(csrf), ipHash(request), userAgentHash(request));
+    db.prepare("UPDATE users SET last_login_at=?,updated_at=? WHERE id=?").run(now.toISOString(), now.toISOString(), row.id);
+    reply.setCookie(SESSION_COOKIE, rawToken, {
+        httpOnly: true,
+        secure: secureCookie(request),
+        sameSite: "strict",
+        path: "/",
+        expires,
+    });
+    return { user: publicUser(row), csrfToken: csrf, appVersion: config.appVersion };
+}
+function createWebAuthnChallenge(db, userId, kind, challenge, context) {
+    const id = randomUUID();
+    const now = new Date();
+    db.prepare("DELETE FROM webauthn_challenges WHERE expires_at<=?").run(now.toISOString());
+    db.prepare(`INSERT INTO webauthn_challenges(id,user_id,kind,challenge,rp_id,origin,expires_at,created_at)
+     VALUES(?,?,?,?,?,?,?,?)`).run(id, userId, kind, challenge, context.rpID, context.origin, new Date(now.getTime() + 5 * 60_000).toISOString(), now.toISOString());
+    return id;
+}
+function takeWebAuthnChallenge(db, id, kind, userId, context) {
+    const row = db.prepare("SELECT * FROM webauthn_challenges WHERE id=?").get(id);
+    if (!row)
+        return null;
+    db.prepare("DELETE FROM webauthn_challenges WHERE id=?").run(id);
+    if (row.kind !== kind ||
+        row.user_id !== userId ||
+        row.origin !== context.origin ||
+        row.rp_id !== context.rpID ||
+        Date.parse(row.expires_at) <= Date.now())
+        return null;
+    return row;
+}
+function parseTransports(value) {
+    try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed))
+            return [];
+        return parsed.filter((item) => typeof item === "string");
+    }
+    catch {
+        return [];
+    }
 }
 export function requireUser(request, reply) {
     if (!request.sessionUser) {
@@ -97,7 +159,9 @@ export async function registerAuth(app, db) {
     app.addHook("preHandler", async (request, reply) => {
         if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method))
             return;
-        if (request.url.startsWith("/api/auth/login") || request.url.startsWith("/api/setup"))
+        if (request.url.startsWith("/api/auth/login") ||
+            request.url.startsWith("/api/auth/passkey/login/") ||
+            request.url.startsWith("/api/setup"))
             return;
         if (request.url === "/api/internal/tick" && config.cronSecret)
             return;
@@ -132,22 +196,170 @@ export async function registerAuth(app, db) {
             });
         }
         db.prepare("DELETE FROM login_attempts WHERE email=?").run(email);
-        const rawToken = randomToken(36);
-        const csrf = sessionCsrfToken(rawToken);
-        const now = new Date();
-        const expires = new Date(now.getTime() + SESSION_HOURS * 60 * 60_000);
-        db.prepare(`INSERT INTO sessions(token_hash,user_id,expires_at,created_at,last_seen_at,csrf_hash,ip_hash,user_agent_hash)
-       VALUES(?,?,?,?,?,?,?,?)`).run(hashToken(rawToken), row.id, expires.toISOString(), now.toISOString(), now.toISOString(), hashToken(csrf), ipHash(request), userAgentHash(request));
-        db.prepare("UPDATE users SET last_login_at=?,updated_at=? WHERE id=?").run(now.toISOString(), now.toISOString(), row.id);
-        reply.setCookie(SESSION_COOKIE, rawToken, {
-            httpOnly: true,
-            secure: secureCookie(request),
-            sameSite: "strict",
-            path: "/",
-            expires,
-        });
         audit(db, "auth.login", row.id, null, {});
-        return { user: publicUser(row), csrfToken: csrf, appVersion: config.appVersion };
+        return establishSession(db, row, request, reply);
+    });
+    app.post("/api/auth/passkey/register/options", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        let context;
+        try {
+            context = webauthnContext(request);
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message, code: "WEBAUTHN_HTTPS_REQUIRED" });
+        }
+        const existing = db
+            .prepare("SELECT credential_id,transports_json FROM passkey_credentials WHERE user_id=?")
+            .all(user.id);
+        const options = await generateRegistrationOptions({
+            rpName: "Evora Smart Hub",
+            rpID: context.rpID,
+            userName: user.email,
+            userDisplayName: user.email,
+            userID: new TextEncoder().encode(user.id),
+            timeout: 60_000,
+            attestationType: "none",
+            excludeCredentials: existing.map((credential) => ({
+                id: credential.credential_id,
+                transports: parseTransports(credential.transports_json),
+            })),
+            authenticatorSelection: {
+                residentKey: "required",
+                userVerification: "required",
+            },
+            preferredAuthenticatorType: "localDevice",
+        });
+        const challengeId = createWebAuthnChallenge(db, user.id, "registration", options.challenge, context);
+        return { challengeId, options };
+    });
+    app.post("/api/auth/passkey/register/verify", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const input = z.object({
+            challengeId: z.string().uuid(),
+            label: z.string().trim().max(80).optional(),
+            response: z.unknown(),
+        }).parse(request.body);
+        let context;
+        try {
+            context = webauthnContext(request);
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message, code: "WEBAUTHN_HTTPS_REQUIRED" });
+        }
+        const challenge = takeWebAuthnChallenge(db, input.challengeId, "registration", user.id, context);
+        if (!challenge)
+            return reply.code(400).send({ error: "Registrace Passkey vypršela. Zkuste ji znovu.", code: "WEBAUTHN_CHALLENGE_INVALID" });
+        try {
+            const verification = await verifyRegistrationResponse({
+                response: input.response,
+                expectedChallenge: challenge.challenge,
+                expectedOrigin: challenge.origin,
+                expectedRPID: challenge.rp_id,
+                requireUserVerification: true,
+            });
+            if (!verification.verified || !verification.registrationInfo) {
+                return reply.code(400).send({ error: "Passkey se nepodařilo ověřit.", code: "WEBAUTHN_REGISTRATION_FAILED" });
+            }
+            const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
+            const transports = input.response.response.transports ?? credential.transports ?? [];
+            db.prepare(`INSERT INTO passkey_credentials(
+          id,user_id,credential_id,public_key,counter,transports_json,device_type,backed_up,label,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(), user.id, credential.id, Buffer.from(credential.publicKey), credential.counter, JSON.stringify(transports), credentialDeviceType, credentialBackedUp ? 1 : 0, input.label || "Passkey", new Date().toISOString());
+            audit(db, "auth.passkey_registered", user.id, null, { rpID: challenge.rp_id });
+            return { ok: true };
+        }
+        catch {
+            return reply.code(400).send({ error: "Passkey se nepodařilo ověřit nebo už je zaregistrovaný.", code: "WEBAUTHN_REGISTRATION_FAILED" });
+        }
+    });
+    app.get("/api/auth/passkeys", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const items = db
+            .prepare(`SELECT id,label,device_type AS deviceType,backed_up AS backedUp,created_at AS createdAt,last_used_at AS lastUsedAt
+         FROM passkey_credentials WHERE user_id=? ORDER BY created_at DESC`)
+            .all(user.id);
+        return { items };
+    });
+    app.delete("/api/auth/passkeys/:id", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const result = db.prepare("DELETE FROM passkey_credentials WHERE id=? AND user_id=?").run(id, user.id);
+        if (result.changes === 0)
+            return reply.code(404).send({ error: "Passkey nebyl nalezen.", code: "PASSKEY_NOT_FOUND" });
+        audit(db, "auth.passkey_deleted", user.id, null, {});
+        return { ok: true };
+    });
+    app.post("/api/auth/passkey/login/options", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        let context;
+        try {
+            context = webauthnContext(request);
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message, code: "WEBAUTHN_HTTPS_REQUIRED" });
+        }
+        const options = await generateAuthenticationOptions({
+            rpID: context.rpID,
+            timeout: 60_000,
+            userVerification: "required",
+        });
+        const challengeId = createWebAuthnChallenge(db, null, "authentication", options.challenge, context);
+        return { challengeId, options };
+    });
+    app.post("/api/auth/passkey/login/verify", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const input = z.object({ challengeId: z.string().uuid(), response: z.unknown() }).parse(request.body);
+        let context;
+        try {
+            context = webauthnContext(request);
+        }
+        catch (error) {
+            return reply.code(400).send({ error: error.message, code: "WEBAUTHN_HTTPS_REQUIRED" });
+        }
+        const challenge = takeWebAuthnChallenge(db, input.challengeId, "authentication", null, context);
+        if (!challenge)
+            return reply.code(400).send({ error: "Přihlášení pomocí Passkey vypršelo. Zkuste je znovu.", code: "WEBAUTHN_CHALLENGE_INVALID" });
+        const response = input.response;
+        const credential = db
+            .prepare(`SELECT p.*,u.id AS user_id,u.email,u.password_hash,u.role,u.immutable,u.active,
+                  u.mfa_secret_encrypted,u.mfa_enabled
+           FROM passkey_credentials p JOIN users u ON u.id=p.user_id WHERE p.credential_id=?`)
+            .get(response.id);
+        if (!credential || credential.active !== 1) {
+            audit(db, "auth.passkey_login_failed", credential?.user_id ?? null, null, { reason: "credential" });
+            return reply.code(401).send({ error: "Passkey není pro tuto aplikaci platný.", code: "PASSKEY_INVALID" });
+        }
+        try {
+            const verification = await verifyAuthenticationResponse({
+                response,
+                expectedChallenge: challenge.challenge,
+                expectedOrigin: challenge.origin,
+                expectedRPID: challenge.rp_id,
+                credential: {
+                    id: credential.credential_id,
+                    publicKey: new Uint8Array(credential.public_key),
+                    counter: credential.counter,
+                    transports: parseTransports(credential.transports_json),
+                },
+                requireUserVerification: true,
+            });
+            if (!verification.verified)
+                throw new Error("Passkey verification failed");
+            db.prepare("UPDATE passkey_credentials SET counter=?,last_used_at=? WHERE id=?").run(verification.authenticationInfo.newCounter, new Date().toISOString(), credential.id);
+            db.prepare("DELETE FROM login_attempts WHERE email=?").run(credential.email);
+            audit(db, "auth.passkey_login", credential.user_id, null, { rpID: challenge.rp_id });
+            return establishSession(db, { ...credential, id: credential.user_id }, request, reply);
+        }
+        catch {
+            audit(db, "auth.passkey_login_failed", credential.user_id, null, { reason: "verification" });
+            return reply.code(401).send({ error: "Passkey se nepodařilo ověřit.", code: "PASSKEY_INVALID" });
+        }
     });
     app.get("/api/auth/session", async (request, reply) => {
         const user = requireUser(request, reply);

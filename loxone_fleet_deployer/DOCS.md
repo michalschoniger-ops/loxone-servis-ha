@@ -1,6 +1,6 @@
 # Evora Smart Hub Deployment Helper
 
-Jednorázový instalační pomocník pro řízené nasazení lokálního Evora Smart Hubu 0.5.1.
+Jednorázový instalační pomocník pro řízené nasazení lokálního Evora Smart Hubu 0.5.2.
 
 - Vyhledá právě jeden lokální add-on se slugem `loxone_fleet`.
 - Ověří kontrolní součet, slug, verzi a úplnost payloadu.

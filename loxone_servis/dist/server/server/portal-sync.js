@@ -5,6 +5,7 @@ const TOKEN_URL = "https://sso.loxone.com/realms/loxone/protocol/openid-connect/
 const PORTAL_ORIGIN = "https://portal.loxone.com";
 const REFRESH_AAD = "portal-sync:refresh-token";
 const SYNC_INTERVAL_MS = 24 * 60 * 60_000;
+const PORTAL_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
 function form(values) {
     const body = new URLSearchParams();
     for (const [key, value] of Object.entries(values))
@@ -55,6 +56,30 @@ function cookieHeader(response) {
     const setCookies = headers.getSetCookie?.() ?? (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")] : []);
     return setCookies.map((entry) => entry.split(";", 1)[0]).filter(Boolean).join("; ");
 }
+function mergeCookies(...values) {
+    const cookies = new Map();
+    for (const value of values) {
+        for (const pair of value.split(";")) {
+            const separator = pair.indexOf("=");
+            if (separator <= 0)
+                continue;
+            const name = pair.slice(0, separator).trim();
+            const cookieValue = pair.slice(separator + 1).trim();
+            if (name && cookieValue)
+                cookies.set(name, cookieValue);
+        }
+    }
+    return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+function portalHeaders(cookie = "", referer = `${PORTAL_ORIGIN}/`) {
+    return {
+        accept: "application/json, text/plain, */*",
+        origin: PORTAL_ORIGIN,
+        referer,
+        "user-agent": PORTAL_USER_AGENT,
+        ...(cookie ? { cookie } : {}),
+    };
+}
 function text(value) {
     return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
@@ -74,10 +99,21 @@ function normalizeProduct(value) {
         .replace(/[^A-Fa-f0-9]/g, "").toUpperCase();
     if (!/^[A-F0-9]{12}$/.test(serial))
         return null;
+    const rawType = first(record, ["product_type", "productType", "type"]);
+    if (!rawType.toLocaleLowerCase("en-US").includes("miniserver"))
+        return null;
+    const normalizedType = rawType.toLocaleLowerCase("en-US");
+    const type = normalizedType.includes("compact")
+        ? "Miniserver Compact"
+        : normalizedType.includes(" go") || normalizedType.endsWith("go")
+            ? "Miniserver Go"
+            : normalizedType.includes("gen. 1") || normalizedType.includes("gen 1") || normalizedType.includes("gen1")
+                ? "Miniserver Gen. 1"
+                : "Miniserver";
     return {
         serial,
         project: first(record, ["project", "project_name", "projectName", "name"]) || serial,
-        type: first(record, ["product_type", "productType", "type"]) || "Miniserver",
+        type,
         registered: first(record, ["registered", "registered_at", "registeredAt", "registration_date"]),
         productId: first(record, ["id", "product_id", "productId"]) || null,
     };
@@ -101,26 +137,55 @@ function findProducts(value) {
     return [];
 }
 async function portalProducts(accessToken) {
+    const home = await fetchWithTimeout(`${PORTAL_ORIGIN}/`, {
+        method: "GET",
+        headers: {
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "user-agent": PORTAL_USER_AGENT,
+        },
+    });
+    if (!home.ok)
+        throw Object.assign(new Error("Loxone Portál není dostupný."), { code: "portal_session_failed" });
+    let cookie = cookieHeader(home);
+    const sessionBody = new FormData();
+    sessionBody.set("token", accessToken);
     const session = await fetchWithTimeout(`${PORTAL_ORIGIN}/api/setUserSessionCookie`, {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-        body: form({ token: accessToken }),
+        headers: portalHeaders(cookie),
+        body: sessionBody,
     });
     if (!session.ok)
         throw Object.assign(new Error("Loxone Portál nevytvořil synchronizační relaci."), { code: "portal_session_failed" });
-    const cookie = cookieHeader(session);
+    cookie = mergeCookies(cookie, cookieHeader(session));
     if (!cookie)
         throw Object.assign(new Error("Loxone Portál neposlal synchronizační cookie."), { code: "portal_session_failed" });
+    const partnerResponse = await fetchWithTimeout(`${PORTAL_ORIGIN}/api/getPartnerData`, {
+        method: "POST",
+        headers: portalHeaders(cookie),
+    });
+    let partnerPayload = {};
+    try {
+        partnerPayload = await partnerResponse.json();
+    }
+    catch {
+        // Obsah odpovědi se záměrně neloguje.
+    }
+    if (!partnerResponse.ok || partnerPayload.valid !== true) {
+        throw Object.assign(new Error("Synchronizační relace Loxone Portálu nebyla ověřena."), { code: "portal_session_failed" });
+    }
     const response = await fetchWithTimeout(`${PORTAL_ORIGIN}/api/getRegisteredProducts`, {
         method: "POST",
-        headers: { accept: "application/json", cookie, origin: PORTAL_ORIGIN, referer: `${PORTAL_ORIGIN}/products/` },
+        headers: portalHeaders(cookie, `${PORTAL_ORIGIN}/products/`),
     });
     if (!response.ok)
         throw Object.assign(new Error("Seznam zařízení z Loxone Portálu není dostupný."), { code: "portal_products_failed" });
     const payload = await response.json();
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.valid !== true) {
+        throw Object.assign(new Error("Loxone Portál odmítl načtení registrovaných zařízení."), { code: "portal_products_failed" });
+    }
     const products = findProducts(payload).map(normalizeProduct).filter((item) => Boolean(item));
-    if (!products.length && findProducts(payload).length)
-        throw Object.assign(new Error("Loxone Portál změnil formát seznamu zařízení."), { code: "portal_format_changed" });
+    if (!products.length)
+        throw Object.assign(new Error("Loxone Portál nevrátil žádné registrované Miniservery."), { code: "portal_format_changed" });
     return products;
 }
 function saveRefreshToken(db, token) {

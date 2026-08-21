@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Opravena synchronizace Loxone Partner Portalu podle aktuálního přihlašovacího toku: aplikace nejprve vytvoří a ověří portálovou relaci a teprve poté načte registrované produkty.
+- Denní import přijímá pouze skutečné Miniservery, normalizuje jejich typ a bezpečně odmítne neověřenou nebo neúplnou odpověď místo falešně úspěšné prázdné synchronizace.
+- Živým testem bylo ověřeno načtení všech 137 registrovaných Miniserverů bez ukládání hesla k portálu.
+
 ## 1.0.1
 
 - Správce může bezpečně propojit Loxone Partner Portal a jednou denně synchronizovat nově registrované Miniservery podle sériového čísla, typu, názvu projektu a data registrace.

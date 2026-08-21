@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2.1
+
+- Nasazuje Evora Smart Hub 1.0.2 s opravenou denní synchronizací všech registrovaných Miniserverů z Loxone Partner Portalu.
+- Synchronizace ověřuje portálovou relaci i odpověď API a bezpečně odmítne neúplný import místo falešně úspěšného prázdného výsledku.
+
 ## 1.0.1.1
 
 - Nasazuje Evora Smart Hub 1.0.1 s bezpečnou denní synchronizací Loxone Partner Portalu a opravami mobilního odhlášení, profilových fotografií, podpory a grafu 1-Wire.

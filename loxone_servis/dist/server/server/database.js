@@ -245,7 +245,10 @@ function applyMigrations(db) {
     addColumn(db, "miniservers", "connection_resolved_at TEXT");
     addColumn(db, "miniservers", "last_latency_ms INTEGER");
     addColumn(db, "miniservers", "health_verdict TEXT");
+    addColumn(db, "miniservers", "health_refreshed_at TEXT");
     addColumn(db, "miniservers", "loxapp_version TEXT");
+    addColumn(db, "miniservers", "loxapp_refreshed_at TEXT");
+    addColumn(db, "miniservers", "onewire_sampled_at TEXT");
     addColumn(db, "miniservers", "current_project_hash TEXT");
     addColumn(db, "miniservers", "firmware_channel TEXT NOT NULL DEFAULT 'stable'");
     addColumn(db, "miniservers", "firmware_policy TEXT NOT NULL DEFAULT 'follow_stable'");
@@ -711,6 +714,7 @@ function applyMigrations(db) {
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
     migrateDistinctFolderColors(db);
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(17, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

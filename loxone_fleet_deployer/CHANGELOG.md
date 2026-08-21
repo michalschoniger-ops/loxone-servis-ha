@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.10.1
+
+- Nasazuje Evora Smart Hub 2.0.10 s postupnou obnovou flotily, samostatnou aktualizací Health Checku, LoxAPP3 a 1-Wire a opraveným BIN exportem Statistik V2.
+- Přidává dostupnou Air telemetrii, přesné fotografie z oficiálního Loxone Shop CDN a úplný popis anonymizovaného servisního balíčku.
+- Zachovává databázi, šifrované přístupy a vratnou kopii zdroje 2.0.9; Windows Config Launcher ani WorkLog AI nemění.
+
 ## 2.0.9.1
 
 - Nasazuje Evora Smart Hub 2.0.9 s opraveným mobilním menu, barevnými složkami, čitelnými tickety a animovaným stavem údržby.

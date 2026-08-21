@@ -39,8 +39,10 @@ function mapMiniServer(row) {
         connectionUrl: row.connection_url,
         lastLatencyMs: row.last_latency_ms,
         healthVerdict: row.health_verdict,
+        healthRefreshedAt: row.health_refreshed_at,
         offlineDevices: Number(row.offline_devices ?? 0),
         loxAppVersion: row.loxapp_version,
+        loxAppRefreshedAt: row.loxapp_refreshed_at,
         weatherServiceStatus: ["active", "inactive"].includes(row.weather_service_status)
             ? row.weather_service_status
             : "unknown",

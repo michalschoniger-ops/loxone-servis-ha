@@ -13,6 +13,10 @@ export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
 export const ONE_WIRE_SAMPLE_INTERVAL_MS = 10 * 60_000;
+export const FLEET_REFRESH_WARMUP_MS = 60_000;
+export const FLEET_REFRESH_SPACING_MS = 30_000;
+export const HEALTH_REFRESH_INTERVAL_MS = 12 * 60 * 60_000;
+export const LOXAPP_REFRESH_INTERVAL_MS = 24 * 60 * 60_000;
 export function firmwarePollDue(lastPollAt, now = Date.now()) {
     if (!lastPollAt)
         return true;
@@ -33,6 +37,15 @@ export function oneWireSampleDue(lastAttemptAt, now = Date.now()) {
 }
 export function automaticFleetChecksAllowed(startedAt, now = Date.now(), intervalMs = config.fullCheckIntervalMinutes * 60_000) {
     return now - startedAt >= intervalMs;
+}
+export function staggeredFleetRefreshAllowed(startedAt, now = Date.now()) {
+    return now - startedAt >= FLEET_REFRESH_WARMUP_MS;
+}
+export function refreshComponentDue(lastRefreshedAt, intervalMs, now = Date.now()) {
+    if (!lastRefreshedAt)
+        return true;
+    const parsed = Date.parse(lastRefreshedAt);
+    return !Number.isFinite(parsed) || now - parsed >= intervalMs;
 }
 function mapJob(row) {
     return {
@@ -72,6 +85,11 @@ export function syncDeviceInventory(db, serial, result, now, completeSnapshot = 
             family: device.family,
             temperatureC: device.temperatureC,
             temperatureUpdatedAt: device.temperatureUpdatedAt,
+            airRssiDb: device.airRssiDb,
+            airHops: device.airHops,
+            batteryPercent: device.batteryPercent,
+            productName: device.productName,
+            productNumber: device.productNumber,
         }), now);
     }
     if (completeSnapshot) {
@@ -105,6 +123,9 @@ function persistCheck(db, serial, result) {
         db.prepare("INSERT INTO availability_events(serial,state,error_code,latency_ms,created_at) VALUES(?,?,?,?,?)").run(serial, result.state, result.errorCode, result.latencyMs, now);
         syncDeviceInventory(db, serial, result, now, result.state === "online" && result.elementsTotal !== null);
         persistOneWireSamples(db, serial, result.devices, now);
+        if (result.devices.some((device) => device.temperatureC !== null)) {
+            db.prepare("UPDATE miniservers SET onewire_sampled_at=? WHERE serial=?").run(now, serial);
+        }
         return stabilized;
     });
 }
@@ -187,7 +208,8 @@ export class JobQueue {
             await this.pollFirmwareUpdates();
             await this.maybeRefreshRelease();
             await this.maybeSchedulePortalSync();
-            await this.maybeScheduleFullCheck(forceFullCheck);
+            await this.maybeScheduleManualFullCheck(forceFullCheck);
+            await this.maybeScheduleStaggeredFleetRefresh();
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeCheckHomeAssistantServices(forceFullCheck);
@@ -231,14 +253,36 @@ export class JobQueue {
         if (!existing?.ok)
             this.enqueueUnique("portal_sync", null, null, { scheduled: true });
     }
-    async maybeScheduleFullCheck(force) {
-        if (!force && !automaticFleetChecksAllowed(this.startedAt))
+    async maybeScheduleManualFullCheck(force) {
+        if (force)
+            this.enqueueUnique("bulk_check", null, null, { manual: true });
+    }
+    async maybeScheduleStaggeredFleetRefresh() {
+        if (!staggeredFleetRefreshAllowed(this.startedAt))
             return;
-        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_full_check_at'").get();
-        const due = !last?.value || Date.now() - Date.parse(last.value) >= config.fullCheckIntervalMinutes * 60_000;
-        if (!force && !due)
+        const lastScheduled = this.db.prepare("SELECT value FROM settings WHERE key='last_staggered_refresh_enqueued_at'").get();
+        if (lastScheduled?.value && Date.now() - Date.parse(lastScheduled.value) < FLEET_REFRESH_SPACING_MS)
             return;
-        this.enqueueUnique("bulk_check", null, null, { scheduled: !force });
+        const blocking = this.db.prepare(`SELECT 1 AS ok FROM action_jobs
+       WHERE kind IN ('bulk_check','fleet_refresh') AND state IN ('queued','running') LIMIT 1`).get();
+        if (blocking?.ok)
+            return;
+        const now = new Date().toISOString();
+        const dueBefore = new Date(Date.now() - config.fullCheckIntervalMinutes * 60_000).toISOString();
+        const row = this.db.prepare(`SELECT serial FROM miniservers m
+       WHERE username_encrypted IS NOT NULL AND password_encrypted IS NOT NULL
+         AND (last_checked_at IS NULL OR last_checked_at<=?)
+         AND (next_check_at IS NULL OR next_check_at<=?)
+         AND NOT EXISTS (
+           SELECT 1 FROM action_jobs j
+           WHERE j.serial=m.serial AND j.kind IN ('check','fleet_refresh') AND j.state IN ('queued','running')
+         )
+       ORDER BY CASE WHEN last_checked_at IS NULL THEN 0 ELSE 1 END,last_checked_at,serial
+       LIMIT 1`).get(dueBefore, now);
+        if (row?.serial) {
+            setSetting(this.db, "last_staggered_refresh_enqueued_at", new Date().toISOString());
+            this.enqueueUnique("fleet_refresh", row.serial, null, { scheduled: true });
+        }
     }
     async maybeScheduleRetryChecks() {
         if (!automaticFleetChecksAllowed(this.startedAt))
@@ -254,7 +298,7 @@ export class JobQueue {
          AND m.next_check_at IS NOT NULL AND m.next_check_at<=?
          AND NOT EXISTS (
            SELECT 1 FROM action_jobs j
-           WHERE j.serial=m.serial AND j.kind='check' AND j.state IN ('queued','running')
+           WHERE j.serial=m.serial AND j.kind IN ('check','fleet_refresh') AND j.state IN ('queued','running')
          )
        ORDER BY m.next_check_at,m.serial LIMIT ?`).all(new Date().toISOString(), config.checkConcurrency);
         for (const { serial } of due)
@@ -307,49 +351,41 @@ export class JobQueue {
     async maybeSampleOneWireTemperatures() {
         if (this.oneWireSampling)
             return;
-        const last = this.db.prepare("SELECT value FROM settings WHERE key='last_onewire_sample_attempt_at'").get();
-        if (!oneWireSampleDue(last?.value))
-            return;
-        const fullCheck = this.db.prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='bulk_check' AND state IN ('queued','running')").get();
+        const fullCheck = this.db.prepare("SELECT 1 AS ok FROM action_jobs WHERE kind IN ('bulk_check','fleet_refresh') AND state IN ('queued','running')").get();
         if (fullCheck?.ok)
             return;
-        const rows = this.db.prepare(`SELECT DISTINCT d.serial FROM device_inventory d
+        const dueBefore = new Date(Date.now() - ONE_WIRE_SAMPLE_INTERVAL_MS).toISOString();
+        const row = this.db.prepare(`SELECT DISTINCT d.serial FROM device_inventory d
+       JOIN miniservers m ON m.serial=d.serial
        WHERE lower(d.type) LIKE '%onewire%'
-         AND EXISTS (SELECT 1 FROM miniservers m WHERE m.serial=d.serial)
+         AND (m.onewire_sampled_at IS NULL OR m.onewire_sampled_at<=?)
          AND NOT EXISTS (
            SELECT 1 FROM action_jobs j
-           WHERE j.serial=d.serial AND j.kind='check' AND j.state IN ('queued','running')
+           WHERE j.serial=d.serial AND j.kind IN ('check','fleet_refresh') AND j.state IN ('queued','running')
          )
-       ORDER BY d.serial`).all();
+       ORDER BY CASE WHEN m.onewire_sampled_at IS NULL THEN 0 ELSE 1 END,m.onewire_sampled_at,d.serial
+       LIMIT 1`).get(dueBefore);
         const attemptedAt = new Date().toISOString();
-        setSetting(this.db, "last_onewire_sample_attempt_at", attemptedAt);
-        if (!rows.length) {
-            setSetting(this.db, "last_onewire_sample_completed_at", attemptedAt);
+        if (!row?.serial)
             return;
-        }
+        setSetting(this.db, "last_onewire_sample_attempt_at", attemptedAt);
         this.oneWireSampling = true;
         try {
-            for (let offset = 0; offset < rows.length; offset += config.checkConcurrency) {
-                const batch = rows.slice(offset, offset + config.checkConcurrency);
-                const results = await Promise.allSettled(batch.map(async ({ serial }) => ({
-                    serial,
-                    devices: await sampleOneWireTemperaturesFromStoredRoute(this.db, serial),
-                })));
-                for (const result of results) {
-                    if (result.status !== "fulfilled" || !result.value.devices)
-                        continue;
-                    const now = new Date().toISOString();
-                    transaction(this.db, () => {
-                        // The fast sampler also reads the complete /data/status document;
-                        // only the temperature enrichment is partial.
-                        syncDeviceInventory(this.db, result.value.serial, { devices: result.value.devices }, now, true);
-                        persistOneWireSamples(this.db, result.value.serial, result.value.devices, now);
-                    });
-                }
+            const devices = await sampleOneWireTemperaturesFromStoredRoute(this.db, row.serial);
+            if (devices) {
+                const now = new Date().toISOString();
+                transaction(this.db, () => {
+                    // Jeden Miniserver na jeden průchod plánovače: historie zůstává
+                    // průběžná, ale nevzniká souběžný náraz na celou flotilu.
+                    syncDeviceInventory(this.db, row.serial, { devices }, now, true);
+                    persistOneWireSamples(this.db, row.serial, devices, now);
+                });
             }
-            setSetting(this.db, "last_onewire_sample_completed_at", new Date().toISOString());
         }
         finally {
+            const completedAt = new Date().toISOString();
+            this.db.prepare("UPDATE miniservers SET onewire_sampled_at=? WHERE serial=?").run(completedAt, row.serial);
+            setSetting(this.db, "last_onewire_sample_completed_at", completedAt);
             this.oneWireSampling = false;
         }
     }
@@ -399,6 +435,11 @@ export class JobQueue {
                     return;
                 case "bulk_check":
                     await this.executeBulkCheck(job);
+                    return;
+                case "fleet_refresh":
+                    if (!job.serial)
+                        throw new Error("Chybí SN Miniserveru.");
+                    await this.executeFleetRefresh(job, job.serial);
                     return;
                 case "firmware_update":
                     if (!job.serial)
@@ -474,6 +515,60 @@ export class JobQueue {
         else {
             this.finish(job.id, "failed", result.state === "no_access" ? "Miniserver odmítl přihlášení." : "Miniserver není dostupný.", result, result.errorCode);
         }
+    }
+    completeStaggeredCycleIfFinished() {
+        const dueBefore = new Date(Date.now() - config.fullCheckIntervalMinutes * 60_000).toISOString();
+        const remaining = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM miniservers
+       WHERE username_encrypted IS NOT NULL AND password_encrypted IS NOT NULL
+         AND (last_checked_at IS NULL OR last_checked_at<=?)`).get(dueBefore).count);
+        if (remaining === 0)
+            setSetting(this.db, "last_full_check_at", new Date().toISOString());
+        return remaining;
+    }
+    async executeFleetRefresh(job, serial) {
+        this.step(job.id, "status", "running", "Načítám firmware, dostupnost, prvky a aktuální hodnoty.");
+        const result = await checkMiniserver(this.db, serial);
+        const persisted = persistCheck(this.db, serial, result);
+        const remainingAfterStatus = this.completeStaggeredCycleIfFinished();
+        if (result.state !== "online") {
+            this.finish(job.id, "failed", result.state === "no_access" ? "Miniserver odmítl přihlášení." : "Průběžná kontrola Miniserveru se nepodařila.", { ...result, stabilizedState: persisted.connectionState, remaining: remainingAfterStatus }, result.errorCode);
+            return;
+        }
+        const row = this.db.prepare("SELECT health_refreshed_at,loxapp_refreshed_at FROM miniservers WHERE serial=?").get(serial);
+        const details = {
+            firmware: result.firmware,
+            elementsOnline: result.elementsOnline,
+            elementsTotal: result.elementsTotal,
+            health: "not_due",
+            loxapp3: "not_due",
+        };
+        if (refreshComponentDue(row.health_refreshed_at, HEALTH_REFRESH_INTERVAL_MS)) {
+            this.step(job.id, "health", "running", "Načítám Health Check.");
+            try {
+                const health = await this.collectHealth(serial, null);
+                details.health = health;
+                this.step(job.id, "health", "succeeded", "Health Check byl aktualizován.");
+            }
+            catch (error) {
+                details.health = { error: error.code ?? "health_failed" };
+                this.step(job.id, "health", "failed", "Health Check se při této průběžné kontrole nepodařilo načíst.");
+            }
+        }
+        if (refreshComponentDue(row.loxapp_refreshed_at, LOXAPP_REFRESH_INTERVAL_MS)) {
+            this.step(job.id, "loxapp3", "running", "Načítám LoxAPP3 a porovnávám projekt.");
+            try {
+                const project = await this.syncProjectSnapshot(serial, null, job.id);
+                details.loxapp3 = project;
+                this.step(job.id, "loxapp3", "succeeded", project.message);
+            }
+            catch (error) {
+                details.loxapp3 = { error: error.code ?? "loxapp_failed" };
+                this.step(job.id, "loxapp3", "failed", "LoxAPP3 se při této průběžné kontrole nepodařilo načíst.");
+            }
+        }
+        const remaining = remainingAfterStatus;
+        this.finish(job.id, "succeeded", `Průběžně aktualizováno · FW ${result.firmware}.`, details);
+        audit(this.db, "miniserver.scheduled_refresh", null, serial, { jobId: job.id, remaining });
     }
     async executeBulkCheck(job) {
         const rows = this.db
@@ -645,7 +740,7 @@ export class JobQueue {
         this.finish(job.id, "succeeded", Number.isFinite(usage) ? `SD test: využití ${usage} %.` : "SD test dokončen.", { usage, verdict });
         audit(this.db, "miniserver.sd_test", job.actor_user_id, serial, { jobId: job.id, usage, verdict });
     }
-    async runHealthNow(serial, actorUserId) {
+    async collectHealth(serial, actorUserId) {
         const health = await readHealth(this.db, serial);
         const cpu = typeof health.cpuLoadNumeric === "number" ? health.cpuLoadNumeric : null;
         const taskCount = typeof health.taskCountNumeric === "number" ? health.taskCountNumeric : null;
@@ -653,11 +748,14 @@ export class JobQueue {
         const now = new Date().toISOString();
         this.db.prepare(`INSERT INTO health_snapshots(serial,checked_at,verdict,plc_state,cpu_load,task_count,payload_json)
        VALUES(?,?,?,?,?,?,?)`).run(serial, now, verdict, String(health.plcState ?? ""), cpu, taskCount, JSON.stringify(health));
-        this.db.prepare("UPDATE miniservers SET health_verdict=?,updated_at=? WHERE serial=?").run(verdict, now, serial);
+        this.db.prepare("UPDATE miniservers SET health_verdict=?,health_refreshed_at=?,updated_at=? WHERE serial=?").run(verdict, now, now, serial);
         audit(this.db, "miniserver.health_read", actorUserId, serial, { verdict });
         return health;
     }
-    async executeProjectSync(job, serial) {
+    async runHealthNow(serial, actorUserId) {
+        return this.collectHealth(serial, actorUserId);
+    }
+    async syncProjectSnapshot(serial, actorUserId, jobId) {
         const snapshot = await readLoxApp3(this.db, serial);
         const payload = snapshot.payload;
         const summary = {
@@ -670,9 +768,9 @@ export class JobQueue {
             .prepare("SELECT id,content_hash FROM project_snapshots WHERE serial=? ORDER BY created_at DESC LIMIT 1")
             .get(serial);
         if (existing?.content_hash === snapshot.hash) {
-            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, new Date().toISOString(), serial);
-            this.finish(job.id, "succeeded", "Projekt se od posledního snímku nezměnil.", summary);
-            return;
+            const refreshedAt = new Date().toISOString();
+            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, refreshedAt, refreshedAt, serial);
+            return { changed: false, message: "Projekt se od posledního snímku nezměnil.", summary };
         }
         const id = randomUUID();
         const createdAt = new Date().toISOString();
@@ -682,10 +780,15 @@ export class JobQueue {
          VALUES(?,?,?,?,?,?,?)`).run(id, serial, snapshot.version, snapshot.hash, JSON.stringify(summary), encryptedPayload, createdAt);
             this.db.prepare(`INSERT INTO project_changes(serial,from_snapshot_id,to_snapshot_id,change_type,summary,details_json,created_at)
          VALUES(?,?,?,?,?,?,?)`).run(serial, existing?.id ?? null, id, existing ? "changed" : "initial", existing ? "LoxAPP3 se změnil." : "První snímek projektu.", JSON.stringify(summary), createdAt);
-            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, createdAt, serial);
+            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, createdAt, createdAt, serial);
         });
-        this.finish(job.id, "succeeded", existing ? "Změna projektu byla zaznamenána." : "Projekt byl načten.", summary);
-        audit(this.db, "project.snapshot", job.actor_user_id, serial, { jobId: job.id, changed: Boolean(existing), hash: snapshot.hash });
+        const message = existing ? "Změna projektu byla zaznamenána." : "Projekt byl načten.";
+        audit(this.db, "project.snapshot", actorUserId, serial, { jobId, changed: Boolean(existing), hash: snapshot.hash });
+        return { changed: Boolean(existing), message, summary };
+    }
+    async executeProjectSync(job, serial) {
+        const result = await this.syncProjectSnapshot(serial, job.actor_user_id, job.id);
+        this.finish(job.id, "succeeded", result.message, result.summary);
     }
     async executeTopologyDiscovery(job) {
         const rows = this.db.prepare("SELECT serial FROM miniservers ORDER BY serial").all();

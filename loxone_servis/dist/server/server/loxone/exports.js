@@ -24,10 +24,13 @@ function normalizeControlUuid(value) {
     return /^[A-F0-9-]{20,40}$/i.test(normalized) ? normalized : null;
 }
 function parseOutputs(value) {
-    const source = Array.isArray(value) ? value : Object.values(record(value));
-    return source.flatMap((item) => {
+    const source = Array.isArray(value)
+        ? value.map((item, index) => [String(index), item])
+        : Object.entries(record(value));
+    return source.flatMap(([key, item]) => {
         const output = record(item);
-        const name = typeof output.name === "string" ? output.name.trim() : "";
+        const explicitName = typeof output.name === "string" ? output.name.trim() : "";
+        const name = explicitName || (/^\d+$/.test(key) ? "" : key.trim());
         if (!name)
             return [];
         const uuid = typeof output.uuid === "string" && /^[A-F0-9-]{20,40}$/i.test(output.uuid)
@@ -36,8 +39,25 @@ function parseOutputs(value) {
         return [{
                 id: finiteNumber(output.id),
                 name,
+                title: typeof output.title === "string" && output.title.trim() ? output.title.trim() : name,
                 uuid,
                 format: typeof output.format === "string" ? output.format : null,
+            }];
+    });
+}
+function parseDataPoints(value) {
+    const source = Array.isArray(value) ? value : Object.values(record(value));
+    return source.flatMap((item, index) => {
+        const dataPoint = record(item);
+        const name = typeof dataPoint.output === "string" ? dataPoint.output.trim() : "";
+        if (!name)
+            return [];
+        return [{
+                id: finiteNumber(dataPoint.id) ?? index,
+                name,
+                title: typeof dataPoint.title === "string" && dataPoint.title.trim() ? dataPoint.title.trim() : name,
+                uuid: null,
+                format: typeof dataPoint.format === "string" ? dataPoint.format : null,
             }];
     });
 }
@@ -50,10 +70,11 @@ function parseGroups(value) {
         const id = finiteNumber(group.id ?? group.groupId ?? key) ?? index;
         if (!Number.isInteger(id) || id < 0)
             return [];
+        const dataPoints = parseDataPoints(group.dataPoints);
         return [{
                 id,
                 name: typeof group.name === "string" && group.name.trim() ? group.name.trim() : `Skupina ${id}`,
-                outputs: parseOutputs(group.outputs),
+                outputs: dataPoints.length ? dataPoints : parseOutputs(group.outputs),
             }];
     });
 }
@@ -88,7 +109,7 @@ export function parseStatisticControls(payload) {
                 type,
                 mode: "v2",
                 frequency: finiteNumber(v2.frequency),
-                outputs: groups.length ? [] : parseOutputs(v2.outputs),
+                outputs: groups.length ? [] : (parseDataPoints(v2.dataPoints).length ? parseDataPoints(v2.dataPoints) : parseOutputs(v2.outputs)),
                 groups,
             });
         }

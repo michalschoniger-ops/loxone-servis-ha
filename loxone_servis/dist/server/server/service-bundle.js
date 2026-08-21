@@ -104,7 +104,16 @@ export async function createServiceBundle(db, serial, actorUserId, anonymized = 
         containsCredentials: false,
         containsTokens: false,
         containsCustomerIdentifiers: !anonymized,
-        files: ["miniserver.json", "health.json", "devices.json", "availability.json", "project-changes.json", "def.log"],
+        expiresAfterHours: 24,
+        contents: {
+            "miniserver.json": "Identita, firmware a poslední provozní stav Miniserveru.",
+            "health.json": "Nejvýše 25 posledních diagnostických snímků.",
+            "devices.json": "Inventář prvků a dostupná telemetrie včetně Air RSSI.",
+            "availability.json": "Nejvýše 500 posledních událostí dostupnosti.",
+            "project-changes.json": "Nejvýše 100 souhrnů změn projektu.",
+            "def.log": "Definiční log; při nedostupnosti jej nahradí def.log.error.txt bez citlivého obsahu.",
+        },
+        files: ["miniserver.json", "health.json", "devices.json", "availability.json", "project-changes.json", "def.log nebo def.log.error.txt"],
     }), { name: "manifest.json" });
     archive.append(json(safeServer), { name: "miniserver.json" });
     const health = db
@@ -112,7 +121,7 @@ export async function createServiceBundle(db, serial, actorUserId, anonymized = 
         .all(serial);
     archive.append(json(anonymized ? anonymizeServiceBundleValue(health, redactionContext) : redactServiceBundleSecrets(health)), { name: "health.json" });
     const devices = db
-        .prepare(`SELECT device_serial,parent_serial,name,type,firmware,online,first_offline_at,last_seen_at,system_message,source,updated_at
+        .prepare(`SELECT device_serial,parent_serial,name,type,firmware,online,first_offline_at,last_seen_at,system_message,source,payload_json,updated_at
        FROM device_inventory WHERE serial=? ORDER BY online,name`)
         .all(serial);
     const safeDevices = anonymized ? anonymizeServiceBundleValue(devices, redactionContext) : redactServiceBundleSecrets(devices);

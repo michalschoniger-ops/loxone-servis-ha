@@ -367,6 +367,24 @@ function attribute(attributes, name) {
     const match = attributes.match(new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "i"));
     return match ? decodeXml(match[1] ?? match[2] ?? "") : null;
 }
+function firstAttribute(attributes, names) {
+    for (const name of names) {
+        const value = attribute(attributes, name);
+        if (value !== null && value !== "")
+            return value;
+    }
+    return null;
+}
+function boundedAttributeNumber(attributes, names, minimum, maximum) {
+    const raw = firstAttribute(attributes, names);
+    if (raw === null)
+        return null;
+    const match = raw.replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+    if (!match)
+        return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) && value >= minimum && value <= maximum ? value : null;
+}
 function normalizeDeviceSerial(value) {
     if (!value)
         return null;
@@ -396,6 +414,8 @@ export function parseStatusXml(xml) {
         if (!serial)
             continue;
         const tagLower = tag.toLowerCase();
+        const productName = firstAttribute(attrs, ["ProductName", "ModelName", "DeviceName", "Model"]);
+        const productNumber = firstAttribute(attrs, ["ArticleNumber", "ArticleNo", "ProductNumber", "ItemNumber"]);
         const candidate = {
             serial,
             name: attribute(attrs, "Name") ?? attribute(attrs, "Title") ?? serial,
@@ -405,6 +425,11 @@ export function parseStatusXml(xml) {
             firmware: attribute(attrs, "Version") ?? attribute(attrs, "Firmware"),
             temperatureC: null,
             temperatureUpdatedAt: null,
+            airRssiDb: boundedAttributeNumber(attrs, ["RSSI", "Rssi", "AirRSSI", "AirRssi", "LastRSSI", "SignalStrength"], -150, 0),
+            airHops: boundedAttributeNumber(attrs, ["Hops", "AirHops", "RepeaterHops", "HopCount"], 0, 5),
+            batteryPercent: boundedAttributeNumber(attrs, ["BatteryPercent", "BatteryLevel", "Battery"], 0, 100),
+            productName,
+            productNumber: productNumber?.match(/\b\d{6}\b/)?.[0] ?? null,
             parentSerial: normalizeDeviceSerial(attribute(attrs, "Parent") ?? attribute(attrs, "ParentSerial")),
             deviceIndex: Number.isFinite(Number(attribute(attrs, "DeviceIndex"))) ? Number(attribute(attrs, "DeviceIndex")) : null,
             systemMessage: message,
@@ -425,6 +450,11 @@ export function parseStatusXml(xml) {
             // authoritative status row says it is offline.
             online: existing.online && candidate.online,
             firmware: existing.firmware ?? candidate.firmware,
+            airRssiDb: existing.airRssiDb ?? candidate.airRssiDb,
+            airHops: existing.airHops ?? candidate.airHops,
+            batteryPercent: existing.batteryPercent ?? candidate.batteryPercent,
+            productName: existing.productName ?? candidate.productName,
+            productNumber: existing.productNumber ?? candidate.productNumber,
             parentSerial: existing.parentSerial ?? candidate.parentSerial,
             deviceIndex: existing.deviceIndex ?? candidate.deviceIndex,
             systemMessage: candidate.systemMessage ?? existing.systemMessage,

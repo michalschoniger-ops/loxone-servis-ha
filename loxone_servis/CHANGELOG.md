@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.10
+
+- průběžná fronta obnovuje Miniservery jednotlivě s minimálním 30sekundovým rozestupem místo automatického nárazu celé flotily
+- `/data/status`, firmware a dostupnost se obnovují v dvouhodinovém cyklu, Health Check po 12 hodinách, LoxAPP3 po 24 hodinách a 1‑Wire po 10 minutách
+- V2 statistiky čtou aktuální `statisticV2.groups[].dataPoints[]`, takže lze vybrat skutečný výstup a stáhnout BIN
+- inventář zachovává a zobrazuje dostupné Air RSSI, počet skoků, baterii, název produktu a produktové číslo
+- rozšířené přesné produktové fotografie z oficiálního Loxone Shop CDN; obecné typy se nepřiřazují odhadem
+- aplikace i manifest ZIPu přesně vysvětlují obsah anonymizovaného servisního balíčku
+- přehled Miniserveru ukazuje stáří Health Checku a LoxAPP3 a úvod aplikace popisuje její účel a bezpečnostní model
+
 ## 2.0.9
 
 - Mobilní nabídka znovu zobrazuje všechny tři názvy podpory, používá jednotnou velikost textu a ikon a po otevření nezachovává kompoziční transformaci ani rozmazávací filtr. Značka v hlavičce, přihlášení a aktualizační obrazovce má jemnou animaci respektující omezení pohybu v systému.

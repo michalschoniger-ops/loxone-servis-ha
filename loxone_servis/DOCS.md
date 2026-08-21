@@ -55,7 +55,26 @@ Import porovnává záznamy podle sériového čísla. Nový Miniserver založí
 
 ## 1-Wire historie a aplikační dohled
 
-Online teplotní 1-Wire čidla rodiny 28 se při pravidelné kontrole Miniserveru ukládají pouze do centrální databáze HA Práce. Jednotlivé vzorky se uchovávají 13 měsíců a denní minimum, průměr a maximum 5 let. HA Domov data pouze zobrazuje přes `canonical_base_url` a nic lokálně neukládá.
+Po minutovém zahřátí plánovač HA Práce postupně zařazuje vždy jeden Miniserver s uloženými přístupy a mezi dvěma položkami zachovává nejméně 30 sekund. Firmware, dostupnost, `/data/status`, prvky a aktuální hodnoty tak projdou průběžným dvouhodinovým cyklem bez nárazového dotazu na celou flotilu. Health Check se pro každý dostupný Miniserver obnovuje nejvýše jednou za 12 hodin a LoxAPP3 jednou za 24 hodin; neúspěšný pokus se nevydává za aktuální data.
+
+Online teplotní 1-Wire čidla rodiny 28 se samostatně vzorkují po jednom Miniserveru v desetiminutovém intervalu a ukládají pouze do centrální databáze HA Práce. Jednotlivé vzorky se uchovávají 13 měsíců a denní minimum, průměr a maximum 5 let. HA Domov data pouze zobrazuje přes `canonical_base_url` a nic lokálně neukládá.
+
+## Exporty, Air signál a servisní balíček
+
+Binární Statistiky V2 se nabízejí jen tehdy, když aktuální LoxAPP3 skutečně obsahuje `statisticV2.groups[].dataPoints[].output`. Název výstupu se neodvozuje z titulku a aplikace jej nevymýšlí. Pokud jej projekt nezveřejní, tlačítko **Stáhnout BIN** zůstane neaktivní a zobrazí se přesný důvod.
+
+Inventář ukládá produktové číslo, název produktu, Air RSSI, počet Air skoků a baterii pouze tehdy, když je poskytne `/data/status` daného Miniserveru. Přesná fotografie se přiřazuje podle tohoto šestimístného čísla nebo jednoznačného názvu a načítá z oficiálního produktového CDN Loxone Shop. Obecný typ `AirDevice` nebo `TreeDevice` nestačí k bezpečnému určení fyzického výrobku, proto se mu jiná fotografie nepřiřadí.
+
+Tlačítko **Servisní balíček** vytvoří anonymizovaný ZIP se souborem `manifest.json` a následujícím obsahem:
+
+- `miniserver.json`: identita, firmware a poslední provozní stav,
+- `health.json`: nejvýše 25 posledních diagnostických snímků,
+- `devices.json`: inventář prvků a dostupná telemetrie včetně Air RSSI,
+- `availability.json`: nejvýše 500 posledních událostí dostupnosti,
+- `project-changes.json`: nejvýše 100 souhrnů změn projektu,
+- `def.log`, nebo při nedostupnosti bezpečný `def.log.error.txt` pouze s kódem chyby.
+
+ZIP neobsahuje hesla ani tokeny, známé zákaznické identifikátory jsou v anonymním režimu nahrazené a odkaz ke stažení platí 24 hodin.
 
 U instalace **HA Vágner** se každých 30 sekund samostatně kontroluje integrace MELCloud, pět klimatizačních jednotek, jejich lokální ping, příliš dlouho čekající zápis, teploty, ventilátor a polohy lamel. U instalace **HA Herškovič** se stejným intervalem kontroluje větrná elektrárna přes autorizovaný Home Assistant Ingress doplňku SolarInvert Logger: health/ready stav, USB, cloud, spojení s Loxone a každý ze dvou střídačů zvlášť. Centrální HA Práce proto nemusí otevírat ani opakovaně oslovovat vzdálený port 8765.
 

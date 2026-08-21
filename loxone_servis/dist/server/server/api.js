@@ -531,7 +531,12 @@ export async function registerApi(app, db, jobs) {
                 first_offline_at AS firstOfflineAt,last_seen_at AS lastSeenAt,system_message AS systemMessage,
                 device_index AS deviceIndex,source,updated_at AS updatedAt,
                 json_extract(payload_json,'$.temperatureC') AS temperatureC,
-                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt
+                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt,
+                json_extract(payload_json,'$.airRssiDb') AS airRssiDb,
+                json_extract(payload_json,'$.airHops') AS airHops,
+                json_extract(payload_json,'$.batteryPercent') AS batteryPercent,
+                json_extract(payload_json,'$.productName') AS productName,
+                json_extract(payload_json,'$.productNumber') AS productNumber
          FROM device_inventory
          WHERE serial IN (${serials.map(() => "?").join(",")})
            AND device_serial NOT GLOB '*[^0-9A-F]*' AND length(device_serial) BETWEEN 6 AND 16
@@ -938,7 +943,12 @@ export async function registerApi(app, db, jobs) {
             .prepare(`SELECT device_serial AS serial,parent_serial AS parentSerial,name,type,firmware,online,first_offline_at AS firstOfflineAt,
                 last_seen_at AS lastSeenAt,system_message AS systemMessage,device_index AS deviceIndex,source,updated_at AS updatedAt,
                 json_extract(payload_json,'$.temperatureC') AS temperatureC,
-                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt
+                json_extract(payload_json,'$.temperatureUpdatedAt') AS temperatureUpdatedAt,
+                json_extract(payload_json,'$.airRssiDb') AS airRssiDb,
+                json_extract(payload_json,'$.airHops') AS airHops,
+                json_extract(payload_json,'$.batteryPercent') AS batteryPercent,
+                json_extract(payload_json,'$.productName') AS productName,
+                json_extract(payload_json,'$.productNumber') AS productNumber
          FROM device_inventory
          WHERE serial=? AND device_serial NOT GLOB '*[^0-9A-F]*' AND length(device_serial) BETWEEN 6 AND 16
          ORDER BY online,name COLLATE NOCASE`)

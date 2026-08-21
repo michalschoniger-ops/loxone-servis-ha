@@ -25,6 +25,7 @@ function publicUser(row) {
     return {
         id: row.id,
         email: row.email,
+        displayName: row.display_name || row.email,
         role: row.role,
         immutable: row.immutable === 1,
         mfaEnabled: row.mfa_enabled === 1,
@@ -123,6 +124,20 @@ export function requireRole(request, reply, roles) {
     }
     return user;
 }
+export async function createActionConfirmationWithPassword(db, user, input) {
+    const row = db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
+    if (!row || !(await verifyPassword(input.password, row.password_hash))) {
+        audit(db, "action.confirmation_failed", user.id, input.serial, { action: input.action });
+        return null;
+    }
+    const confirmationId = randomUUID();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString();
+    db.prepare(`INSERT INTO action_confirmations(id,actor_user_id,action,serial,payload_hash,expires_at,created_at)
+     VALUES(?,?,?,?,?,?,?)`).run(confirmationId, user.id, input.action, input.serial, actionPayloadHash(input.action, input.serial, input.payload), expiresAt, now.toISOString());
+    audit(db, "action.confirmed", user.id, input.serial, { action: input.action });
+    return { confirmationId, expiresAt };
+}
 function verifyTotp(row, value) {
     if (row.mfa_enabled !== 1)
         return true;
@@ -145,7 +160,8 @@ export async function registerAuth(app, db) {
             return;
         const tokenHash = hashToken(rawToken);
         const row = db
-            .prepare(`SELECT u.id,u.email,u.password_hash,u.role,u.immutable,u.active,u.mfa_secret_encrypted,u.mfa_enabled,
+            .prepare(`SELECT u.id,u.email,u.display_name,u.password_hash,u.role,u.immutable,u.active,u.mfa_secret_encrypted,u.mfa_enabled,
+                u.avatar_mime,u.avatar_updated_at,
                 s.expires_at,s.csrf_hash,s.ip_hash,s.user_agent_hash
          FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?`)
             .get(tokenHash);
@@ -212,9 +228,6 @@ export async function registerAuth(app, db) {
         catch (error) {
             return reply.code(400).send({ error: error.message, code: "WEBAUTHN_HTTPS_REQUIRED" });
         }
-        const existing = db
-            .prepare("SELECT credential_id,transports_json FROM passkey_credentials WHERE user_id=?")
-            .all(user.id);
         const options = await generateRegistrationOptions({
             rpName: "Evora Smart Hub",
             rpID: context.rpID,
@@ -223,10 +236,10 @@ export async function registerAuth(app, db) {
             userID: new TextEncoder().encode(user.id),
             timeout: 60_000,
             attestationType: "none",
-            excludeCredentials: existing.map((credential) => ({
-                id: credential.credential_id,
-                transports: parseTransports(credential.transports_json),
-            })),
+            // Deliberately allow another platform credential for the same account.
+            // This lets an administrator register a separately named Passkey on a
+            // Mac, iPhone and Windows device instead of blocking the second device.
+            excludeCredentials: [],
             authenticatorSelection: {
                 residentKey: "required",
                 userVerification: "required",
@@ -329,8 +342,8 @@ export async function registerAuth(app, db) {
             return reply.code(400).send({ error: "Přihlášení pomocí Passkey vypršelo. Zkuste je znovu.", code: "WEBAUTHN_CHALLENGE_INVALID" });
         const response = input.response;
         const credential = db
-            .prepare(`SELECT p.*,u.id AS user_id,u.email,u.password_hash,u.role,u.immutable,u.active,
-                  u.mfa_secret_encrypted,u.mfa_enabled
+            .prepare(`SELECT p.*,u.id AS user_id,u.email,u.display_name,u.password_hash,u.role,u.immutable,u.active,
+                  u.mfa_secret_encrypted,u.mfa_enabled,u.avatar_mime,u.avatar_updated_at
            FROM passkey_credentials p JOIN users u ON u.id=p.user_id WHERE p.credential_id=?`)
             .get(response.id);
         if (!credential || credential.active !== 1) {
@@ -449,17 +462,15 @@ export async function registerAuth(app, db) {
             payload: z.unknown().optional(),
         })
             .parse(request.body);
-        const row = db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
-        if (!(await verifyPassword(input.password, row.password_hash))) {
-            audit(db, "action.confirmation_failed", user.id, input.serial?.toUpperCase() ?? null, { action: input.action });
+        const confirmed = await createActionConfirmationWithPassword(db, user, {
+            password: input.password,
+            action: input.action,
+            serial: input.serial?.toUpperCase() ?? null,
+            payload: input.payload ?? {},
+        });
+        if (!confirmed)
             return reply.code(403).send({ error: "Heslo není správné.", code: "REAUTH_FAILED" });
-        }
-        const id = randomUUID();
-        const now = new Date();
-        db.prepare(`INSERT INTO action_confirmations(id,actor_user_id,action,serial,payload_hash,expires_at,created_at)
-       VALUES(?,?,?,?,?,?,?)`).run(id, user.id, input.action, input.serial?.toUpperCase() ?? null, actionPayloadHash(input.action, input.serial?.toUpperCase() ?? null, input.payload ?? {}), new Date(now.getTime() + 5 * 60_000).toISOString(), now.toISOString());
-        audit(db, "action.confirmed", user.id, input.serial?.toUpperCase() ?? null, { action: input.action });
-        return { confirmationId: id, expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString() };
+        return confirmed;
     });
 }
 export function consumeConfirmation(db, user, confirmationId, action, serial, payloadHash) {

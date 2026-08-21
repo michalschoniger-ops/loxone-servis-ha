@@ -80,6 +80,7 @@ function migrateUserRoles(db) {
     CREATE TABLE users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin', 'technician', 'viewer')),
       immutable INTEGER NOT NULL DEFAULT 0,
@@ -163,6 +164,7 @@ function applyMigrations(db) {
       CREATE TABLE users (
         id TEXT PRIMARY KEY,
         email TEXT NOT NULL,
+        display_name TEXT NOT NULL DEFAULT '',
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL CHECK(role IN ('admin', 'technician', 'viewer')),
         immutable INTEGER NOT NULL DEFAULT 0,
@@ -234,6 +236,7 @@ function applyMigrations(db) {
     addColumn(db, "users", "avatar_mime TEXT");
     addColumn(db, "users", "avatar_data TEXT");
     addColumn(db, "users", "avatar_updated_at TEXT");
+    addColumn(db, "users", "display_name TEXT NOT NULL DEFAULT ''");
     if (!db.prepare("PRAGMA table_info(users)").all().some((column) => column.name === "mfa_enabled")) {
         addColumn(db, "users", "mfa_secret_encrypted TEXT");
         addColumn(db, "users", "mfa_enabled INTEGER NOT NULL DEFAULT 0");
@@ -666,7 +669,7 @@ function applyMigrations(db) {
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(13, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(14, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();
@@ -693,16 +696,21 @@ function ensureBuiltInHomeAssistantMonitors(db) {
 }
 function ensureBootstrapAdmin(db) {
     const count = db.prepare("SELECT COUNT(*) AS count FROM users").get();
-    if (count.count > 0)
+    const displayName = config.bootstrapAdminDisplayName.trim();
+    if (count.count > 0) {
+        if (displayName) {
+            db.prepare("UPDATE users SET display_name=?,updated_at=? WHERE lower(email)=lower(?) AND trim(display_name)=''").run(displayName, new Date().toISOString(), config.bootstrapAdminEmail);
+        }
         return;
+    }
     if (!config.bootstrapAdminPasswordHash) {
         if (config.localSetupAllowed)
             return;
         throw new Error("Databáze nemá správce a BOOTSTRAP_ADMIN_PASSWORD_HASH není nastaven.");
     }
     const now = new Date().toISOString();
-    db.prepare(`INSERT INTO users(id,email,password_hash,role,immutable,active,created_at,updated_at,mfa_enabled)
-     VALUES(?,?,?,?,1,1,?,?,0)`).run(randomUUID(), config.bootstrapAdminEmail.toLowerCase(), config.bootstrapAdminPasswordHash, "admin", now, now);
+    db.prepare(`INSERT INTO users(id,email,display_name,password_hash,role,immutable,active,created_at,updated_at,mfa_enabled)
+     VALUES(?,?,?,?,?,1,1,?,?,0)`).run(randomUUID(), config.bootstrapAdminEmail.toLowerCase(), displayName, config.bootstrapAdminPasswordHash, "admin", now, now);
 }
 export function openDatabase() {
     migrateLegacyDatabase(config.databasePath);

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.2
+
+- Správce má přímo v Evora Smart Hubu bezpečné centrum Loxone ticketů: seznam a filtrování, detail veřejné komunikace a příloh, založení ticketu i odpověď. Každé odeslání nejdřív ukáže úplný náhled a potom vyžádá heslo správce; technikům a uživatelům zůstávají jen původní externí odkazy.
+- Stejné správcovské funkce ticketů jsou dostupné v nativním menu WorkLog AI. Token integrace nadále funguje jen aktivnímu správci a odpojení Macu vyčistí také načtené tickety.
+- Účty mají samostatné zobrazované jméno. Správce je může upravit v sekci Uživatelé, přihlašovací e-mail zůstává beze změny a hlavní účet se doplní jako `Bc. Michal Schöniger`.
+- Uložený vestavěný login Miniserveru se bez ohledu na původní zápis normalizuje na přesné `admin`, takže Windows Config Launcher už neposílá chybné `ADMIN`.
+- Mobilní karty uživatelů a ticketů jsou upravené pro iPhone bez překrytí jména, fotografie, rolí a ovládacích prvků.
+
+## 2.0.1
+
+- Windows Config Launcher 2.0.0.2 používá pro uživatelské jméno a heslo přímý UI Automation `ValuePattern`, takže jej neovlivní Caps Lock. Vyhledává dialog uvnitř správného procesu, neduplikuje stav spuštění a úspěch potvrdí až po osmisekundové kontrole, že Config přihlášení neodmítl.
+- Aktualizace Home Assistantu vyžadují pouze výslovné potvrzení bez hesla; správce může jedním potvrzením spustit všechny čekající aktualizace.
+- Opravena skutečná příčina nezobrazených profilových fotografií v relaci. Správce může fotografii nahrát nebo odstranit také ostatním uživatelům.
+- Passkey lze odstranit i přes Home Assistant Ingress a každý telefon či počítač si může zaregistrovat vlastní Face ID, Touch ID nebo Windows Hello klíč.
+- Partner Portal a Tickety jsou přesunuty pod Podporu. Inventář ukazuje jen přesně rozpoznané produktové fotografie a neznámému prvku už nepřiřazuje zavádějící obecný obrázek.
+- WorkLog AI zobrazuje u každého Miniserveru zelený nebo šedý stav a má vyhledávání podle projektu, složky, typu i SN bez ohledu na diakritiku.
+- U SN je nové informační kolečko s datem registrace z Partner Portálu. Tlačítko Config používá vlastní rozpoznatelnou ikonu místo obecného dokumentu.
+
 ## 2.0.0
 
 - Nové Miniservery importované z Partner Portálu se okamžitě označí jako `Nový z Portálu`, řadí se před ostatní, mají samostatný filtr a vyžádají doplnění loginu a hesla. Po uložení přístupu označení automaticky zmizí.

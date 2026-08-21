@@ -102,14 +102,17 @@ export function getStoredCredentials(db, serial) {
         .get(serial.toUpperCase());
     if (!row?.username_encrypted || !row.password_encrypted)
         return null;
+    const storedUsername = decryptSecret(row.username_encrypted, config.masterKey, `${serial.toUpperCase()}:username`).trim();
     return {
-        username: decryptSecret(row.username_encrypted, config.masterKey, `${serial.toUpperCase()}:username`),
+        username: storedUsername.toLocaleLowerCase("en") === "admin" ? "admin" : storedUsername,
         password: decryptSecret(row.password_encrypted, config.masterKey, `${serial.toUpperCase()}:password`),
     };
 }
 export function saveCredentials(db, serial, username, password) {
     const normalized = serial.toUpperCase();
-    db.prepare(`UPDATE miniservers SET username_encrypted=?,password_encrypted=?,credential_source='manual',updated_at=? WHERE serial=?`).run(encryptSecret(username, config.masterKey, `${normalized}:username`), encryptSecret(password, config.masterKey, `${normalized}:password`), new Date().toISOString(), normalized);
+    const trimmedUsername = username.trim();
+    const normalizedUsername = trimmedUsername.toLocaleLowerCase("en") === "admin" ? "admin" : trimmedUsername;
+    db.prepare(`UPDATE miniservers SET username_encrypted=?,password_encrypted=?,credential_source='manual',updated_at=? WHERE serial=?`).run(encryptSecret(normalizedUsername, config.masterKey, `${normalized}:username`), encryptSecret(password, config.masterKey, `${normalized}:password`), new Date().toISOString(), normalized);
 }
 export function listReleases(db) {
     const rows = db

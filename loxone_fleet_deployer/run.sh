@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_SHA256="e1b294d0705beb5ea5dd61dbc118af2a757e4be31e3326b575ac16ef0afd06d6"
+PAYLOAD_SHA256="975c50d744a0ba94d871d24705c698e84252012ef6b4cde3331a8c165c4fc825"
 ROLLBACK_PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
 EXPECTED_SLUG="loxone_fleet"
-EXPECTED_VERSION="2.0.0"
+EXPECTED_VERSION="2.0.2"
 ROLLBACK_VERSION="1.0.3"
 
 if [ "${EVORA_DEPLOY_TEST_MODE:-0}" = "1" ]; then
@@ -98,7 +98,7 @@ if [ "$OPERATION" = "rollback" ]; then
   ORIGINAL_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ORIGINAL_DIR/config.yaml")"
   [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ] || fail "Rollback odmítnut: aktivní zdroj není ${EXPECTED_VERSION}."
   case "$ORIGINAL_VERSION" in
-    0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3) ;;
+    0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1) ;;
     *) fail "Rollback odmítnut: neočekávaná původní verze $ORIGINAL_VERSION." ;;
   esac
   TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -148,7 +148,7 @@ esac
 
 CURRENT_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$TARGET_CONFIG")"
 case "$CURRENT_VERSION" in
-  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0) ;;
+  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2) ;;
   *) fail "Neočekávaná cílová verze: ${CURRENT_VERSION:-neznámá}. Nic nebylo změněno." ;;
 esac
 

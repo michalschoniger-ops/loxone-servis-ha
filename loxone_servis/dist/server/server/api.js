@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { actionPayloadHash, consumeConfirmation, requireRole, requireUser } from "./auth.js";
+import { actionPayloadHash, consumeConfirmation, createActionConfirmationWithPassword, requireRole, requireUser } from "./auth.js";
 import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
@@ -13,12 +13,29 @@ import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../sh
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
+import { clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
 import { authenticateLauncherAgent, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
+const portalTicketIdSchema = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/);
+const portalTicketCreateSchema = z.object({
+    subject: z.string().trim().min(3).max(500).refine((value) => !value.includes("\0")),
+    description: z.string().trim().min(3).max(20_000).refine((value) => !value.includes("\0")),
+});
+const portalTicketReplySchema = z.object({
+    content: z.string().trim().min(1).max(20_000).refine((value) => !value.includes("\0")),
+});
+const portalTicketConfirmationSchema = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("portal_ticket_create"), password: z.string().min(1).max(512), payload: portalTicketCreateSchema }),
+    z.object({
+        action: z.literal("portal_ticket_reply"),
+        password: z.string().min(1).max(512),
+        payload: portalTicketReplySchema.extend({ ticketId: portalTicketIdSchema }),
+    }),
+]);
 function exactConfigRelease(db, version) {
     if (!version)
         return null;
@@ -87,6 +104,7 @@ export async function registerApi(app, db, jobs) {
             portalPassword: z.string().min(1).max(512),
         }).parse(request.body);
         const status = await connectPortal(db, body.email, body.portalPassword);
+        clearPortalTicketSession(db);
         audit(db, "portal.connected", user.id, null, { email: body.email, productCount: status.productCount });
         return status;
     });
@@ -102,7 +120,69 @@ export async function registerApi(app, db, jobs) {
         if (!user)
             return;
         audit(db, "portal.disconnected", user.id, null, {});
-        return disconnectPortal(db);
+        const status = disconnectPortal(db);
+        clearPortalTicketSession(db);
+        return status;
+    });
+    app.get("/api/portal-tickets", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireRole(request, reply, ["admin"]))
+            return;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return { items: await listPortalTickets(db) };
+    });
+    app.get("/api/portal-tickets/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireRole(request, reply, ["admin"]))
+            return;
+        const id = portalTicketIdSchema.parse(request.params.id);
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return { ticket: await getPortalTicket(db, id) };
+    });
+    app.post("/api/portal-tickets", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = portalTicketCreateSchema.parse(request.body);
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "portal_ticket_create", null, input)) {
+            return reply.code(428).send({ error: "Nejdřív zkontrolujte celý návrh a potvrďte odeslání svým heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await createPortalTicket(db, input);
+        audit(db, "portal.ticket_created", user.id, null, {
+            confirmation: "explicit_after_preview",
+            portalTicketId: result.ticketId,
+            portalTicketNumber: result.ticketNumber,
+        });
+        return result;
+    });
+    app.post("/api/portal-tickets/:id/replies", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const ticketId = portalTicketIdSchema.parse(request.params.id);
+        const replyInput = portalTicketReplySchema.parse(request.body);
+        const payload = { ticketId, content: replyInput.content };
+        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "portal_ticket_reply", null, payload)) {
+            return reply.code(428).send({ error: "Nejdřív zkontrolujte celou odpověď a potvrďte odeslání svým heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await replyPortalTicket(db, ticketId, replyInput.content);
+        audit(db, "portal.ticket_replied", user.id, null, {
+            confirmation: "explicit_after_preview",
+            portalTicketId: ticketId,
+        });
+        return result;
+    });
+    app.post("/api/portal-tickets/attachments/download", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireRole(request, reply, ["admin"]))
+            return;
+        const input = z.object({ token: z.string().min(20).max(20_000) }).parse(request.body);
+        const attachment = await downloadPortalTicketAttachment(db, input.token);
+        const fallbackName = attachment.fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "attachment";
+        return reply
+            .header("Cache-Control", "no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Disposition", `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`)
+            .type(attachment.contentType)
+            .send(attachment.content);
     });
     app.get("/api/integrations/worklog/tokens", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -138,6 +218,71 @@ export async function registerApi(app, db, jobs) {
         }
         audit(db, "worklog.token_revoked", user.id, null, { integrationId: id });
         return { ok: true };
+    });
+    app.get("/api/integrations/worklog/v1/portal-tickets", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return { user: { email: identity.email }, items: await listPortalTickets(db) };
+    });
+    app.get("/api/integrations/worklog/v1/portal-tickets/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const id = portalTicketIdSchema.parse(request.params.id);
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return { ticket: await getPortalTicket(db, id) };
+    });
+    app.post("/api/integrations/worklog/v1/portal-tickets/confirm", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const input = portalTicketConfirmationSchema.parse(request.body);
+        const confirmed = await createActionConfirmationWithPassword(db, { id: identity.ownerUserId }, {
+            password: input.password,
+            action: input.action,
+            serial: null,
+            payload: input.payload,
+        });
+        if (!confirmed)
+            return reply.code(403).send({ error: "Heslo není správné.", code: "REAUTH_FAILED" });
+        return confirmed;
+    });
+    app.post("/api/integrations/worklog/v1/portal-tickets", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const input = portalTicketCreateSchema.parse(request.body);
+        if (!requireConfirmation(db, { id: identity.ownerUserId }, confirmationHeader(request.headers), "portal_ticket_create", null, input)) {
+            return reply.code(428).send({ error: "Nejdřív zkontrolujte celý návrh a potvrďte odeslání svým heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await createPortalTicket(db, input);
+        audit(db, "worklog.portal_ticket_created", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            confirmation: "explicit_after_preview",
+            portalTicketId: result.ticketId,
+            portalTicketNumber: result.ticketNumber,
+        });
+        return result;
+    });
+    app.post("/api/integrations/worklog/v1/portal-tickets/:id/replies", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const ticketId = portalTicketIdSchema.parse(request.params.id);
+        const replyInput = portalTicketReplySchema.parse(request.body);
+        const payload = { ticketId, content: replyInput.content };
+        if (!requireConfirmation(db, { id: identity.ownerUserId }, confirmationHeader(request.headers), "portal_ticket_reply", null, payload)) {
+            return reply.code(428).send({ error: "Nejdřív zkontrolujte celou odpověď a potvrďte odeslání svým heslem.", code: "CONFIRMATION_REQUIRED" });
+        }
+        const result = await replyPortalTicket(db, ticketId, replyInput.content);
+        audit(db, "worklog.portal_ticket_replied", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            confirmation: "explicit_after_preview",
+            portalTicketId: ticketId,
+        });
+        return result;
     });
     app.get("/api/integrations/worklog/v1/miniservers", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -552,13 +697,46 @@ export async function registerApi(app, db, jobs) {
         const update = item.updates.find((candidate) => candidate.entityId === params.entityId);
         if (!update)
             return reply.code(409).send({ error: "Aktualizace už není dostupná. Nejprve obnovte kontrolu.", code: "UPDATE_NOT_AVAILABLE" });
+        z.object({ confirmed: z.literal(true) }).parse(request.body);
         const payload = { id: params.id, entityId: params.entityId };
-        if (!requireConfirmation(db, user, confirmationHeader(request.headers), "home_assistant_update", null, payload)) {
-            return reply.code(428).send({ error: "Aktualizaci Home Assistantu je nutné potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
-        }
         await callHomeAssistantService(db, params.id, "update", "install", { entity_id: params.entityId, backup: true });
-        audit(db, "home_assistant.update_started", user.id, null, { ...payload, title: update.title, target: update.latestVersion });
+        audit(db, "home_assistant.update_started", user.id, null, { ...payload, title: update.title, target: update.latestVersion, confirmation: "explicit" });
         return { ok: true };
+    });
+    app.post("/api/home-assistant/updates/install-all", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        z.object({ confirmed: z.literal(true) }).parse(request.body);
+        const targets = listHomeAssistantInstances(db)
+            .flatMap((item) => item.updates.map((update) => ({ item, update })))
+            .sort((left, right) => Number(left.update.category === "core") - Number(right.update.category === "core"));
+        if (!targets.length) {
+            return reply.code(409).send({ error: "Žádné aktualizace už nejsou dostupné.", code: "UPDATE_NOT_AVAILABLE" });
+        }
+        const started = [];
+        const failed = [];
+        for (const target of targets) {
+            try {
+                await callHomeAssistantService(db, target.item.id, "update", "install", { entity_id: target.update.entityId, backup: true });
+                started.push({ id: target.item.id, entityId: target.update.entityId });
+                audit(db, "home_assistant.update_started", user.id, null, {
+                    id: target.item.id,
+                    entityId: target.update.entityId,
+                    title: target.update.title,
+                    target: target.update.latestVersion,
+                    confirmation: "explicit_bulk",
+                });
+            }
+            catch {
+                failed.push({ id: target.item.id, entityId: target.update.entityId });
+            }
+        }
+        audit(db, "home_assistant.update_all_started", user.id, null, { requested: targets.length, started: started.length, failed: failed.length });
+        if (!started.length) {
+            return reply.code(502).send({ error: "Home Assistant nepřijal žádnou z aktualizací.", code: "HOME_ASSISTANT_UPDATE_FAILED" });
+        }
+        return { ok: failed.length === 0, requested: targets.length, started: started.length, failed: failed.length };
     });
     app.delete("/api/home-assistant/:id", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -1344,7 +1522,7 @@ export async function registerApi(app, db, jobs) {
             return;
         return {
             items: db
-                .prepare("SELECT id,email,role,immutable,active,mfa_enabled AS mfaEnabled,avatar_mime AS avatarMime,avatar_updated_at AS avatarUpdatedAt,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY email")
+                .prepare("SELECT id,email,display_name AS displayName,role,immutable,active,mfa_enabled AS mfaEnabled,avatar_mime AS avatarMime,avatar_updated_at AS avatarUpdatedAt,last_login_at AS lastLoginAt,created_at AS createdAt FROM users ORDER BY display_name COLLATE NOCASE,email")
                 .all()
                 .map((row) => {
                 const user = row;
@@ -1367,14 +1545,14 @@ export async function registerApi(app, db, jobs) {
             return reply.code(404).send({ error: "Profilová fotografie není nastavena.", code: "AVATAR_NOT_FOUND" });
         return reply.header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff").type(row.mime).send(Buffer.from(row.data, "base64"));
     });
-    app.put("/api/users/me/avatar", async (request, reply) => {
-        const user = requireUser(request, reply);
-        if (!user)
-            return;
+    const saveUserAvatar = (targetUserId, body, actorUserId, reply) => {
+        const target = db.prepare("SELECT id FROM users WHERE id=?").get(targetUserId);
+        if (!target)
+            return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "USER_NOT_FOUND" });
         const input = z.object({
             mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
             data: z.string().min(8).max(1_500_000),
-        }).strict().parse(request.body);
+        }).strict().parse(body);
         const data = Buffer.from(input.data, "base64");
         if (!data.length || data.length > 1_000_000)
             return reply.code(413).send({ error: "Fotografie může mít nejvýše 1 MB.", code: "AVATAR_TOO_LARGE" });
@@ -1385,18 +1563,45 @@ export async function registerApi(app, db, jobs) {
             return reply.code(400).send({ error: "Soubor neodpovídá zvolenému formátu fotografie.", code: "INVALID_AVATAR" });
         const now = new Date().toISOString();
         db.prepare("UPDATE users SET avatar_mime=?,avatar_data=?,avatar_updated_at=?,updated_at=? WHERE id=?")
-            .run(input.mime, data.toString("base64"), now, now, user.id);
-        audit(db, "user.avatar_updated", user.id, null, { mime: input.mime, bytes: data.length });
+            .run(input.mime, data.toString("base64"), now, now, targetUserId);
+        audit(db, "user.avatar_updated", actorUserId, null, { targetUserId, mime: input.mime, bytes: data.length });
         return { ok: true, avatarUpdatedAt: now };
+    };
+    const removeUserAvatar = (targetUserId, actorUserId, reply) => {
+        const target = db.prepare("SELECT id FROM users WHERE id=?").get(targetUserId);
+        if (!target)
+            return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "USER_NOT_FOUND" });
+        const now = new Date().toISOString();
+        db.prepare("UPDATE users SET avatar_mime=NULL,avatar_data=NULL,avatar_updated_at=NULL,updated_at=? WHERE id=?")
+            .run(now, targetUserId);
+        audit(db, "user.avatar_removed", actorUserId, null, { targetUserId });
+        return { ok: true };
+    };
+    app.put("/api/users/me/avatar", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        return saveUserAvatar(user.id, request.body, user.id, reply);
     });
     app.delete("/api/users/me/avatar", async (request, reply) => {
         const user = requireUser(request, reply);
         if (!user)
             return;
-        db.prepare("UPDATE users SET avatar_mime=NULL,avatar_data=NULL,avatar_updated_at=NULL,updated_at=? WHERE id=?")
-            .run(new Date().toISOString(), user.id);
-        audit(db, "user.avatar_removed", user.id, null, {});
-        return { ok: true };
+        return removeUserAvatar(user.id, user.id, reply);
+    });
+    app.put("/api/users/:id/avatar", async (request, reply) => {
+        const actor = requireRole(request, reply, ["admin"]);
+        if (!actor)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        return saveUserAvatar(id, request.body, actor.id, reply);
+    });
+    app.delete("/api/users/:id/avatar", async (request, reply) => {
+        const actor = requireRole(request, reply, ["admin"]);
+        if (!actor)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        return removeUserAvatar(id, actor.id, reply);
     });
     app.post("/api/users", async (request, reply) => {
         const actor = requireRole(request, reply, ["admin"]);
@@ -1405,6 +1610,10 @@ export async function registerApi(app, db, jobs) {
         const input = z
             .object({
             email: z.string().email().refine((value) => value.toLowerCase().endsWith("@evorasmart.cz"), "Je povolený jen firemní e-mail."),
+            displayName: z.string().trim().max(160).refine((value) => [...value].every((character) => {
+                const code = character.charCodeAt(0);
+                return code >= 32 && code !== 127;
+            })).default(""),
             password: z.string().min(14).max(256),
             role: z.enum(["admin", "technician", "viewer"]),
         })
@@ -1412,8 +1621,8 @@ export async function registerApi(app, db, jobs) {
         const id = randomUUID();
         const now = new Date().toISOString();
         try {
-            db.prepare(`INSERT INTO users(id,email,password_hash,role,immutable,active,created_at,updated_at,mfa_enabled)
-         VALUES(?,?,?,?,0,1,?,?,0)`).run(id, input.email.toLowerCase(), await hashPassword(input.password), input.role, now, now);
+            db.prepare(`INSERT INTO users(id,email,display_name,password_hash,role,immutable,active,created_at,updated_at,mfa_enabled)
+         VALUES(?,?,?,?,?,0,1,?,?,0)`).run(id, input.email.toLowerCase(), input.displayName, await hashPassword(input.password), input.role, now, now);
         }
         catch (error) {
             if (error.message.includes("UNIQUE"))
@@ -1428,13 +1637,22 @@ export async function registerApi(app, db, jobs) {
         if (!actor)
             return;
         const id = z.string().uuid().parse(request.params.id);
-        const input = z.object({ role: z.enum(["admin", "technician", "viewer"]).optional(), active: z.boolean().optional() }).parse(request.body);
+        const input = z.object({
+            displayName: z.string().trim().max(160).refine((value) => [...value].every((character) => {
+                const code = character.charCodeAt(0);
+                return code >= 32 && code !== 127;
+            })).optional(),
+            role: z.enum(["admin", "technician", "viewer"]).optional(),
+            active: z.boolean().optional(),
+        }).parse(request.body);
         const target = db.prepare("SELECT immutable FROM users WHERE id=?").get(id);
         if (!target)
             return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "NOT_FOUND" });
         if (target.immutable === 1 && (input.role || input.active === false)) {
             return reply.code(409).send({ error: "Hlavní správce nejde deaktivovat ani změnit.", code: "IMMUTABLE_USER" });
         }
+        if (input.displayName !== undefined)
+            db.prepare("UPDATE users SET display_name=?,updated_at=? WHERE id=?").run(input.displayName, new Date().toISOString(), id);
         if (input.role)
             db.prepare("UPDATE users SET role=?,updated_at=? WHERE id=?").run(input.role, new Date().toISOString(), id);
         if (input.active !== undefined)

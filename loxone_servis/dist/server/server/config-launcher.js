@@ -130,8 +130,8 @@ export function takeConfigLaunchJob(db, agentId) {
 const TERMINAL_STATES = new Set(["succeeded", "missing_config", "failed"]);
 const ALLOWED_TRANSITIONS = {
     delivered: new Set(["launching", "missing_config", "failed"]),
-    launching: new Set(["connecting", "missing_config", "failed"]),
-    connecting: new Set(["succeeded", "failed"]),
+    launching: new Set(["launching", "connecting", "missing_config", "failed"]),
+    connecting: new Set(["connecting", "succeeded", "failed"]),
 };
 export function updateConfigLaunchJob(db, agentId, jobId, state, message, errorCode) {
     expireConfigLaunchJobs(db);

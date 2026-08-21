@@ -1,5 +1,5 @@
 name: Evora Smart Hub
-version: "2.0.0"
+version: "2.0.2"
 slug: loxone_fleet
 description: Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.
 url: https://github.com/michalschoniger-ops/loxone-servis
@@ -24,12 +24,14 @@ ports_description:
 options:
   credentials_master_key: ""
   bootstrap_admin_email: schoniger@evorasmart.cz
+  bootstrap_admin_display_name: Bc. Michal Schöniger
   bootstrap_admin_password_hash: ""
   cron_secret: ""
   local_setup_allowed: false
 schema:
   credentials_master_key: password
   bootstrap_admin_email: str
+  bootstrap_admin_display_name: str
   bootstrap_admin_password_hash: password
   cron_secret: password
   local_setup_allowed: bool

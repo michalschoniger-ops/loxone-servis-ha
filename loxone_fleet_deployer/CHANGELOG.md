@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2.1
+
+- Nasazuje Evora Smart Hub 2.0.2 s integrovaným správcovským centrem Loxone ticketů, úplným náhledem před každým odesláním a odpovídajícími funkcemi v WorkLog AI.
+- Přidává spravovatelná zobrazovaná jména uživatelů, výchozí jméno hlavního správce, přesnou normalizaci loginu `admin` pro Windows Config Launcher a finální mobilní rozvržení.
+- Zachovává databázi, šifrované přístupy i vratnou kopii stávající verze 2.0.0 nebo 2.0.1.
+
 ## 2.0.0.1
 
 - Nasazuje Evora Smart Hub 2.0.0 s dokončeným Windows/Parallels Config Launcherem, automaticky obnovovaným přihlášením k Partner Portalu a okamžitým označením nově importovaných Miniserverů.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.7
+
+- Profilové fotografie a úprava jména fungují také pro migrovaný hlavní účet s trvalým identifikátorem `owner-*`; povolený formát ID zůstává úzce omezený proti průchodu cestou.
+- Dostupnost flotily rozlišuje čtyři vzájemně výlučné stavy: ověřeně online, bez přístupu, neodpovídá a neověřeno. Souhrn dostupnosti je oddělený od souhrnu firmware, takže se počty už významově nemíchají.
+- Chyba aktualizace ticketů ani detailu už nesmaže lokální cache a nezobrazuje falešné globální hlášení. Seznam i komunikace jasně uvedou, že používají poslední uložená data, a nabídnou samostatné opakování.
+- Mobilní a desktopové vnořené menu má jednotnou výšku, velikost textu a ikon. Automatická úvodní kontrola už nezobrazuje nesouvisející červený toast nad otevřeným detailem; případná chyba složky zůstává přímo v jejím panelu.
+- Odkaz do Loxone App na iPhonu používá oficiální cíl `loc=home`, zachovává první otevření jako přímé klepnutí uživatele a při studeném startu provede právě jedno bezpečné zopakování kompletního cíle. Systémové potvrzení Passkey na iOS zůstává povinnou bezpečnostní součástí Face ID.
+- WorkLogAI integrace je vydaná společně s Hubem 2.0.7 a při neúspěšné kontrole Portálu dál zachová již načtené tickety.
+
 ## 2.0.6
 
 - WorkLogAI zobrazuje přílohy, u kterých Partner Portál poskytl pouze název, jako statický přehled bez falešného tlačítka pro stažení a bez následné technické chybové hlášky.

@@ -20,6 +20,11 @@ import { officialConfigDownloadUrl } from "./release.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
+// Older installations keep the immutable owner under a stable `owner-*` id,
+// while accounts created in the UI use UUIDs. Both are first-party user ids.
+// Keep the accepted alphabet narrow so the path parameter cannot become a
+// traversal or an encoded URL fragment.
+export const appUserIdSchema = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/);
 const portalTicketIdSchema = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/);
 const portalTicketCreateSchema = z.object({
     subject: z.string().trim().min(3).max(500).refine((value) => !value.includes("\0")),
@@ -1583,7 +1588,7 @@ export async function registerApi(app, db, jobs) {
     app.get("/api/users/:id/avatar", async (request, reply) => {
         if (!requireUser(request, reply))
             return;
-        const id = z.string().uuid().parse(request.params.id);
+        const id = appUserIdSchema.parse(request.params.id);
         const row = db.prepare("SELECT avatar_mime AS mime,avatar_data AS data,avatar_updated_at AS updatedAt FROM users WHERE id=?").get(id);
         if (!row?.mime || !row.data)
             return reply.code(404).send({ error: "Profilová fotografie není nastavena.", code: "AVATAR_NOT_FOUND" });
@@ -1643,14 +1648,14 @@ export async function registerApi(app, db, jobs) {
         const actor = requireRole(request, reply, ["admin"]);
         if (!actor)
             return;
-        const id = z.string().uuid().parse(request.params.id);
+        const id = appUserIdSchema.parse(request.params.id);
         return saveUserAvatar(id, request.body, actor.id, reply);
     });
     app.delete("/api/users/:id/avatar", async (request, reply) => {
         const actor = requireRole(request, reply, ["admin"]);
         if (!actor)
             return;
-        const id = z.string().uuid().parse(request.params.id);
+        const id = appUserIdSchema.parse(request.params.id);
         return removeUserAvatar(id, actor.id, reply);
     });
     app.post("/api/users", async (request, reply) => {
@@ -1686,7 +1691,7 @@ export async function registerApi(app, db, jobs) {
         const actor = requireRole(request, reply, ["admin"]);
         if (!actor)
             return;
-        const id = z.string().uuid().parse(request.params.id);
+        const id = appUserIdSchema.parse(request.params.id);
         const input = z.object({
             displayName: z.string().trim().max(160).refine((value) => [...value].every((character) => {
                 const code = character.charCodeAt(0);
@@ -1716,7 +1721,7 @@ export async function registerApi(app, db, jobs) {
         const actor = requireRole(request, reply, ["admin"]);
         if (!actor)
             return;
-        const id = z.string().uuid().parse(request.params.id);
+        const id = appUserIdSchema.parse(request.params.id);
         const target = db.prepare("SELECT email,immutable FROM users WHERE id=?").get(id);
         if (!target)
             return reply.code(404).send({ error: "Uživatel nebyl nalezen.", code: "NOT_FOUND" });

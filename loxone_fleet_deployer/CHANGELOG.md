@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.7.1
+
+- Nasazuje Evora Smart Hub 2.0.7 s opravou hlavního účtu a profilové fotografie, přesnými stavy dostupnosti, odolnou cache ticketů a sjednoceným mobilním menu.
+- Obsahuje odpovídající WorkLogAI integraci 2.0.7 a jednorázové bezpečné zopakování cíle Loxone App při studeném startu na iPhonu.
+- Zachovává databázi, šifrované přístupy a vratnou kopii zdroje 2.0.6.
+
 ## 2.0.6.1
 
 - Nasazuje Evora Smart Hub 2.0.6 s opraveným přehledem příloh ve WorkLogAI: názvy bez bezpečné adresy už nevypadají jako nefunkční stažení.

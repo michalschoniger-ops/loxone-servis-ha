@@ -200,11 +200,11 @@ export function connectionAvailabilityCounts(servers) {
     let notResponding = 0;
     let availabilityUnknown = 0;
     for (const server of servers) {
-        if (server.connectionState === "online" || server.connectionState === "no_access")
+        if (server.connectionState === "online")
             responding += 1;
         else if (server.connectionState === "unavailable" || server.connectionState === "error")
             notResponding += 1;
-        else
+        else if (server.connectionState === "unknown")
             availabilityUnknown += 1;
     }
     return { responding, notResponding, availabilityUnknown };

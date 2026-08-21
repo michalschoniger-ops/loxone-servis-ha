@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.8
+
+- Informační tlačítko u sériového čísla na iPhonu otevírá skutečné dotykové okno s názvem projektu, datem registrace z Partner Portálu a sériovým číslem; už není závislé na desktopovém hover efektu.
+- Souhrn Firmware je při otevření přehledu Miniserverů sbalený do kompaktního řádku a čtyři firmware karty se zobrazí až po klepnutí.
+- Všechny tři položky Podpory používají stejný pevný sloupec pro ikonu a shodný začátek textu, takže Partner Portal už není opticky posunutý.
+
 ## 2.0.7
 
 - Profilové fotografie a úprava jména fungují také pro migrovaný hlavní účet s trvalým identifikátorem `owner-*`; povolený formát ID zůstává úzce omezený proti průchodu cestou.

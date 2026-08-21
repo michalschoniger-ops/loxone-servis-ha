@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.8.1
+
+- Nasazuje Evora Smart Hub 2.0.8 s dotykovým dialogem data registrace na iPhonu, sbaleným firmware souhrnem a přesným zarovnáním ikon a textů v Podpoře.
+- WorkLogAI integraci nemění; stávající balíček 2.0.7 zůstává kompatibilní.
+
 ## 2.0.7.1
 
 - Nasazuje Evora Smart Hub 2.0.7 s opravou hlavního účtu a profilové fotografie, přesnými stavy dostupnosti, odolnou cache ticketů a sjednoceným mobilním menu.

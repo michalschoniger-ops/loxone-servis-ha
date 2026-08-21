@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0
+
+- Nové Miniservery importované z Partner Portálu se okamžitě označí jako `Nový z Portálu`, řadí se před ostatní, mají samostatný filtr a vyžádají doplnění loginu a hesla. Po uložení přístupu označení automaticky zmizí.
+- Ruční synchronizace Portálu se sleduje až do skutečného dokončení a potom bez reloadu obnoví stránku Miniservery. Pozadí úloh po restartu sloučí staré duplicitní synchronizace do jediného pokusu.
+- Přidáno bezpečné doplnění hesla pro automatické znovupřihlášení staršího portálového propojení, které dosud mělo jen obnovovací token.
+- Partner Portal synchronizuje také svůj jednoznačný příznak aktivního Weather Service. U Miniserveru s aktivní službou se zobrazí původní zelená ikona Loxone; neaktivní ani nezjištěná služba se nezobrazuje.
+- Windows Config Launcher 2.0.0.1 čeká na plně spuštěný Config, umí se vrátit z otevřeného projektu na Domů, otevře ruční připojení a po ustálení externí adresy znovu ověří login, heslo i aktivní tlačítko Připojit.
+- WorkLog AI používá skutečné obrázky typů Miniserverů; Compact má transparentní pozadí. Odkaz ke stažení Configu se doplní z přesné čtyřdílné verze firmware i tehdy, když starší záznam nemá URL.
+- Profilové fotografie z iPhonu i velké obrázky se před uložením převádějí na JPEG do 512 px a uživatel dostane konkrétní chybu nepodporovaného formátu. V postranní nabídce zůstává pouze LOXONE podpora a spodní panely Nastavení využívají celou šířku.
+
 ## 1.0.3
 
 - Přidán osobní Windows Loxone Config Launcher. Každý uživatel páruje vlastní zařízení jednorázovým kódem; token je ve Windows chráněný pomocí DPAPI a Hub odešle přístupy pouze aktivnímu požadavku stejného uživatele.

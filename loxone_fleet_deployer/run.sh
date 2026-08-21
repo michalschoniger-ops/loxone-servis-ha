@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
-ROLLBACK_PAYLOAD_SHA256="8c732936749dbd037107e0b639e6119b4a1bd4aabd1db4ae726cf6ca726932e9"
+PAYLOAD_SHA256="e1b294d0705beb5ea5dd61dbc118af2a757e4be31e3326b575ac16ef0afd06d6"
+ROLLBACK_PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
 EXPECTED_SLUG="loxone_fleet"
-EXPECTED_VERSION="1.0.3"
-ROLLBACK_VERSION="0.4.10"
+EXPECTED_VERSION="2.0.0"
+ROLLBACK_VERSION="1.0.3"
 
 if [ "${EVORA_DEPLOY_TEST_MODE:-0}" = "1" ]; then
   : "${EVORA_TEST_ADDONS_ROOT:?Chybí testovací adresář add-onů.}"
@@ -18,7 +18,7 @@ if [ "${EVORA_DEPLOY_TEST_MODE:-0}" = "1" ]; then
 else
   ADDONS_ROOT="/addons"
   PAYLOAD_ARCHIVE="/opt/evora/payload.tar.gz"
-  ROLLBACK_ARCHIVE="/opt/evora/rollback-0.4.10.tar.gz"
+  ROLLBACK_ARCHIVE="/opt/evora/rollback-1.0.3.tar.gz"
   DATA_ROOT="/data"
 fi
 
@@ -148,7 +148,7 @@ esac
 
 CURRENT_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$TARGET_CONFIG")"
 case "$CURRENT_VERSION" in
-  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3) ;;
+  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0) ;;
   *) fail "Neočekávaná cílová verze: ${CURRENT_VERSION:-neznámá}. Nic nebylo změněno." ;;
 esac
 

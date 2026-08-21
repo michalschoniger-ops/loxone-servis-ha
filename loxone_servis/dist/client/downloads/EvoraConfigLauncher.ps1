@@ -11,7 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "1.0.3.1"
+$HelperVersion = "2.0.0.1"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -26,6 +26,25 @@ function Write-SafeLog([string]$Message) {
   if ((Get-Item -LiteralPath $LogPath -ErrorAction SilentlyContinue).Length -gt 1048576) {
     $tail = Get-Content -LiteralPath $LogPath -Tail 500
     Set-Content -LiteralPath $LogPath -Value $tail -Encoding UTF8
+  }
+}
+
+function New-LauncherFailure([string]$Code, [string]$Message) {
+  $failure = New-Object System.Exception($Message)
+  $failure.Data["EvoraCode"] = $Code
+  return $failure
+}
+
+function Get-SafeFailureMessage([string]$Code) {
+  switch ($Code) {
+    "CONFIG_WINDOW_TIMEOUT" { return "Loxone Config did not finish opening in time." }
+    "CONFIG_HOME_NOT_FOUND" { return "Loxone Config Home could not be opened safely." }
+    "MANUAL_CONNECT_NOT_FOUND" { return "The verified Manual Connect action was not found." }
+    "CONNECT_DIALOG_TIMEOUT" { return "The Manual Connect dialog did not open in time." }
+    "CREDENTIAL_FIELDS_INVALID" { return "The verified login fields were not ready." }
+    "CONNECT_BUTTON_DISABLED" { return "Loxone Config did not accept all login fields." }
+    "CONNECTION_DIALOG_TIMEOUT" { return "Loxone Config did not confirm the connection in time." }
+    default { return "Windows Launcher could not complete the verified UI Automation sequence." }
   }
 }
 
@@ -142,13 +161,28 @@ function Get-AutomationElementById($Root, [string]$AutomationId) {
   return $Root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Get-AutomationValue($Element, [string]$Label) {
+  if ($null -eq $Element -or -not $Element.Current.IsEnabled) {
+    throw (New-LauncherFailure "CREDENTIAL_FIELDS_INVALID" "Expected $Label field is missing or disabled.")
+  }
+  try {
+    $pattern = $Element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    return [string]([Windows.Automation.ValuePattern]$pattern).Current.Value
+  } catch {
+    throw (New-LauncherFailure "CREDENTIAL_FIELDS_INVALID" "Expected $Label field does not support safe value verification.")
+  }
+}
+
 function Set-AutomationValue($Element, [string]$Value, [string]$Label) {
   if ($null -eq $Element -or -not $Element.Current.IsEnabled) {
-    throw "Expected $Label field is missing or disabled."
+    throw (New-LauncherFailure "CREDENTIAL_FIELDS_INVALID" "Expected $Label field is missing or disabled.")
   }
-  $pattern = $Element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
-  if ($null -eq $pattern) { throw "Expected $Label field does not support safe value entry." }
-  ([Windows.Automation.ValuePattern]$pattern).SetValue($Value)
+  try {
+    $pattern = $Element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    ([Windows.Automation.ValuePattern]$pattern).SetValue($Value)
+  } catch {
+    throw (New-LauncherFailure "CREDENTIAL_FIELDS_INVALID" "Expected $Label field does not support safe value entry.")
+  }
 }
 
 function Invoke-AutomationElement($Element) {
@@ -171,6 +205,28 @@ function Invoke-AutomationElement($Element) {
   }
 }
 
+function Find-ReadyConfigProcess([int]$StartedProcessId, [string]$ExecutablePath, [int]$TimeoutSeconds) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    $candidates = @()
+    $startedCandidate = Get-Process -Id $StartedProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $startedCandidate) { $candidates += $startedCandidate }
+    $candidates += @(Get-Process "LoxoneConfig" -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending)
+    foreach ($candidateProcess in @($candidates | Select-Object -Unique)) {
+      try {
+        $pathMatches = [string]::Equals([string]$candidateProcess.Path, $ExecutablePath, [StringComparison]::OrdinalIgnoreCase)
+        if ($pathMatches -and $candidateProcess.MainWindowHandle -ne 0) {
+          try { $candidateProcess.WaitForInputIdle(1500) | Out-Null } catch { }
+          $candidateProcess.Refresh()
+          if ($candidateProcess.MainWindowHandle -ne 0) { return $candidateProcess }
+        }
+      } catch { }
+    }
+    Start-Sleep -Milliseconds 350
+  } while ((Get-Date) -lt $deadline)
+  throw (New-LauncherFailure "CONFIG_WINDOW_TIMEOUT" "Exact Loxone Config window did not become ready.")
+}
+
 function Find-ConnectDialog([int]$ProcessId, [int]$TimeoutSeconds) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   $desktop = [Windows.Automation.AutomationElement]::RootElement
@@ -188,7 +244,8 @@ function Find-ConnectDialog([int]$ProcessId, [int]$TimeoutSeconds) {
 function Open-ManualConnectDialog($Process) {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
-  Add-Type @'
+  if ($null -eq ("EvoraWin32" -as [type])) {
+    Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class EvoraWin32 {
@@ -197,32 +254,126 @@ public static class EvoraWin32 {
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 '@
+  }
+  $existingDialog = Find-ConnectDialog $Process.Id 0
+  if ($null -ne $existingDialog) { return $existingDialog }
   [EvoraWin32]::SetForegroundWindow($Process.MainWindowHandle) | Out-Null
   $root = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-  if ($null -eq $root) { throw "Loxone Config main window was not found." }
-  $items = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
-  $matches = @()
+  if ($null -eq $root) { throw (New-LauncherFailure "CONFIG_WINDOW_TIMEOUT" "Loxone Config main window was not found.") }
   $czechManualConnect = "P$([char]0x0159)ipojit manu$([char]0x00E1)ln$([char]0x011B)..."
   $names = @("Pripojit manualne...", $czechManualConnect, "Connect manually...", "Manuell verbinden...")
-  for ($index = 0; $index -lt $items.Count; $index++) {
-    $item = $items.Item($index)
-    if ($item.Current.AutomationId -eq "QApplication.MainWindow.CentralWidget.CentralStack.ProjectsPage.CProjectManagementView.MenuScrollArea.qt_scrollarea_viewport.MenuPane.Item" -and $names -contains $item.Current.Name) {
-      $matches += $item
+
+  $findManualAction = {
+    param($SearchRoot)
+    $items = $SearchRoot.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    $matches = @()
+    for ($index = 0; $index -lt $items.Count; $index++) {
+      $item = $items.Item($index)
+      if ($item.Current.AutomationId -eq "QApplication.MainWindow.CentralWidget.CentralStack.ProjectsPage.CProjectManagementView.MenuScrollArea.qt_scrollarea_viewport.MenuPane.Item" -and $names -contains $item.Current.Name -and $item.Current.IsEnabled -and -not $item.Current.IsOffscreen) {
+        $matches += $item
+      }
     }
+    if ($matches.Count -eq 1) { return $matches[0] }
+    return $null
   }
-  if ($matches.Count -ne 1) { throw "Manual connect action was not identified uniquely." }
-  Invoke-AutomationElement $matches[0]
-  $dialog = Find-ConnectDialog $Process.Id 2
+
+  $manualAction = & $findManualAction $root
+  if ($null -eq $manualAction) {
+    $homeId = "QApplication.MainWindow.CentralWidget.CLxTitleBar.CTitleBarTabs.CTitleBarTabs::CHomeButton"
+    $homeButton = Get-AutomationElementById $root $homeId
+    if ($null -eq $homeButton -or -not $homeButton.Current.IsEnabled) {
+      throw (New-LauncherFailure "CONFIG_HOME_NOT_FOUND" "The verified Home action was not found.")
+    }
+    Invoke-AutomationElement $homeButton
+    $homeDeadline = (Get-Date).AddSeconds(15)
+    do {
+      Start-Sleep -Milliseconds 300
+      $root = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+      if ($null -ne $root) { $manualAction = & $findManualAction $root }
+    } while ($null -eq $manualAction -and (Get-Date) -lt $homeDeadline)
+  }
+  if ($null -eq $manualAction) {
+    throw (New-LauncherFailure "MANUAL_CONNECT_NOT_FOUND" "Manual connect action was not identified uniquely.")
+  }
+
+  Invoke-AutomationElement $manualAction
+  $dialog = Find-ConnectDialog $Process.Id 4
   if ($null -eq $dialog) {
     # A verified element-center click is the Qt compatibility fallback.
-    $bounds = $matches[0].Current.BoundingRectangle
+    $bounds = $manualAction.Current.BoundingRectangle
     [EvoraWin32]::SetCursorPos([int]($bounds.X + $bounds.Width / 2), [int]($bounds.Y + $bounds.Height / 2)) | Out-Null
     [EvoraWin32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [EvoraWin32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-    $dialog = Find-ConnectDialog $Process.Id 5
+    $dialog = Find-ConnectDialog $Process.Id 10
   }
-  if ($null -eq $dialog) { throw "Manual connect dialog did not open." }
+  if ($null -eq $dialog) { throw (New-LauncherFailure "CONNECT_DIALOG_TIMEOUT" "Manual connect dialog did not open.") }
   return $dialog
+}
+
+function Wait-ForVerifiedCredentials($Dialog, $Job, [int]$TimeoutSeconds = 18) {
+  $fieldBase = "QApplication.CMsConnectDlg.ContentContainer.CMsConnectDlg.m_frmCredentials."
+  $localId = $fieldBase + "m_tbLocalAddress"
+  $externalId = $fieldBase + "m_tbExternalAddress"
+  $usernameId = $fieldBase + "m_tbUser"
+  $passwordId = $fieldBase + "m_tbPassword"
+  $connectId = "QApplication.CMsConnectDlg.ButtonContainer.QDialogButtonBox.QToolButton"
+  $expectedSerial = [string]$Job.serial
+  $expectedUsername = [string]$Job.username
+  $expectedPassword = [string]$Job.password
+  $processId = [int]$Dialog.Current.ProcessId
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $addressStableSince = $null
+  $credentialsStableSince = $null
+
+  # Address changes trigger asynchronous credential clearing in Config. Set
+  # the address first and wait for it to settle before entering login details.
+  Set-AutomationValue (Get-AutomationElementById $Dialog $localId) "" "local address"
+  Set-AutomationValue (Get-AutomationElementById $Dialog $externalId) $expectedSerial "external address"
+
+  do {
+    Start-Sleep -Milliseconds 250
+    $currentDialog = Find-ConnectDialog $processId 0
+    if ($null -eq $currentDialog) {
+      throw (New-LauncherFailure "CONNECT_DIALOG_TIMEOUT" "Manual connect dialog closed before verification.")
+    }
+    $localField = Get-AutomationElementById $currentDialog $localId
+    $externalField = Get-AutomationElementById $currentDialog $externalId
+    $usernameField = Get-AutomationElementById $currentDialog $usernameId
+    $passwordField = Get-AutomationElementById $currentDialog $passwordId
+    $localValue = Get-AutomationValue $localField "local address"
+    $externalValue = Get-AutomationValue $externalField "external address"
+
+    if ($localValue -ne "" -or $externalValue -ne $expectedSerial) {
+      Set-AutomationValue $localField "" "local address"
+      Set-AutomationValue $externalField $expectedSerial "external address"
+      $addressStableSince = $null
+      $credentialsStableSince = $null
+      continue
+    }
+    if ($null -eq $addressStableSince) { $addressStableSince = Get-Date }
+    if (((Get-Date) - $addressStableSince).TotalMilliseconds -lt 900) { continue }
+
+    $usernameValue = Get-AutomationValue $usernameField "username"
+    $passwordValue = Get-AutomationValue $passwordField "password"
+    if ($usernameValue -ne $expectedUsername -or $passwordValue -ne $expectedPassword) {
+      Set-AutomationValue $usernameField $expectedUsername "username"
+      Set-AutomationValue $passwordField $expectedPassword "password"
+      $credentialsStableSince = $null
+      continue
+    }
+
+    $connectButton = Get-AutomationElementById $currentDialog $connectId
+    $czechConnect = "P$([char]0x0159)ipojit"
+    $buttonVerified = $null -ne $connectButton -and $connectButton.Current.Name -in @("Pripojit", $czechConnect, "Connect", "Verbinden") -and $connectButton.Current.IsEnabled
+    if (-not $buttonVerified) {
+      $credentialsStableSince = $null
+      continue
+    }
+    if ($null -eq $credentialsStableSince) { $credentialsStableSince = Get-Date }
+    if (((Get-Date) - $credentialsStableSince).TotalMilliseconds -ge 650) { return $connectButton }
+  } while ((Get-Date) -lt $deadline)
+
+  throw (New-LauncherFailure "CONNECT_BUTTON_DISABLED" "Login values did not remain verified long enough to enable Connect.")
 }
 
 function Post-JobStatus([string]$BaseUrl, [string]$Token, [string]$JobId, [string]$State, [string]$Message, [string]$ErrorCode = "") {
@@ -242,30 +393,11 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
 
   Post-JobStatus $BaseUrl $Token $jobId "launching" "Starting exact Loxone Config $requiredVersion."
   $started = Start-Process -FilePath $candidate.Path -PassThru
-  Start-Sleep -Seconds 4
-  $process = Get-Process -Id $started.Id -ErrorAction SilentlyContinue
-  if ($null -eq $process -or $process.MainWindowHandle -eq 0) {
-    $process = Get-Process "LoxoneConfig" -ErrorAction SilentlyContinue |
-      Where-Object { $_.Path -eq $candidate.Path -and $_.MainWindowHandle -ne 0 } |
-      Sort-Object StartTime -Descending | Select-Object -First 1
-  }
-  if ($null -eq $process -or $process.MainWindowHandle -eq 0) { throw "Exact Loxone Config window did not start." }
-  try { $process.WaitForInputIdle(15000) | Out-Null } catch { }
+  $process = Find-ReadyConfigProcess $started.Id ([string]$candidate.Path) 45
 
+  Post-JobStatus $BaseUrl $Token $jobId "launching" "Loxone Config is ready; opening Manual Connect."
   $dialog = Open-ManualConnectDialog $process
-  $fieldBase = "QApplication.CMsConnectDlg.ContentContainer.CMsConnectDlg.m_frmCredentials."
-  Set-AutomationValue (Get-AutomationElementById $dialog ($fieldBase + "m_tbUser")) ([string]$Job.username) "username"
-  # Manual Remote Connect in Loxone Config expects the Miniserver serial in
-  # External address. Local address intentionally stays empty.
-  Set-AutomationValue (Get-AutomationElementById $dialog ($fieldBase + "m_tbLocalAddress")) "" "local address"
-  Set-AutomationValue (Get-AutomationElementById $dialog ($fieldBase + "m_tbExternalAddress")) ([string]$Job.serial) "external address"
-  Set-AutomationValue (Get-AutomationElementById $dialog ($fieldBase + "m_tbPassword")) ([string]$Job.password) "password"
-
-  $connectButton = Get-AutomationElementById $dialog "QApplication.CMsConnectDlg.ButtonContainer.QDialogButtonBox.QToolButton"
-  $czechConnect = "P$([char]0x0159)ipojit"
-  if ($null -eq $connectButton -or $connectButton.Current.Name -notin @("Pripojit", $czechConnect, "Connect", "Verbinden") -or -not $connectButton.Current.IsEnabled) {
-    throw "Connect button was not identified safely."
-  }
+  $connectButton = Wait-ForVerifiedCredentials $dialog $Job
   Post-JobStatus $BaseUrl $Token $jobId "connecting" "Credentials entered; connecting to the Miniserver."
   Invoke-AutomationElement $connectButton
 
@@ -279,7 +411,7 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
       return
     }
   } while ((Get-Date) -lt $deadline)
-  throw "The connection dialog stayed open; connection was not confirmed."
+  throw (New-LauncherFailure "CONNECTION_DIALOG_TIMEOUT" "The connection dialog stayed open; connection was not confirmed.")
 }
 
 if ($PairingCode) {
@@ -326,9 +458,11 @@ try {
         try {
           Start-ConfigJob $response.job $configuredHubUrl $agentToken $executables
         } catch {
-          Write-SafeLog "Config launch job failed safely."
-          try { Post-JobStatus $configuredHubUrl $agentToken ([string]$response.job.id) "failed" "Windows Launcher could not complete the verified UI Automation sequence." "UI_AUTOMATION_FAILED" } catch { }
-          Show-LauncherNotice "Evora Smart Hub" "Loxone Config could not be opened automatically. Details are available in the Hub."
+          $failureCode = if ($_.Exception.Data.Contains("EvoraCode")) { [string]$_.Exception.Data["EvoraCode"] } else { "UI_AUTOMATION_FAILED" }
+          $failureMessage = Get-SafeFailureMessage $failureCode
+          Write-SafeLog "Config launch job failed safely ($failureCode)."
+          try { Post-JobStatus $configuredHubUrl $agentToken ([string]$response.job.id) "failed" $failureMessage $failureCode } catch { }
+          Show-LauncherNotice "Evora Smart Hub" "$failureMessage Details are available in the Hub."
         } finally {
           if ($null -ne $response.job) {
             $response.job.password = $null

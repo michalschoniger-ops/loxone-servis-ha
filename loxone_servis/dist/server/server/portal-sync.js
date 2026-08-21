@@ -93,6 +93,25 @@ function first(record, keys) {
     }
     return "";
 }
+function portalBoolean(record, keys) {
+    for (const key of keys) {
+        if (!(key in record))
+            continue;
+        const value = record[key];
+        if (typeof value === "boolean")
+            return value;
+        if (typeof value === "number" && (value === 0 || value === 1))
+            return value === 1;
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            if (["true", "1", "yes", "active"].includes(normalized))
+                return true;
+            if (["false", "0", "no", "inactive"].includes(normalized))
+                return false;
+        }
+    }
+    return null;
+}
 function normalizeProduct(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return null;
@@ -112,12 +131,14 @@ function normalizeProduct(value) {
             : normalizedType.includes("gen. 1") || normalizedType.includes("gen 1") || normalizedType.includes("gen1")
                 ? "Miniserver Gen. 1"
                 : "Miniserver";
+    const weatherServiceActive = portalBoolean(record, ["active_weather_service", "activeWeatherService"]);
     return {
         serial,
         project: first(record, ["project", "project_name", "projectName", "name"]) || serial,
         type,
         registered: first(record, ["registered", "registered_at", "registeredAt", "registration_date"]),
         productId: first(record, ["id", "product_id", "productId"]) || null,
+        weatherServiceStatus: weatherServiceActive === null ? "unknown" : weatherServiceActive ? "active" : "inactive",
     };
 }
 function findProducts(value) {
@@ -203,19 +224,20 @@ function updateStatus(db, status, error = "") {
 function upsertProducts(db, products, now) {
     const stable = db.prepare("SELECT version FROM firmware_releases WHERE channel='stable'").get()?.version ?? "";
     const existing = db.prepare("SELECT serial,project,portal_synced_project FROM miniservers WHERE serial=?");
-    const insert = db.prepare(`INSERT INTO miniservers(serial,type,project,registered,credential_source,access_policy,target_firmware,firmware_policy,firmware_channel,portal_product_id,portal_last_seen_at,portal_synced_project,portal_synced_type,created_at,updated_at)
-     VALUES(?,?,?,?,?,'managed',?,'follow_stable','stable',?,?,?,?,?,?)`);
+    const insert = db.prepare(`INSERT INTO miniservers(serial,type,project,registered,credential_source,access_policy,target_firmware,firmware_policy,firmware_channel,portal_product_id,portal_last_seen_at,portal_synced_project,portal_synced_type,weather_service_status,weather_service_checked_at,created_at,updated_at)
+     VALUES(?,?,?,?,?,'managed',?,'follow_stable','stable',?,?,?,?,?,?,?,?)`);
     const update = db.prepare(`UPDATE miniservers SET project=?,type=?,registered=CASE WHEN registered='' THEN ? ELSE registered END,
-       portal_product_id=?,portal_last_seen_at=?,portal_synced_project=?,portal_synced_type=?,updated_at=? WHERE serial=?`);
+       portal_product_id=?,portal_last_seen_at=?,portal_synced_project=?,portal_synced_type=?,
+       weather_service_status=?,weather_service_checked_at=?,updated_at=? WHERE serial=?`);
     for (const product of products) {
         const row = existing.get(product.serial);
         if (!row) {
-            insert.run(product.serial, product.type, product.project, product.registered, "portal", stable, product.productId, now, product.project, product.type, now, now);
+            insert.run(product.serial, product.type, product.project, product.registered, "portal", stable, product.productId, now, product.project, product.type, product.weatherServiceStatus, now, now, now);
             continue;
         }
         const canUpdateProject = !row.project || row.project === product.serial || row.project === row.portal_synced_project;
         const project = canUpdateProject ? product.project : row.project;
-        update.run(project, product.type, product.registered, product.productId, now, product.project, product.type, now, product.serial);
+        update.run(project, product.type, product.registered, product.productId, now, product.project, product.type, product.weatherServiceStatus, now, now, product.serial);
     }
 }
 export function getPortalSyncStatus(db) {

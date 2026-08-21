@@ -229,6 +229,8 @@ function applyMigrations(db) {
     addColumn(db, "miniservers", "next_check_at TEXT");
     addColumn(db, "miniservers", "remote_app_url TEXT");
     addColumn(db, "miniservers", "manual_only INTEGER NOT NULL DEFAULT 0");
+    addColumn(db, "miniservers", "weather_service_status TEXT NOT NULL DEFAULT 'unknown'");
+    addColumn(db, "miniservers", "weather_service_checked_at TEXT");
     addColumn(db, "users", "avatar_mime TEXT");
     addColumn(db, "users", "avatar_data TEXT");
     addColumn(db, "users", "avatar_updated_at TEXT");
@@ -664,7 +666,7 @@ function applyMigrations(db) {
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(12, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(13, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

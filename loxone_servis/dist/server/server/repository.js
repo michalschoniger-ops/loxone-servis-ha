@@ -8,6 +8,7 @@ function mapMiniServer(row) {
         project: row.project,
         registered: row.registered,
         hasCredentials: Boolean(row.username_encrypted && row.password_encrypted),
+        credentialSource: row.credential_source,
         accessPolicy: row.access_policy,
         targetFirmware: row.target_firmware,
         firmwarePolicy: row.firmware_policy === "pinned" ? "pinned" : "follow_stable",
@@ -40,6 +41,10 @@ function mapMiniServer(row) {
         healthVerdict: row.health_verdict,
         offlineDevices: Number(row.offline_devices ?? 0),
         loxAppVersion: row.loxapp_version,
+        weatherServiceStatus: ["active", "inactive"].includes(row.weather_service_status)
+            ? row.weather_service_status
+            : "unknown",
+        weatherServiceCheckedAt: row.weather_service_checked_at,
         updatedAt: row.updated_at,
     };
 }

@@ -119,6 +119,13 @@ export class JobQueue {
     constructor(db) {
         this.db = db;
         db.prepare("UPDATE action_jobs SET state='queued',message='Obnoveno po restartu',started_at=NULL WHERE state='running'").run();
+        const recoveredPortalJobs = db.prepare("SELECT id FROM action_jobs WHERE kind='portal_sync' AND state IN ('queued','waiting') ORDER BY created_at,id").all();
+        if (recoveredPortalJobs.length > 1) {
+            const cancelledAt = new Date().toISOString();
+            const cancel = db.prepare("UPDATE action_jobs SET state='cancelled',message='Sloučeno s jedinou čekající synchronizací po restartu.',finished_at=? WHERE id=? AND state IN ('queued','waiting')");
+            for (const duplicate of recoveredPortalJobs.slice(1))
+                cancel.run(cancelledAt, duplicate.id);
+        }
     }
     start() {
         if (this.timer)
@@ -222,7 +229,7 @@ export class JobQueue {
             .prepare("SELECT 1 AS ok FROM action_jobs WHERE kind='portal_sync' AND state IN ('queued','running')")
             .get();
         if (!existing?.ok)
-            this.enqueue("portal_sync", null, null, { scheduled: true });
+            this.enqueueUnique("portal_sync", null, null, { scheduled: true });
     }
     async maybeScheduleFullCheck(force) {
         if (!force && !automaticFleetChecksAllowed(this.startedAt))

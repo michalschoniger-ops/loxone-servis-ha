@@ -15,6 +15,7 @@ import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { authenticateLauncherAgent, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
+import { officialConfigDownloadUrl } from "./release.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
@@ -22,11 +23,22 @@ function exactConfigRelease(db, version) {
     if (!version)
         return null;
     const history = db.prepare(`SELECT version,config_url FROM firmware_release_history
-     WHERE version=? ORDER BY CASE WHEN config_url='' THEN 1 ELSE 0 END,last_seen_at DESC LIMIT 1`).get(version);
+     WHERE version=? AND config_url<>'' ORDER BY last_seen_at DESC LIMIT 1`).get(version);
     if (history)
-        return { version: history.version, configUrl: history.config_url || null };
+        return { version: history.version, configUrl: history.config_url };
     const current = db.prepare("SELECT version,config_url FROM firmware_releases WHERE version=? LIMIT 1").get(version);
-    return current ? { version: current.version, configUrl: current.config_url || null } : null;
+    return {
+        version: current?.version ?? version,
+        configUrl: current?.config_url || officialConfigDownloadUrl(version),
+    };
+}
+function miniserverDeviceImage(type) {
+    const normalized = type.toLowerCase();
+    if (normalized.includes("compact"))
+        return "devices/compact-transparent.png";
+    if (normalized.includes("go"))
+        return "devices/go.png";
+    return "devices/miniserver.png";
 }
 function confirmationHeader(headers) {
     const value = headers["x-action-confirmation"];
@@ -147,6 +159,7 @@ export async function registerApi(app, db, jobs) {
                 loxoneConfigAvailable: Boolean(agent?.available && server.currentFirmware && server.hasCredentials),
                 configVersion: release?.version ?? server.currentFirmware,
                 configDownloadUrl: release?.configUrl ?? null,
+                deviceImageUrl: miniserverDeviceImage(server.type),
             };
         });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");

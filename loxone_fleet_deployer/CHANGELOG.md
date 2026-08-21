@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0.1
+
+- Nasazuje Evora Smart Hub 2.0.0 s dokončeným Windows/Parallels Config Launcherem, automaticky obnovovaným přihlášením k Partner Portalu a okamžitým označením nově importovaných Miniserverů.
+- Synchronizuje stav Weather Service; aktivní službu označí oficiálním symbolem v barvách EVORA, zatímco neaktivní ani neznámý stav nezobrazuje.
+- Obsahuje opravené profilové fotografie, iPhone rozvržení, skutečné náhledy Miniserverů ve WorkLog AI a ověřený návratový payload 1.0.3.
+
 ## 1.0.3.1
 
 - Nasazuje Evora Smart Hub 1.0.3 s osobním Windows/Parallels Config Launcherem, WorkLog AI pouze pro správce a automatickým obnovením přihlášení k Partner Portalu.

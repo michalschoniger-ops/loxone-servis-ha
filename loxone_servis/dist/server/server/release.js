@@ -35,6 +35,18 @@ export function normalizeFirmwareVersion(value) {
     }
     return parts.map((part) => String(Number(part))).join(".");
 }
+export function officialConfigDownloadUrl(version) {
+    try {
+        const parts = normalizeFirmwareVersion(version).split(".").map(Number);
+        if (parts.some((part) => part < 0 || part > 99))
+            return null;
+        const suffix = parts.map((part) => String(part).padStart(2, "0")).join("");
+        return `https://updatefiles.loxone.com/LoxConfig/LoxoneConfigSetup_${suffix}.zip`;
+    }
+    catch {
+        return null;
+    }
+}
 function secureDownloadUrl(value) {
     const rawUrl = text(value);
     if (!rawUrl)

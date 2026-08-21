@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.9
+
+- Mobilní nabídka znovu zobrazuje všechny tři názvy podpory, používá jednotnou velikost textu a ikon a po otevření nezachovává kompoziční transformaci ani rozmazávací filtr. Značka v hlavičce, přihlášení a aktualizační obrazovce má jemnou animaci respektující omezení pohybu v systému.
+- Složky dostávají odlišné barvy z řízené palety. Databázová migrace jednorázově rozliší také staré duplicitní barvy bez změny přiřazení Miniserverů.
+- Veřejná komunikace ticketů je rozdělena do čitelných zpráv podle účastníka a času; události se soubory jsou vizuálně odlišené. Stejné čitelné členění používá WorkLog AI.
+- Během aktualizace HA Práce se po dříve úspěšném načtení zobrazí lokální animovaný stav a aplikace se sama znovu připojí. Service worker ukládá pouze statický shell a výslovně vynechává API, health endpoint i autentizovaná data.
+- Stažení aktuálního programu nejdřív ověří všechny časově odpovídající archivy proti živému LoxAPP3. Pokud přesná shoda na SD kartě není, nabídne nejnovější validní zálohu s jasným prefixem `ZALOHA_` místo zavádějící chyby.
+- Správce může bezpečně vypsat až 250 historických programových záloh z `/dev/fslist/prog/` a stáhnout pouze název, který je po kliknutí znovu ověřen v aktuálním katalogu. Obsahuje-li archiv bezpečný `sps.loxone`, vydá se přímo jako `.Loxone`; jinak zůstane původní ZIP.
+- Databázové schéma je 16. Kontrola závislostí, TypeScript, ESLint, automatické testy, produkční build a nativní typecheck WorkLog AI jsou součástí vydání.
+
 ## 2.0.8
 
 - Informační tlačítko u sériového čísla na iPhonu otevírá skutečné dotykové okno s názvem projektu, datem registrace z Partner Portálu a sériovým číslem; už není závislé na desktopovém hover efektu.

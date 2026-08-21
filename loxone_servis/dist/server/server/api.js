@@ -6,10 +6,11 @@ import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, saveCredentials } from "./repository.js";
 import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
-import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
+import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readProgramBackupCatalog, readSelectedProgramBackup, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
+import { nextDistinctFolderColor } from "../shared/folder-colors.js";
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
@@ -26,6 +27,7 @@ const configLaunchJobIdSchema = z.string().uuid();
 // traversal or an encoded URL fragment.
 export const appUserIdSchema = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/);
 const portalTicketIdSchema = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/);
+const programBackupFileSchema = z.string().regex(/^sps_[0-9]+_\d{14}\.zip$/i);
 const portalTicketCreateSchema = z.object({
     subject: z.string().trim().min(3).max(500).refine((value) => !value.includes("\0")),
     description: z.string().trim().min(3).max(20_000).refine((value) => !value.includes("\0")),
@@ -809,9 +811,13 @@ export async function registerApi(app, db, jobs) {
         const now = new Date().toISOString();
         const id = randomUUID();
         const sortOrder = Number(db.prepare("SELECT COALESCE(MAX(sort_order),-10)+10 AS value FROM project_folders").get().value);
+        const usedColors = db.prepare("SELECT color FROM project_folders").all().map((folder) => folder.color);
+        const color = new Set(usedColors.map((value) => value.toUpperCase())).has(input.color.toUpperCase())
+            ? nextDistinctFolderColor(usedColors)
+            : input.color.toUpperCase();
         try {
             db.prepare("INSERT INTO project_folders(id,name,description,color,parent_id,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
-                .run(id, input.name, input.description, input.color, input.parentId, sortOrder, now, now);
+                .run(id, input.name, input.description, color, input.parentId, sortOrder, now, now);
         }
         catch (error) {
             if (error.message.includes("UNIQUE"))
@@ -842,10 +848,17 @@ export async function registerApi(app, db, jobs) {
                 return reply.code(409).send({ error: "Složku nelze vložit do sebe ani do vlastní podsložky.", code: "FOLDER_CYCLE" });
             }
         }
+        const normalizedInput = { ...input };
+        if (input.color) {
+            const usedColors = db.prepare("SELECT color FROM project_folders WHERE id<>?").all(id).map((folder) => folder.color);
+            normalizedInput.color = new Set(usedColors.map((value) => value.toUpperCase())).has(input.color.toUpperCase())
+                ? nextDistinctFolderColor(usedColors)
+                : input.color.toUpperCase();
+        }
         const fields = [];
         const values = [];
         const columns = { name: "name", description: "description", color: "color", parentId: "parent_id", sortOrder: "sort_order" };
-        for (const [key, value] of Object.entries(input)) {
+        for (const [key, value] of Object.entries(normalizedInput)) {
             fields.push(`${columns[key]}=?`);
             values.push(value);
         }
@@ -1399,7 +1412,35 @@ export async function registerApi(app, db, jobs) {
         audit(db, "miniserver.current_program_exported", user.id, serial, {
             fileName: exported.fileName,
             bytes: exported.content.length,
-            verifiedAgainstLiveLoxApp3: true,
+            verification: exported.programVerification ?? "unknown",
+            sourceFileName: exported.sourceFileName ?? null,
+        });
+        return sendDownload(reply, exported);
+    });
+    app.get("/api/miniservers/:serial/exports/program-backups", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const items = await readProgramBackupCatalog(db, serial);
+        audit(db, "miniserver.program_backup_catalog_read", user.id, serial, { count: items.length });
+        return { items };
+    });
+    app.get("/api/miniservers/:serial/exports/program-backups/:fileName", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const params = z.object({ serial: serialSchema, fileName: programBackupFileSchema }).parse(request.params);
+        if (!getMiniserver(db, params.serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const exported = await readSelectedProgramBackup(db, params.serial, params.fileName);
+        audit(db, "miniserver.program_backup_exported", user.id, params.serial, {
+            fileName: exported.fileName,
+            sourceFileName: exported.sourceFileName ?? params.fileName,
+            bytes: exported.content.length,
+            verification: exported.programVerification,
         });
         return sendDownload(reply, exported);
     });

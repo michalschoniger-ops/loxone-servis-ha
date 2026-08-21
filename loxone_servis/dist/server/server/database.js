@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.js";
+import { distinctFolderColorAssignments } from "../shared/folder-colors.js";
 function quoteSqlitePath(path) {
     return `'${path.replaceAll("'", "''")}'`;
 }
@@ -63,6 +64,28 @@ function addColumn(db, table, definition) {
     const columns = db.prepare(`PRAGMA table_info(${table})`).all();
     if (!columns.some((column) => column.name === name))
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+}
+function migrateDistinctFolderColors(db) {
+    const applied = db.prepare("SELECT 1 AS ok FROM schema_migrations WHERE version=16").get();
+    if (applied?.ok === 1)
+        return;
+    const folders = db.prepare("SELECT id,color FROM project_folders ORDER BY sort_order,name COLLATE NOCASE,id").all();
+    const assignments = distinctFolderColorAssignments(folders);
+    const update = db.prepare("UPDATE project_folders SET color=?,updated_at=? WHERE id=? AND color<>?");
+    const now = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+        for (const folder of folders) {
+            const color = assignments.get(folder.id) ?? folder.color;
+            update.run(color, now, folder.id, color);
+        }
+        db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(16, now);
+        db.exec("COMMIT");
+    }
+    catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+    }
 }
 function migrateUserRoles(db) {
     const schema = db
@@ -687,6 +710,7 @@ function applyMigrations(db) {
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
+    migrateDistinctFolderColors(db);
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

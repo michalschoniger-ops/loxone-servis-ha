@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.9.1
+
+- Nasazuje Evora Smart Hub 2.0.9 s opraveným mobilním menu, barevnými složkami, čitelnými tickety a animovaným stavem údržby.
+- Přidává bezpečný seznam a stahování programových záloh Miniserveru; ZIP se před vydáním důsledně ověří a aktuální program má bezpečnou záložní cestu.
+- Obsahuje WorkLogAI integraci 2.0.9 s přehledně rozdělenou komunikací ticketů.
+- Zachovává databázi, šifrované přístupy a vratnou kopii zdroje 2.0.8.
+
 ## 2.0.8.1
 
 - Nasazuje Evora Smart Hub 2.0.8 s dotykovým dialogem data registrace na iPhonu, sbaleným firmware souhrnem a přesným zarovnáním ikon a textů v Podpoře.

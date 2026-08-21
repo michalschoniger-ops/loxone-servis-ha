@@ -6,6 +6,8 @@ const MAX_TEXT_EXPORT_BYTES = 16 * 1024 * 1024;
 const MAX_STATISTIC_EXPORT_BYTES = 64 * 1024 * 1024;
 const MAX_PROGRAM_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_EMBEDDED_LOXAPP_BYTES = 16 * 1024 * 1024;
+const MAX_PROGRAM_ARCHIVE_ENTRIES = 4_096;
+const MAX_PROGRAM_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
 const PROGRAM_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 let exportQueue = Promise.resolve();
 let waitingExports = 0;
@@ -254,6 +256,24 @@ export function findProgramArchiveCandidates(fileList, lastModified) {
         .sort((left, right) => left.distance - right.distance || right.seconds - left.seconds)
         .map((candidate) => candidate.fileName);
 }
+const PROGRAM_ARCHIVE_NAME = /^sps_[0-9]+_(\d{14})\.zip$/i;
+export function parseProgramBackupCatalog(fileList) {
+    const backups = new Map();
+    for (const match of fileList.matchAll(/(?<![A-Za-z0-9_./-])sps_[0-9]+_(\d{14})\.zip(?![A-Za-z0-9_./-])/gi)) {
+        const fileName = match[0];
+        const timestamp = match[1];
+        const seconds = timestampSeconds(timestamp);
+        if (seconds === null || !PROGRAM_ARCHIVE_NAME.test(fileName))
+            continue;
+        backups.set(fileName.toLowerCase(), {
+            fileName,
+            capturedAt: `${timestamp.slice(0, 4)}-${timestamp.slice(4, 6)}-${timestamp.slice(6, 8)}T${timestamp.slice(8, 10)}:${timestamp.slice(10, 12)}:${timestamp.slice(12, 14)}`,
+        });
+    }
+    return [...backups.values()]
+        .sort((left, right) => right.capturedAt.localeCompare(left.capturedAt) || left.fileName.localeCompare(right.fileName))
+        .slice(0, 250);
+}
 function findEndOfCentralDirectory(buffer) {
     const minimum = Math.max(0, buffer.length - 65_557);
     for (let offset = buffer.length - 22; offset >= minimum; offset -= 1) {
@@ -262,7 +282,67 @@ function findEndOfCentralDirectory(buffer) {
     }
     return -1;
 }
+function safeZipPath(fileName) {
+    if (!fileName || fileName.includes("\0"))
+        return false;
+    const normalized = fileName.replaceAll("\\", "/");
+    if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized))
+        return false;
+    return !normalized.split("/").includes("..");
+}
+export function validateZipArchive(buffer) {
+    const eocd = findEndOfCentralDirectory(buffer);
+    if (eocd < 0 || eocd + 22 > buffer.length)
+        return false;
+    const diskNumber = buffer.readUInt16LE(eocd + 4);
+    const centralDisk = buffer.readUInt16LE(eocd + 6);
+    const entriesOnDisk = buffer.readUInt16LE(eocd + 8);
+    const entryCount = buffer.readUInt16LE(eocd + 10);
+    const centralSize = buffer.readUInt32LE(eocd + 12);
+    const centralOffset = buffer.readUInt32LE(eocd + 16);
+    if (diskNumber !== 0 || centralDisk !== 0 || entriesOnDisk !== entryCount || entryCount > MAX_PROGRAM_ARCHIVE_ENTRIES)
+        return false;
+    if (centralOffset + centralSize !== eocd || centralOffset > buffer.length)
+        return false;
+    let offset = centralOffset;
+    let totalUncompressed = 0;
+    for (let index = 0; index < entryCount; index += 1) {
+        if (offset + 46 > eocd || buffer.readUInt32LE(offset) !== 0x02014b50)
+            return false;
+        const flags = buffer.readUInt16LE(offset + 8);
+        const method = buffer.readUInt16LE(offset + 10);
+        const compressedSize = buffer.readUInt32LE(offset + 20);
+        const uncompressedSize = buffer.readUInt32LE(offset + 24);
+        const fileNameLength = buffer.readUInt16LE(offset + 28);
+        const extraLength = buffer.readUInt16LE(offset + 30);
+        const commentLength = buffer.readUInt16LE(offset + 32);
+        const localOffset = buffer.readUInt32LE(offset + 42);
+        const nextOffset = offset + 46 + fileNameLength + extraLength + commentLength;
+        if (nextOffset > eocd || fileNameLength === 0)
+            return false;
+        const fileName = buffer.subarray(offset + 46, offset + 46 + fileNameLength).toString("utf8");
+        if (!safeZipPath(fileName) || (flags & 0x1) !== 0 || ![0, 8].includes(method))
+            return false;
+        totalUncompressed += uncompressedSize;
+        if (uncompressedSize > MAX_PROGRAM_UNCOMPRESSED_BYTES || totalUncompressed > MAX_PROGRAM_UNCOMPRESSED_BYTES)
+            return false;
+        if (compressedSize > buffer.length || localOffset + 30 > centralOffset || buffer.readUInt32LE(localOffset) !== 0x04034b50)
+            return false;
+        const localNameLength = buffer.readUInt16LE(localOffset + 26);
+        const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+        const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+        if (dataOffset + compressedSize > centralOffset)
+            return false;
+        const localFileName = buffer.subarray(localOffset + 30, localOffset + 30 + localNameLength).toString("utf8");
+        if (localFileName !== fileName || !safeZipPath(localFileName))
+            return false;
+        offset = nextOffset;
+    }
+    return offset === eocd;
+}
 export function readZipEntry(buffer, wantedName, maxBytes = MAX_EMBEDDED_LOXAPP_BYTES) {
+    if (!validateZipArchive(buffer))
+        return null;
     const eocd = findEndOfCentralDirectory(buffer);
     if (eocd < 0 || eocd + 22 > buffer.length)
         return null;
@@ -284,7 +364,11 @@ export function readZipEntry(buffer, wantedName, maxBytes = MAX_EMBEDDED_LOXAPP_
             return null;
         const fileName = buffer.subarray(offset + 46, offset + 46 + fileNameLength).toString("utf8");
         offset = nextOffset;
-        if (fileName !== wantedName)
+        const normalizedParts = fileName.replaceAll("\\", "/").split("/");
+        const wanted = wantedName.toLocaleLowerCase("en");
+        const matches = fileName === wantedName
+            || (wanted === "sps.loxone" && normalizedParts.at(-1)?.toLocaleLowerCase("en") === wanted);
+        if (!matches)
             continue;
         if ((flags & 0x1) !== 0 || ![0, 8].includes(method) || uncompressedSize > maxBytes || compressedSize > buffer.length)
             return null;
@@ -307,24 +391,88 @@ export function readZipEntry(buffer, wantedName, maxBytes = MAX_EMBEDDED_LOXAPP_
     }
     return null;
 }
+function programArchiveDownload(archive, serial, sourceFileName) {
+    const editableProject = readZipEntry(archive, "sps.loxone", MAX_PROGRAM_ARCHIVE_BYTES);
+    if (editableProject) {
+        return {
+            fileName: `sps_${serial}_${sourceFileName.match(/_(\d{14})\.zip$/i)?.[1] ?? "backup"}.Loxone`,
+            contentType: "application/octet-stream",
+            content: editableProject,
+            sourceFileName,
+        };
+    }
+    return {
+        fileName: sourceFileName,
+        contentType: "application/zip",
+        content: archive,
+        sourceFileName,
+    };
+}
+async function readProgramFileList(db, serial) {
+    return (await downloadResource(db, serial, "/dev/fslist/prog/", "application/xml, application/json, text/plain", 2 * 1024 * 1024, 30_000)).toString("utf8");
+}
+async function readProgramArchive(db, serial, fileName) {
+    if (!PROGRAM_ARCHIVE_NAME.test(fileName))
+        throw new LoxoneError("invalid_response", "Neplatný název zálohy programu.");
+    const archive = await downloadResource(db, serial, `/dev/fsget/prog/${encodeURIComponent(fileName)}`, "application/zip, application/octet-stream", MAX_PROGRAM_ARCHIVE_BYTES, 120_000);
+    if (archive.length < 4 || archive.readUInt32LE(0) !== 0x04034b50 || !validateZipArchive(archive)) {
+        throw new LoxoneError("invalid_response", "Miniserver nevrátil platný ZIP archiv programu.");
+    }
+    return archive;
+}
+export function readProgramBackupCatalog(db, serial) {
+    return scheduleExport(`${serial}:program-backup-catalog`, async () => parseProgramBackupCatalog(await readProgramFileList(db, serial)));
+}
+export function readSelectedProgramBackup(db, serial, fileName) {
+    if (!PROGRAM_ARCHIVE_NAME.test(fileName))
+        throw new LoxoneError("invalid_response", "Neplatný název zálohy programu.");
+    return scheduleExport(`${serial}:program-backup:${fileName.toLowerCase()}`, async () => {
+        const canonical = parseProgramBackupCatalog(await readProgramFileList(db, serial))
+            .find((candidate) => candidate.fileName.toLowerCase() === fileName.toLowerCase())?.fileName;
+        if (!canonical)
+            throw new LoxoneError("unsupported", "Vybraná záloha už na SD kartě není dostupná.", 404);
+        return {
+            ...programArchiveDownload(await readProgramArchive(db, serial, canonical), serial, canonical),
+            programVerification: "selected_backup",
+        };
+    });
+}
 export function readCurrentProgramArchive(db, serial) {
     return scheduleExport(`${serial}:current-program`, async () => {
         const snapshot = await readLoxApp3(db, serial);
         const lastModified = loxAppLastModified(snapshot.payload);
-        if (!lastModified)
-            throw new LoxoneError("unsupported", "Aktuální projekt neobsahuje ověřitelný čas poslední změny.");
-        const fileList = (await downloadResource(db, serial, "/dev/fslist/prog/", "application/xml, application/json, text/plain", 2 * 1024 * 1024, 30_000)).toString("utf8");
-        const candidate = findProgramArchiveCandidates(fileList, lastModified)[0];
-        if (!candidate)
-            throw new LoxoneError("unsupported", "Na SD kartě nebyl nalezen archiv odpovídající aktuálnímu projektu.");
-        const archive = await downloadResource(db, serial, `/dev/fsget/prog/${candidate}`, "application/zip, application/octet-stream", MAX_PROGRAM_ARCHIVE_BYTES, 120_000);
-        if (archive.length < 4 || archive.readUInt32LE(0) !== 0x04034b50) {
-            throw new LoxoneError("invalid_response", "Miniserver nevrátil platný ZIP archiv programu.");
+        const fileList = await readProgramFileList(db, serial);
+        const nearby = lastModified ? findProgramArchiveCandidates(fileList, lastModified) : [];
+        for (const candidate of nearby) {
+            try {
+                const archive = await readProgramArchive(db, serial, candidate);
+                const embeddedLoxApp = readZipEntry(archive, "LoxAPP3.json");
+                if (embeddedLoxApp && createHash("sha256").update(embeddedLoxApp).digest("hex") === snapshot.hash) {
+                    return {
+                        ...programArchiveDownload(archive, serial, candidate),
+                        programVerification: "live",
+                    };
+                }
+            }
+            catch (error) {
+                if (!(error instanceof LoxoneError))
+                    throw error;
+            }
         }
-        const embeddedLoxApp = readZipEntry(archive, "LoxAPP3.json");
-        if (!embeddedLoxApp || createHash("sha256").update(embeddedLoxApp).digest("hex") !== snapshot.hash) {
-            throw new LoxoneError("unsupported", "Archiv na SD kartě neodpovídá aktuálně běžícímu projektu; z bezpečnostních důvodů nebyl stažen.");
+        for (const backup of parseProgramBackupCatalog(fileList)) {
+            try {
+                const fallback = programArchiveDownload(await readProgramArchive(db, serial, backup.fileName), serial, backup.fileName);
+                return {
+                    ...fallback,
+                    fileName: `ZALOHA_${fallback.fileName}`,
+                    programVerification: "latest_backup",
+                };
+            }
+            catch (error) {
+                if (!(error instanceof LoxoneError))
+                    throw error;
+            }
         }
-        return { fileName: candidate, contentType: "application/zip", content: archive };
+        throw new LoxoneError("unsupported", "Na SD kartě nebyla nalezena žádná bezpečně dostupná záloha programu.");
     });
 }

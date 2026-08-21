@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.5.1
+
+- Nasazuje Evora Smart Hub 2.0.5, který v komunikaci ticketů nezaměňuje běžné webové odkazy za přílohy.
+- Skutečné souborové/download odkazy zůstávají dostupné a názvy příloh bez URL se bezpečně zobrazí bez nefunkčního tlačítka.
+- Zachovává databázi, cache, přístupy a vratnou kopii zdroje 2.0.4.
+
 ## 2.0.4.1
 
 - Nasazuje opravné vydání 2.0.4, jehož `/healthz` správně potvrzuje databázové schéma 15 použité pro šifrovanou cache ticketů.

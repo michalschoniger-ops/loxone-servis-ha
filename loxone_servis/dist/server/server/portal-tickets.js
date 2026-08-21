@@ -251,7 +251,8 @@ function attachmentsFromContent(value) {
     const linkPattern = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
     for (const match of html.matchAll(linkPattern)) {
         const href = decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? "").trim();
-        if (!href || !allowedAttachmentUrl(href))
+        const safeUrl = href ? allowedAttachmentUrl(href) : null;
+        if (!safeUrl)
             continue;
         let name = portalTicketPlainText(match[4] ?? "").replace(/^\s*(?:download|stáhnout)\s*$/i, "");
         if (!name) {
@@ -263,6 +264,11 @@ function attachmentsFromContent(value) {
             }
         }
         name = name.trim().slice(0, 240) || "příloha";
+        const attachmentHint = `${safeUrl.pathname}${safeUrl.search}`;
+        const fileExtension = /\.(?:jpe?g|png|gif|webp|heic|heif|pdf|zip|7z|rar|txt|log|csv|xlsx?|docx?)(?:$|[?#])/i;
+        if (!fileExtension.test(name) && !fileExtension.test(attachmentHint) && !/(?:attachment|download)/i.test(attachmentHint)) {
+            continue;
+        }
         const key = `${name}\n${href}`;
         if (seen.has(key))
             continue;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.5
+
+- Při převodu komunikace na přílohy odlišuje skutečné souborové/download odkazy od běžných webových odkazů v textu ticketu.
+- Zachovává šifrovanou cache, správné schéma 15, rychlé načítání Hubu i WorkLogAI a všechny opravy vydání 2.0.4.
+
 ## 2.0.4
 
 - Opravuje stavový endpoint tak, aby po migraci správně hlásil databázové schéma 15 používané cache ticketů.

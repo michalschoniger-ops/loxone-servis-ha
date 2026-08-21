@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.4
+
+- Opravuje stavový endpoint tak, aby po migraci správně hlásil databázové schéma 15 používané cache ticketů.
+- Zachovává všechny opravy 2.0.3 pro přílohy, lokální cache, mobilní rozvržení, profilové fotografie a Windows Launcher 2.0.0.3.
+
 ## 2.0.3
 
 - Windows Config Launcher 2.0.0.3 se umí bezpečně aktualizovat přímo ve stejném Windows účtu: ukončí jen přesně rozpoznaný starý helper daného uživatele, zachová stávající DPAPI token a bez nového párování spustí opravenou verzi.

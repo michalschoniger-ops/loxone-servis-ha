@@ -79,7 +79,7 @@ else {
         version: config.appVersion,
         mode: "main",
         database: "ready",
-        databaseSchema: 14,
+        databaseSchema: 15,
         oneWireHistory: "ready",
         oneWireSampleIntervalMinutes: 10,
         homeAssistantServiceMonitors: Number(database.prepare("SELECT COUNT(*) AS count FROM home_assistant_monitors WHERE enabled=1").get().count),

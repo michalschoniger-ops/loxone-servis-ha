@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.4.1
+
+- Nasazuje opravné vydání 2.0.4, jehož `/healthz` správně potvrzuje databázové schéma 15 použité pro šifrovanou cache ticketů.
+- Zachovává přílohy a lokální cache v Hubu i WorkLogAI, mobilní rozvržení bez Configu a Windows Launcher 2.0.0.3.
+- Před výměnou ponechá vratnou kopii zdroje 2.0.3 a nemění datový adresář aplikace.
+
 ## 2.0.3.1
 
 - Nasazuje Evora Smart Hub 2.0.3 s trvalou šifrovanou cache ticketů; běžné otevření Hubu ani WorkLogAI už nestahuje celý seznam z Portálu znovu.

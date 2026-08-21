@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6
+
+- WorkLogAI zobrazuje přílohy, u kterých Partner Portál poskytl pouze název, jako statický přehled bez falešného tlačítka pro stažení a bez následné technické chybové hlášky.
+- Skutečně dostupné přílohy zůstávají oddělené a lze je bezpečně otevřít přes Evora Smart Hub.
+
 ## 2.0.5
 
 - Při převodu komunikace na přílohy odlišuje skutečné souborové/download odkazy od běžných webových odkazů v textu ticketu.

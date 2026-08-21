@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.6.1
+
+- Nasazuje Evora Smart Hub 2.0.6 s opraveným přehledem příloh ve WorkLogAI: názvy bez bezpečné adresy už nevypadají jako nefunkční stažení.
+- Zachovává ověřený vratný postup, šifrovanou cache ticketů a všechny opravy vydání 2.0.5.
+
 ## 2.0.5.1
 
 - Nasazuje Evora Smart Hub 2.0.5, který v komunikaci ticketů nezaměňuje běžné webové odkazy za přílohy.

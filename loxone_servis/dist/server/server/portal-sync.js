@@ -4,7 +4,9 @@ import { getSetting, setSetting, transaction } from "./database.js";
 const TOKEN_URL = "https://sso.loxone.com/realms/loxone/protocol/openid-connect/token";
 const PORTAL_ORIGIN = "https://portal.loxone.com";
 const REFRESH_AAD = "portal-sync:refresh-token";
+const PASSWORD_AAD = "portal-sync:password";
 const SYNC_INTERVAL_MS = 24 * 60 * 60_000;
+const ERROR_BACKOFF_MS = 30 * 60_000;
 const PORTAL_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
 function form(values) {
     const body = new URLSearchParams();
@@ -191,6 +193,9 @@ async function portalProducts(accessToken) {
 function saveRefreshToken(db, token) {
     setSetting(db, "portal_sync_refresh_token", encryptSecret(token, config.masterKey, REFRESH_AAD));
 }
+function savePortalPassword(db, password) {
+    setSetting(db, "portal_sync_password", encryptSecret(password, config.masterKey, PASSWORD_AAD));
+}
 function updateStatus(db, status, error = "") {
     setSetting(db, "portal_sync_status", status);
     setSetting(db, "portal_sync_error", error);
@@ -216,13 +221,18 @@ function upsertProducts(db, products, now) {
 export function getPortalSyncStatus(db) {
     const lastSyncAt = getSetting(db, "portal_sync_last_at");
     const encrypted = getSetting(db, "portal_sync_refresh_token");
+    const nextAttemptAt = getSetting(db, "portal_sync_next_attempt_at");
     return {
         connected: Boolean(encrypted),
         reconnectRequired: getSetting(db, "portal_sync_status") === "reconnect_required",
+        automaticReconnect: Boolean(encrypted && getSetting(db, "portal_sync_password")),
         email: getSetting(db, "portal_sync_email"),
         status: getSetting(db, "portal_sync_status") ?? "not_connected",
         lastSyncAt,
-        nextSyncAt: encrypted ? new Date((lastSyncAt ? Date.parse(lastSyncAt) : Date.now()) + SYNC_INTERVAL_MS).toISOString() : null,
+        nextSyncAt: encrypted
+            ? nextAttemptAt || new Date((lastSyncAt && Number.isFinite(Date.parse(lastSyncAt)) ? Date.parse(lastSyncAt) : Date.now()) + SYNC_INTERVAL_MS).toISOString()
+            : null,
+        lastAutomaticLoginAt: getSetting(db, "portal_sync_last_reauth_at"),
         productCount: Number(getSetting(db, "portal_sync_count") ?? 0),
         lastError: getSetting(db, "portal_sync_error") || null,
     };
@@ -230,6 +240,9 @@ export function getPortalSyncStatus(db) {
 export function portalSyncDue(db, now = Date.now()) {
     if (!getSetting(db, "portal_sync_refresh_token"))
         return false;
+    const nextAttempt = getSetting(db, "portal_sync_next_attempt_at");
+    if (nextAttempt && Number.isFinite(Date.parse(nextAttempt)))
+        return now >= Date.parse(nextAttempt);
     const last = getSetting(db, "portal_sync_last_at");
     return !last || !Number.isFinite(Date.parse(last)) || now - Date.parse(last) >= SYNC_INTERVAL_MS;
 }
@@ -239,12 +252,16 @@ export async function connectPortal(db, email, password) {
     if (!tokens.refresh_token)
         throw Object.assign(new Error("Loxone Portál neposkytl obnovovací token."), { code: "portal_refresh_missing" });
     saveRefreshToken(db, tokens.refresh_token);
+    savePortalPassword(db, password);
     setSetting(db, "portal_sync_email", normalizedEmail);
+    setSetting(db, "portal_sync_last_attempt_at", new Date().toISOString());
     updateStatus(db, "connected");
     await syncPortal(db, tokens.access_token, tokens.refresh_token);
     return getPortalSyncStatus(db);
 }
 export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) {
+    const attemptAt = new Date();
+    setSetting(db, "portal_sync_last_attempt_at", attemptAt.toISOString());
     try {
         let accessToken = suppliedAccessToken;
         let refreshToken = suppliedRefreshToken;
@@ -253,7 +270,31 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
             if (!encrypted)
                 throw Object.assign(new Error("Loxone Portál není připojen."), { code: "portal_not_connected" });
             refreshToken = decryptSecret(encrypted, config.masterKey, REFRESH_AAD);
-            const tokens = await refreshGrant(refreshToken);
+            let tokens;
+            try {
+                tokens = await refreshGrant(refreshToken);
+            }
+            catch (error) {
+                if (error.code !== "portal_reconnect_required")
+                    throw error;
+                const email = getSetting(db, "portal_sync_email");
+                const encryptedPassword = getSetting(db, "portal_sync_password");
+                if (!email || !encryptedPassword) {
+                    throw Object.assign(new Error("Přihlášení vypršelo a automatické obnovení není dostupné."), { code: "portal_reconnect_required" });
+                }
+                let password;
+                try {
+                    password = decryptSecret(encryptedPassword, config.masterKey, PASSWORD_AAD);
+                }
+                catch {
+                    throw Object.assign(new Error("Uložené přihlášení Loxone Portálu nelze bezpečně přečíst."), { code: "portal_reconnect_required" });
+                }
+                tokens = await passwordGrant(email, password);
+                if (!tokens.refresh_token) {
+                    throw Object.assign(new Error("Loxone Portál po automatickém přihlášení neposkytl obnovovací token."), { code: "portal_reconnect_required" });
+                }
+                setSetting(db, "portal_sync_last_reauth_at", new Date().toISOString());
+            }
             accessToken = tokens.access_token;
             refreshToken = tokens.refresh_token ?? refreshToken;
         }
@@ -263,6 +304,7 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
         const now = new Date().toISOString();
         transaction(db, () => upsertProducts(db, products, now));
         setSetting(db, "portal_sync_last_at", now);
+        setSetting(db, "portal_sync_next_attempt_at", new Date(Date.parse(now) + SYNC_INTERVAL_MS).toISOString());
         setSetting(db, "portal_sync_count", String(products.length));
         updateStatus(db, "connected");
         return getPortalSyncStatus(db);
@@ -271,16 +313,29 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
         const code = error.code ?? "portal_sync_failed";
         if (code === "portal_reconnect_required") {
             setSetting(db, "portal_sync_refresh_token", "");
-            updateStatus(db, "reconnect_required", "Přihlášení vypršelo. Připojte Loxone Portál znovu.");
+            setSetting(db, "portal_sync_password", "");
+            setSetting(db, "portal_sync_next_attempt_at", "");
+            updateStatus(db, "reconnect_required", "Automatické přihlášení bylo odmítnuto. Připojte Loxone Portál znovu.");
         }
         else {
+            setSetting(db, "portal_sync_next_attempt_at", new Date(attemptAt.getTime() + ERROR_BACKOFF_MS).toISOString());
             updateStatus(db, "error", error.message);
         }
         throw error;
     }
 }
 export function disconnectPortal(db) {
-    for (const key of ["portal_sync_refresh_token", "portal_sync_email", "portal_sync_error", "portal_sync_count", "portal_sync_last_at"])
+    for (const key of [
+        "portal_sync_refresh_token",
+        "portal_sync_password",
+        "portal_sync_email",
+        "portal_sync_error",
+        "portal_sync_count",
+        "portal_sync_last_at",
+        "portal_sync_last_attempt_at",
+        "portal_sync_next_attempt_at",
+        "portal_sync_last_reauth_at",
+    ])
         setSetting(db, key, "");
     updateStatus(db, "not_connected");
     return getPortalSyncStatus(db);

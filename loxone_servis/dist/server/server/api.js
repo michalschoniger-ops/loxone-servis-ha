@@ -13,8 +13,21 @@ import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../sh
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
+import { authenticateLauncherAgent, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
+const configLaunchJobIdSchema = z.string().uuid();
+function exactConfigRelease(db, version) {
+    if (!version)
+        return null;
+    const history = db.prepare(`SELECT version,config_url FROM firmware_release_history
+     WHERE version=? ORDER BY CASE WHEN config_url='' THEN 1 ELSE 0 END,last_seen_at DESC LIMIT 1`).get(version);
+    if (history)
+        return { version: history.version, configUrl: history.config_url || null };
+    const current = db.prepare("SELECT version,config_url FROM firmware_releases WHERE version=? LIMIT 1").get(version);
+    return current ? { version: current.version, configUrl: current.config_url || null } : null;
+}
 function confirmationHeader(headers) {
     const value = headers["x-action-confirmation"];
     return typeof value === "string" ? value : undefined;
@@ -78,6 +91,213 @@ export async function registerApi(app, db, jobs) {
             return;
         audit(db, "portal.disconnected", user.id, null, {});
         return disconnectPortal(db);
+    });
+    app.get("/api/integrations/worklog/tokens", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        return { items: listWorkLogTokens(db, user.id) };
+    });
+    app.post("/api/integrations/worklog/tokens", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        if (activeWorkLogTokenCount(db, user.id) >= 5) {
+            return reply.code(409).send({
+                error: "Nejdřív zrušte některý starší WorkLog token. Jeden účet může mít nejvýše pět aktivních zařízení.",
+                code: "WORKLOG_TOKEN_LIMIT",
+            });
+        }
+        const input = z.object({
+            name: z.string().trim().min(1).max(100).default("WorkLog AI – Mac"),
+        }).parse(request.body ?? {});
+        const created = createWorkLogToken(db, user.id, input.name);
+        audit(db, "worklog.token_created", user.id, null, { integrationId: created.item.id, name: created.item.name });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return created;
+    });
+    app.delete("/api/integrations/worklog/tokens/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        if (!revokeWorkLogToken(db, user.id, id)) {
+            return reply.code(404).send({ error: "Aktivní WorkLog token nebyl nalezen.", code: "NOT_FOUND" });
+        }
+        audit(db, "worklog.token_revoked", user.id, null, { integrationId: id });
+        return { ok: true };
+    });
+    app.get("/api/integrations/worklog/v1/miniservers", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const agent = preferredLauncherAgent(db, identity.ownerUserId);
+        const items = listMiniservers(db).map((server) => {
+            const release = exactConfigRelease(db, server.currentFirmware);
+            return {
+                serial: server.serial,
+                project: server.project,
+                type: server.type,
+                folderName: server.folderName ?? "Ostatní",
+                connectionState: server.connectionState,
+                currentFirmware: server.currentFirmware,
+                hasCredentials: server.hasCredentials,
+                loxoneAppAvailable: server.hasCredentials,
+                loxoneConfigAvailable: Boolean(agent?.available && server.currentFirmware && server.hasCredentials),
+                configVersion: release?.version ?? server.currentFirmware,
+                configDownloadUrl: release?.configUrl ?? null,
+            };
+        });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return {
+            user: { email: identity.email },
+            launcherAgent: agent,
+            items,
+        };
+    });
+    app.post("/api/integrations/worklog/v1/miniservers/:serial/actions", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({ action: z.enum(["loxone_app", "loxone_config"]) }).parse(request.body);
+        const server = getMiniserver(db, serial);
+        if (!server)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const credentials = getStoredCredentials(db, serial);
+        if (!credentials) {
+            return reply.code(409).send({ error: "U Miniserveru nejsou uložené přístupy.", code: "CREDENTIALS_MISSING" });
+        }
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        if (input.action === "loxone_app") {
+            audit(db, "worklog.loxone_app_opened", identity.ownerUserId, serial, { integrationId: identity.tokenId });
+            return { action: input.action, url: workLogLoxoneAppUrl(serial, credentials.username, credentials.password) };
+        }
+        if (!server.currentFirmware) {
+            return reply.code(409).send({ error: "Nejdřív je potřeba zjistit firmware Miniserveru.", code: "FIRMWARE_UNKNOWN" });
+        }
+        const agent = preferredLauncherAgent(db, identity.ownerUserId);
+        if (!agent?.available) {
+            return reply.code(409).send({ error: "Váš Windows Launcher není online.", code: "AGENT_OFFLINE" });
+        }
+        const release = exactConfigRelease(db, server.currentFirmware);
+        const job = createConfigLaunchJob(db, {
+            serial,
+            actorUserId: identity.ownerUserId,
+            agentId: agent.id,
+            requiredVersion: server.currentFirmware,
+            connectionUrl: server.connectionUrl ?? `https://dns.loxonecloud.com/${serial}`,
+            configUrl: release?.configUrl ?? null,
+        });
+        audit(db, "worklog.config_launch_requested", identity.ownerUserId, serial, {
+            integrationId: identity.tokenId,
+            jobId: job.id,
+            agentId: agent.id,
+            requiredVersion: job.requiredVersion,
+        });
+        return reply.code(202).send({ action: input.action, job });
+    });
+    app.get("/api/integrations/worklog/v1/config-jobs/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const id = configLaunchJobIdSchema.parse(request.params.id);
+        const job = getConfigLaunchJobForUser(db, id, identity.ownerUserId);
+        if (!job)
+            return reply.code(404).send({ error: "Požadavek nebyl nalezen.", code: "NOT_FOUND" });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return { job };
+    });
+    app.get("/api/config-launcher", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        return { agent: preferredLauncherAgent(db, user.id) };
+    });
+    app.post("/api/config-launcher/pairings", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const input = z.object({ name: z.string().trim().min(1).max(100).default("Windows Launcher") }).parse(request.body ?? {});
+        const pairing = createLauncherPairing(db, user.id, input.name);
+        audit(db, "config_launcher.pairing_created", user.id, null, { name: input.name, expiresAt: pairing.expiresAt });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return pairing;
+    });
+    app.post("/api/config-launcher/agent/pair", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const input = z.object({
+            code: z.string().min(12).max(100),
+            name: z.string().trim().min(1).max(100).optional(),
+        }).parse(request.body);
+        const paired = pairLauncherAgent(db, input.code, input.name);
+        if (!paired)
+            return reply.code(401).send({ error: "Párovací kód je neplatný nebo vypršel.", code: "PAIRING_INVALID" });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        audit(db, "config_launcher.paired", null, null, { agentId: paired.agentId, name: input.name ?? "Windows Launcher" });
+        return paired;
+    });
+    app.post("/api/config-launcher/agent/poll", { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const agent = authenticateLauncherAgent(db, request.headers.authorization);
+        if (!agent)
+            return reply.code(401).send({ error: "Windows Launcher není autorizovaný.", code: "AGENT_AUTH_INVALID" });
+        const input = z.object({
+            helperVersion: z.string().trim().min(1).max(40),
+            installedVersions: z.array(z.string().trim().min(1).max(40)).max(100),
+        }).parse(request.body);
+        heartbeatLauncherAgent(db, agent, input.helperVersion, input.installedVersions);
+        const job = takeConfigLaunchJob(db, agent.id);
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        if (!job)
+            return { job: null };
+        const credentials = getStoredCredentials(db, job.serial);
+        if (!credentials) {
+            updateConfigLaunchJob(db, agent.id, job.id, "failed", "U Miniserveru chybí uložené přístupy.", "CREDENTIALS_MISSING");
+            return { job: null };
+        }
+        audit(db, "config_launcher.job_delivered", null, job.serial, { jobId: job.id, agentId: agent.id, requiredVersion: job.required_version });
+        return {
+            job: {
+                id: job.id,
+                serial: job.serial,
+                requiredVersion: job.required_version,
+                connectionAddress: job.connection_url,
+                configUrl: job.config_url,
+                username: credentials.username,
+                password: credentials.password,
+            },
+        };
+    });
+    app.post("/api/config-launcher/agent/jobs/:id/status", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const agent = authenticateLauncherAgent(db, request.headers.authorization);
+        if (!agent)
+            return reply.code(401).send({ error: "Windows Launcher není autorizovaný.", code: "AGENT_AUTH_INVALID" });
+        const id = configLaunchJobIdSchema.parse(request.params.id);
+        const input = z.object({
+            state: z.enum(["launching", "connecting", "succeeded", "missing_config", "failed"]),
+            message: z.string().trim().min(1).max(500),
+            errorCode: z.string().trim().min(1).max(80).nullable().optional(),
+        }).parse(request.body);
+        const job = updateConfigLaunchJob(db, agent.id, id, input.state, input.message, input.errorCode ?? null);
+        if (!job)
+            return reply.code(409).send({ error: "Stav požadavku už nelze změnit.", code: "JOB_STATE_INVALID" });
+        if (["succeeded", "missing_config", "failed"].includes(job.state)) {
+            audit(db, `config_launcher.${job.state}`, null, job.serial, { jobId: job.id, agentId: agent.id, errorCode: job.errorCode });
+        }
+        return { job };
+    });
+    app.get("/api/config-launcher/jobs/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = configLaunchJobIdSchema.parse(request.params.id);
+        const job = getConfigLaunchJobForUser(db, id, user.id);
+        if (!job)
+            return reply.code(404).send({ error: "Požadavek nebyl nalezen.", code: "NOT_FOUND" });
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return { job };
     });
     app.get("/api/releases/history", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -669,9 +889,8 @@ export async function registerApi(app, db, jobs) {
         if (!server)
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
         const credentials = getStoredCredentials(db, serial);
-        const release = fleetOverview(db).officialReleases.find((item) => item.version === server.currentFirmware)
-            ?? fleetOverview(db).officialReleases.find((item) => item.channel === server.firmwareChannel)
-            ?? null;
+        const release = exactConfigRelease(db, server.currentFirmware);
+        const agent = preferredLauncherAgent(db, user.id);
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         audit(db, "miniserver.config_bridge_opened", user.id, serial, { firmware: server.currentFirmware, hasCredentials: Boolean(credentials) });
         return {
@@ -683,9 +902,40 @@ export async function registerApi(app, db, jobs) {
             configVersion: release?.version ?? server.currentFirmware,
             currentProgramUrl: user.role === "admin" ? `/api/miniservers/${serial}/exports/current-program` : null,
             credentials,
-            automaticLaunchSupported: false,
-            launchNote: "Loxone nezveřejňuje podporovaný odkaz pro bezpečné automatické předání hesla do Configu. Bridge proto připraví správnou verzi, projekt, adresu a přístupy ke zkopírování.",
+            automaticLaunchSupported: Boolean(agent?.available && server.currentFirmware && credentials),
+            launcherAgent: agent,
+            launchNote: agent?.available
+                ? "Windows Launcher je online. Přístup se mu předá pouze pro tento jednorázový požadavek a neukládá se do fronty ani do příkazové řádky."
+                : "Windows Launcher není online. Spusťte ho ve Windows nebo ho nejprve spárujte v Nastavení.",
         };
+    });
+    app.post("/api/miniservers/:serial/config-launch", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const server = getMiniserver(db, serial);
+        if (!server)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        if (!server.currentFirmware)
+            return reply.code(409).send({ error: "Nejdřív je potřeba zjistit firmware Miniserveru.", code: "FIRMWARE_UNKNOWN" });
+        if (!getStoredCredentials(db, serial))
+            return reply.code(409).send({ error: "U Miniserveru nejsou uložené přístupy.", code: "CREDENTIALS_MISSING" });
+        const agent = preferredLauncherAgent(db, user.id);
+        if (!agent?.available)
+            return reply.code(409).send({ error: "Windows Launcher není online.", code: "AGENT_OFFLINE" });
+        const release = exactConfigRelease(db, server.currentFirmware);
+        const job = createConfigLaunchJob(db, {
+            serial,
+            actorUserId: user.id,
+            agentId: agent.id,
+            requiredVersion: server.currentFirmware,
+            connectionUrl: server.connectionUrl ?? `https://dns.loxonecloud.com/${serial}`,
+            configUrl: release?.configUrl ?? null,
+        });
+        audit(db, "config_launcher.launch_requested", user.id, serial, { jobId: job.id, agentId: agent.id, requiredVersion: job.requiredVersion });
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return reply.code(202).send({ job });
     });
     app.post("/api/miniservers/:serial/check", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

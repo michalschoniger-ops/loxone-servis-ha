@@ -597,8 +597,74 @@ function applyMigrations(db) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at);
+    CREATE TABLE IF NOT EXISTS config_launcher_agents (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      active INTEGER NOT NULL DEFAULT 1,
+      helper_version TEXT,
+      installed_versions_json TEXT NOT NULL DEFAULT '[]',
+      last_seen_at TEXT,
+      last_status TEXT NOT NULL DEFAULT 'paired',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS config_launcher_pairings (
+      id TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      actor_user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_config_launcher_pairings_expiry
+      ON config_launcher_pairings(expires_at);
+    CREATE TABLE IF NOT EXISTS config_launch_jobs (
+      id TEXT PRIMARY KEY,
+      serial TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      actor_user_id TEXT NOT NULL,
+      required_version TEXT NOT NULL,
+      connection_url TEXT NOT NULL,
+      config_url TEXT,
+      state TEXT NOT NULL CHECK(state IN ('queued','delivered','launching','connecting','succeeded','missing_config','failed','expired')),
+      message TEXT NOT NULL DEFAULT '',
+      error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT,
+      finished_at TEXT,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE,
+      FOREIGN KEY(agent_id) REFERENCES config_launcher_agents(id) ON DELETE CASCADE,
+      FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_config_launch_jobs_agent_state
+      ON config_launch_jobs(agent_id,state,created_at);
+    CREATE TABLE IF NOT EXISTS worklog_tokens (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_hint TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_worklog_tokens_owner_active
+      ON worklog_tokens(owner_user_id,active,created_at DESC);
   `);
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(10, new Date().toISOString());
+    addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
+    db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(12, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

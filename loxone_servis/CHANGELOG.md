@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3
+
+- Přidán osobní Windows Loxone Config Launcher. Každý uživatel páruje vlastní zařízení jednorázovým kódem; token je ve Windows chráněný pomocí DPAPI a Hub odešle přístupy pouze aktivnímu požadavku stejného uživatele.
+- Launcher hledá přesnou verzi `LoxoneConfig.exe` podle firmwaru, bezpečně otevře ověřené okno ručního připojení, vyplní SN do externí adresy, login a heslo a při chybě nic jiného nespustí. Chybějící Config vrátí do Hubu i Windows s oficiálním odkazem ke stažení.
+- Přidána integrace WorkLog AI výhradně pro správce na macOS. Osobní odvolatelný token je uložený v Klíčence; menu zobrazuje složky a Miniservery a nabízí Loxone App nebo Config přes Windows agenta správce.
+- Loxone Partner Portal umí při zneplatnění obnovovacího tokenu provést jeden automatický nový login uloženým odděleně šifrovaným heslem. Odmítnuté údaje se smažou a dočasné chyby mají bezpečný odklad dalšího pokusu.
+- Nastavení, Config Bridge, WorkLog panel a portál byly ověřeny v produkčním sestavení na šířkách iPhonu 390 a 430 bodů bez vodorovného přetečení, deformovaných obrázků nebo oříznutých ovládacích prvků.
+
 ## 1.0.2
 
 - Opravena synchronizace Loxone Partner Portalu podle aktuálního přihlašovacího toku: aplikace nejprve vytvoří a ověří portálovou relaci a teprve poté načte registrované produkty.

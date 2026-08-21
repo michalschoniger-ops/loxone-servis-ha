@@ -31,11 +31,25 @@ Tlačítko **Zjistit strukturu** vědomě načte z každého dostupného Miniser
 
 Tlačítko **Složky** vytváří společné skupiny pro projekty s více samostatnými Miniservery nebo více systémy Gateway/Client. Smazání složky nemaže Miniservery; pouze je přesune do skupiny **Ostatní**.
 
+## Loxone Config Launcher pro Windows
+
+Každý správce nebo technik páruje vlastní Windows zařízení v **Nástroje → Loxone Config Launcher**. Stáhne společný ZIP, vytvoří jednorázový deset minut platný kód a ve Windows spustí instalátor pod svým běžným účtem. Vzniklý token patří tomuto uživateli a Windows jej ukládá pomocí DPAPI; jiný účet nebo počítač potřebuje vlastní párování.
+
+V Parallels se ZIP rozbalí a instalátor spustí přímo uvnitř Windows; macOS část není potřeba. Stejný balík funguje i na samostatném počítači s Windows 10/11. Windows musí být spuštěný, uživatel přihlášený, plocha odemčená a HTTPS adresa Hubu dostupná. Instalační PowerShell je viditelný pouze při prvním párování; autostart a běžný polling používají skryté okno.
+
+Při kliknutí na **Otevřít v Loxone Config** Hub vybere pouze online agenta přihlášeného uživatele. Do databázové fronty uloží SN, požadovanou verzi a odkaz na Config, nikdy login ani heslo. Přístupy odešle až při autorizovaném převzetí konkrétní úlohy. Helper vyhledá přesný `FileVersion` souboru `LoxoneConfig.exe`; chybí-li, ukončí úlohu bezpečnou chybou a nabídne oficiální odkaz ke stažení. Při nalezení otevře přesnou instalaci, jednoznačně ověří prvky okna přes Windows UI Automation, ponechá lokální adresu prázdnou a do externí adresy vloží SN Miniserveru.
+
+## WorkLog AI na macOS
+
+Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čtení její panel neuvidí a jejich případný starší token server odmítne. Správce v **Nástroje → WorkLog AI · Evora Smart Hub** stáhne integrační balíček a vytvoří osobní token. Nešifrovaná adresa Hubu se uloží do uživatelských předvoleb macOS, ale token pouze do Klíčenky. Hub uchovává jen SHA-256 hash a krátkou nápovědu tokenu; token lze kdykoli odvolat.
+
+WorkLog načítá pouze názvy, složky, SN, stav a firmware. Hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou WorkLog ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a WorkLog průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
+
 ## Denní synchronizace Loxone Partner Portalu
 
 Správce může v **Nástroje → Synchronizace Loxone Partner Portalu** propojit firemní účet a okamžitě načíst seznam registrovaných Miniserverů. Další synchronizace proběhne automaticky jednou za 24 hodin pouze na centrálním HA Práce; HA Domov i weboví klienti používají stejná centrální data a nevytvářejí další požadavky.
 
-Heslo se odešle jen při navázání relace a aplikace je neukládá do databáze, logu ani konfigurace. Ukládá pouze obnovovací token zašifrovaný stejným AES-256-GCM klíčem jako ostatní servisní přístupy. Pokud Loxone relaci zneplatní nebo změní přihlašovací rozhraní, synchronizace se bezpečně zastaví a správce musí účet znovu propojit.
+Heslo a obnovovací token se ukládají odděleně zašifrované pomocí AES-256-GCM a nikdy se nezapisují do logu ani do veřejné konfigurace. Běžná synchronizace používá pouze obnovovací token. Pokud jej Loxone zneplatní, aplikace provede přesně jeden nový login uloženým heslem, uloží nový obnovovací token a synchronizaci zopakuje. Když Loxone odmítne i heslo, oba údaje se smažou a správce musí účet znovu propojit. Dočasná chyba nastaví odklad dalšího pokusu, aby opakované požadavky účet nezablokovaly.
 
 Import porovnává záznamy podle sériového čísla. Nový Miniserver založí bez servisního hesla; u již známého záznamu aktualizuje typ, datum registrace a název projektu pouze dokud jej stále spravuje portál. Ruční změny přístupů, složek, Gateway/Client vazeb, poznámek a cíle firmware nepřepisuje a záznamy, které z portálu zmizí, automaticky nemaže.
 

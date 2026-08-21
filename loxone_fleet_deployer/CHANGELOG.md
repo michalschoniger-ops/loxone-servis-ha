@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3.1
+
+- Nasazuje Evora Smart Hub 1.0.3 s osobním Windows/Parallels Config Launcherem, WorkLog AI pouze pro správce a automatickým obnovením přihlášení k Partner Portalu.
+- Payload obsahuje finální produkční build včetně čistých instalačních ZIPů a zachovává databázi, chráněnou konfiguraci i vratnou kopii předchozího zdroje.
+
 ## 1.0.2.1
 
 - Nasazuje Evora Smart Hub 1.0.2 s opravenou denní synchronizací všech registrovaných Miniserverů z Loxone Partner Portalu.

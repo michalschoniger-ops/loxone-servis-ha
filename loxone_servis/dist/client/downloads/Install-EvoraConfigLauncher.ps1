@@ -7,9 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if (-not $HubUrl) { $HubUrl = Read-Host "Evora Smart Hub HTTPS URL" }
-if (-not $PairingCode) { $PairingCode = Read-Host "One-time pairing code from Settings" }
-
 $source = Join-Path $PSScriptRoot "EvoraConfigLauncher.ps1"
 if (-not (Test-Path -LiteralPath $source)) {
   throw "EvoraConfigLauncher.ps1 must be in the same folder as this installer."
@@ -17,11 +14,50 @@ if (-not (Test-Path -LiteralPath $source)) {
 
 $installDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $installedScript = Join-Path $installDirectory "EvoraConfigLauncher.ps1"
+$configPath = Join-Path $installDirectory "config.json"
+$hasHubUrl = -not [string]::IsNullOrWhiteSpace($HubUrl)
+$hasPairingCode = -not [string]::IsNullOrWhiteSpace($PairingCode)
+
+if ($hasHubUrl -xor $hasPairingCode) {
+  throw "HubUrl and PairingCode must be supplied together."
+}
+
+$reuseExistingPairing = (Test-Path -LiteralPath $configPath) -and -not $hasHubUrl -and -not $hasPairingCode
+if (-not $reuseExistingPairing -and -not $hasHubUrl -and -not $hasPairingCode) {
+  $HubUrl = Read-Host "Evora Smart Hub HTTPS URL"
+  $PairingCode = Read-Host "One-time pairing code from Settings"
+  $hasHubUrl = -not [string]::IsNullOrWhiteSpace($HubUrl)
+  $hasPairingCode = -not [string]::IsNullOrWhiteSpace($PairingCode)
+  if (-not $hasHubUrl -or -not $hasPairingCode) {
+    throw "HubUrl and PairingCode are required for the first installation."
+  }
+}
+
+function Stop-InstalledLauncher([string]$ScriptPath) {
+  $escapedPath = [Regex]::Escape($ScriptPath)
+  $pathPattern = '(?i)(?:^|[\s"]){0}(?=$|[\s"])' -f $escapedPath
+  $currentUser = [string]$env:USERNAME
+  $currentDomain = [string]$env:USERDOMAIN
+  $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -in @("powershell.exe", "pwsh.exe") -and $_.CommandLine -match $pathPattern }
+
+  foreach ($process in $processes) {
+    $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwner -ErrorAction SilentlyContinue
+    if ($null -eq $owner -or $owner.ReturnValue -ne 0) { continue }
+    if ([string]$owner.User -ine $currentUser) { continue }
+    if ($currentDomain -and $owner.Domain -and [string]$owner.Domain -ine $currentDomain) { continue }
+    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+  }
+}
+
+Stop-InstalledLauncher $installedScript
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
 Copy-Item -LiteralPath $source -Destination $installedScript -Force
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installedScript -HubUrl $HubUrl -PairingCode $PairingCode -AgentName $AgentName -PairOnly
-if ($LASTEXITCODE -ne 0) { throw "Pairing failed." }
+if (-not $reuseExistingPairing) {
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installedScript -HubUrl $HubUrl -PairingCode $PairingCode -AgentName $AgentName -PairOnly
+  if ($LASTEXITCODE -ne 0) { throw "Pairing failed." }
+}
 
 $startupDirectory = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
 $shortcutPath = Join-Path $startupDirectory "Evora Config Launcher.lnk"
@@ -34,4 +70,8 @@ $shortcut.Description = "Evora Smart Hub - Loxone Config Launcher"
 $shortcut.Save()
 
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$installedScript`"")
-Write-Host "Evora Config Launcher was installed and started."
+if ($reuseExistingPairing) {
+  Write-Host "Evora Config Launcher was updated and started. Existing pairing was preserved."
+} else {
+  Write-Host "Evora Config Launcher was installed, paired, and started."
+}

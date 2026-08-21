@@ -665,11 +665,28 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_worklog_tokens_owner_active
       ON worklog_tokens(owner_user_id,active,created_at DESC);
+    CREATE TABLE IF NOT EXISTS portal_ticket_cache (
+      id TEXT PRIMARY KEY,
+      ticket_number TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      created_time TEXT NOT NULL DEFAULT '',
+      thread_count INTEGER NOT NULL DEFAULT 0,
+      contact_name TEXT NOT NULL DEFAULT '',
+      fingerprint TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT NOT NULL,
+      detail_encrypted TEXT,
+      detail_fingerprint TEXT,
+      detail_cached_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_ticket_cache_order
+      ON portal_ticket_cache(sort_order,id);
   `);
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
-    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(14, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3.1
+
+- Nasazuje Evora Smart Hub 2.0.3 s trvalou šifrovanou cache ticketů; běžné otevření Hubu ani WorkLogAI už nestahuje celý seznam z Portálu znovu.
+- Zobrazuje odkazy na skutečně dostupné přílohy a také bezpečné informační štítky u souborů, ke kterým Portál v odpovědi neposkytne adresu.
+- Přidává finální mobilní menu bez Configu, odstraňuje rozmazání detailu, opravuje správu profilových fotografií a aktualizuje Windows Launcher na 2.0.0.3.
+- Zachovává databázi, šifrované přístupy i vratnou kopii stávající verze 2.0.2.
+
 ## 2.0.2.1
 
 - Nasazuje Evora Smart Hub 2.0.2 s integrovaným správcovským centrem Loxone ticketů, úplným náhledem před každým odesláním a odpovídajícími funkcemi v WorkLog AI.

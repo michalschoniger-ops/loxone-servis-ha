@@ -1,16 +1,41 @@
+import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
-import { getSetting } from "./database.js";
+import { getSetting, setSetting } from "./database.js";
 const TOKEN_URL = "https://sso.loxone.com/realms/loxone/protocol/openid-connect/token";
 const PORTAL_ORIGIN = "https://portal.loxone.com";
 const PASSWORD_AAD = "portal-sync:password";
 const ATTACHMENT_AAD = "portal-ticket:attachment";
+const DETAIL_CACHE_AAD_PREFIX = "portal-ticket:detail-cache:";
+const TICKET_CACHE_SYNC_SETTING = "portal_ticket_cache_synced_at";
 const SESSION_LIFETIME_MS = 30 * 60_000;
 const ATTACHMENT_TOKEN_LIFETIME_MS = 15 * 60_000;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const PORTAL_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
 const sessions = new WeakMap();
 const pendingSessions = new WeakMap();
+const pendingTicketRefreshes = new WeakMap();
+function ensurePortalTicketCache(db) {
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS portal_ticket_cache (
+      id TEXT PRIMARY KEY,
+      ticket_number TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      created_time TEXT NOT NULL DEFAULT '',
+      thread_count INTEGER NOT NULL DEFAULT 0,
+      contact_name TEXT NOT NULL DEFAULT '',
+      fingerprint TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      synced_at TEXT NOT NULL,
+      detail_encrypted TEXT,
+      detail_fingerprint TEXT,
+      detail_cached_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_ticket_cache_order
+      ON portal_ticket_cache(sort_order,id);
+  `);
+}
 function form(values) {
     const body = new FormData();
     for (const [key, value] of Object.entries(values))
@@ -200,16 +225,71 @@ export function portalTicketPlainText(value) {
         .trim()
         .slice(0, 100_000);
 }
-function attachmentFromPortal(value) {
+function cachedAttachmentFromPortal(value) {
     const item = portalObject(value);
     const href = portalString(item.href, 8_000);
     const name = portalString(item.name, 240) || "priloha";
-    if (!href)
+    const safeHref = href && allowedAttachmentUrl(href) ? href : "";
+    if (!name && !safeHref)
         return null;
-    const token = encryptSecret(JSON.stringify({ href, name, expiresAt: Date.now() + ATTACHMENT_TOKEN_LIFETIME_MS }), config.masterKey, ATTACHMENT_AAD);
-    return { id: portalString(item.id, 120) || token.slice(-24), name, token };
+    return {
+        id: portalString(item.id, 120) || createHash("sha256").update(`${name}\n${safeHref}`).digest("hex").slice(0, 24),
+        name,
+        href: safeHref,
+    };
 }
-function threadFromPortal(value) {
+function publicAttachment(item) {
+    const token = item.href
+        ? encryptSecret(JSON.stringify({ href: item.href, name: item.name, expiresAt: Date.now() + ATTACHMENT_TOKEN_LIFETIME_MS }), config.masterKey, ATTACHMENT_AAD)
+        : "";
+    return { id: item.id || token.slice(-24), name: item.name, token, downloadable: Boolean(item.href) };
+}
+function attachmentsFromContent(value) {
+    const html = portalString(value, 120_000);
+    const result = [];
+    const seen = new Set();
+    const linkPattern = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+    for (const match of html.matchAll(linkPattern)) {
+        const href = decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? "").trim();
+        if (!href || !allowedAttachmentUrl(href))
+            continue;
+        let name = portalTicketPlainText(match[4] ?? "").replace(/^\s*(?:download|stáhnout)\s*$/i, "");
+        if (!name) {
+            try {
+                name = decodeURIComponent(new URL(href).pathname.split("/").filter(Boolean).pop() ?? "");
+            }
+            catch {
+                name = "";
+            }
+        }
+        name = name.trim().slice(0, 240) || "příloha";
+        const key = `${name}\n${href}`;
+        if (seen.has(key))
+            continue;
+        seen.add(key);
+        result.push({ id: createHash("sha256").update(key).digest("hex").slice(0, 24), name, href });
+    }
+    const plainText = portalTicketPlainText(html);
+    const filePattern = /^([^\r\n]{1,220}\.(?:jpe?g|png|gif|webp|heic|heif|pdf|zip|7z|rar|txt|log|csv|xlsx?|docx?))\s*-\s*\(\s*(?:size|velikost)\s*:/gimu;
+    for (const match of plainText.matchAll(filePattern)) {
+        const name = (match[1] ?? "").trim().slice(0, 240);
+        if (!name || result.some((item) => item.name.toLocaleLowerCase("cs") === name.toLocaleLowerCase("cs")))
+            continue;
+        result.push({ id: createHash("sha256").update(name).digest("hex").slice(0, 24), name, href: "" });
+    }
+    return result;
+}
+function mergeCachedAttachments(...groups) {
+    const merged = new Map();
+    for (const item of groups.flat()) {
+        const key = item.name.toLocaleLowerCase("cs");
+        const previous = merged.get(key);
+        if (!previous || (!previous.href && item.href))
+            merged.set(key, item);
+    }
+    return [...merged.values()];
+}
+function cachedThreadFromPortal(value) {
     const item = portalObject(value);
     const visibility = portalString(item.visibility, 30);
     const status = portalString(item.status, 30);
@@ -221,9 +301,10 @@ function threadFromPortal(value) {
     if (status && !["SUCCESS", "PENDING"].includes(status))
         return null;
     const author = portalObject(item.author);
-    const attachments = Array.isArray(item.attachments)
-        ? item.attachments.map(attachmentFromPortal).filter((entry) => Boolean(entry))
+    const listedAttachments = Array.isArray(item.attachments)
+        ? item.attachments.map(cachedAttachmentFromPortal).filter((entry) => Boolean(entry))
         : [];
+    const attachments = mergeCachedAttachments(listedAttachments, attachmentsFromContent(item.content));
     return {
         id: portalString(item.id, 120),
         createdTime: portalString(item.createdTime ?? item.created_time, 80),
@@ -236,6 +317,9 @@ function threadFromPortal(value) {
         },
         attachments,
     };
+}
+function publicThread(item) {
+    return { ...item, attachments: item.attachments.map(publicAttachment) };
 }
 function summaryFromPortal(value) {
     const item = portalObject(value);
@@ -255,11 +339,99 @@ function summaryFromPortal(value) {
             .join(" "),
     };
 }
-export async function listPortalTickets(db) {
-    const payload = await postPortalJson(db, "getTickets", {}, { referer: `${PORTAL_ORIGIN}/tickets/` });
-    if (!Array.isArray(payload))
-        throw portalError("Loxone Portál vrátil neznámý formát seznamu ticketů.", "PORTAL_FORMAT_CHANGED");
-    return payload.map(summaryFromPortal).filter((ticket) => Boolean(ticket));
+function summaryFingerprint(ticket) {
+    return createHash("sha256").update(JSON.stringify(ticket)).digest("hex");
+}
+function summaryFromCacheRow(row) {
+    return {
+        id: row.id,
+        ticketNumber: row.ticket_number,
+        subject: row.subject,
+        status: row.status,
+        createdTime: row.created_time,
+        threadCount: Number(row.thread_count),
+        contactName: row.contact_name,
+    };
+}
+function cachedPortalTicketRows(db) {
+    ensurePortalTicketCache(db);
+    return db.prepare(`SELECT id,ticket_number,subject,status,created_time,thread_count,contact_name,
+            fingerprint,sort_order,detail_encrypted,detail_fingerprint
+     FROM portal_ticket_cache ORDER BY sort_order,id`).all();
+}
+function cachedPortalTicketSummary(db, ticketId) {
+    ensurePortalTicketCache(db);
+    const row = db.prepare(`SELECT id,ticket_number,subject,status,created_time,thread_count,contact_name,
+            fingerprint,sort_order,detail_encrypted,detail_fingerprint
+     FROM portal_ticket_cache WHERE id=?`).get(ticketId);
+    return row ? summaryFromCacheRow(row) : null;
+}
+async function refreshPortalTicketCache(db) {
+    const existingRefresh = pendingTicketRefreshes.get(db);
+    if (existingRefresh)
+        return existingRefresh;
+    const refresh = (async () => {
+        const payload = await postPortalJson(db, "getTickets", {}, { referer: `${PORTAL_ORIGIN}/tickets/` });
+        if (!Array.isArray(payload))
+            throw portalError("Loxone Portál vrátil neznámý formát seznamu ticketů.", "PORTAL_FORMAT_CHANGED");
+        const unique = new Map();
+        for (const ticket of payload.map(summaryFromPortal))
+            if (ticket)
+                unique.set(ticket.id, ticket);
+        const tickets = [...unique.values()];
+        ensurePortalTicketCache(db);
+        const existing = new Map(cachedPortalTicketRows(db).map((row) => [row.id, row]));
+        const now = new Date().toISOString();
+        const unchanged = db.prepare(`UPDATE portal_ticket_cache SET ticket_number=?,subject=?,status=?,created_time=?,thread_count=?,
+       contact_name=?,sort_order=?,synced_at=? WHERE id=?`);
+        const changed = db.prepare(`INSERT INTO portal_ticket_cache(
+         id,ticket_number,subject,status,created_time,thread_count,contact_name,fingerprint,sort_order,synced_at,
+         detail_encrypted,detail_fingerprint,detail_cached_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)
+       ON CONFLICT(id) DO UPDATE SET
+         ticket_number=excluded.ticket_number,subject=excluded.subject,status=excluded.status,
+         created_time=excluded.created_time,thread_count=excluded.thread_count,contact_name=excluded.contact_name,
+         fingerprint=excluded.fingerprint,sort_order=excluded.sort_order,synced_at=excluded.synced_at,
+         detail_encrypted=NULL,detail_fingerprint=NULL,detail_cached_at=NULL`);
+        db.exec("BEGIN IMMEDIATE");
+        try {
+            tickets.forEach((ticket, index) => {
+                const fingerprint = summaryFingerprint(ticket);
+                const previous = existing.get(ticket.id);
+                if (previous?.fingerprint === fingerprint) {
+                    unchanged.run(ticket.ticketNumber, ticket.subject, ticket.status, ticket.createdTime, ticket.threadCount, ticket.contactName, index, now, ticket.id);
+                }
+                else {
+                    changed.run(ticket.id, ticket.ticketNumber, ticket.subject, ticket.status, ticket.createdTime, ticket.threadCount, ticket.contactName, fingerprint, index, now);
+                }
+                existing.delete(ticket.id);
+            });
+            const remove = db.prepare("DELETE FROM portal_ticket_cache WHERE id=?");
+            for (const ticketId of existing.keys())
+                remove.run(ticketId);
+            setSetting(db, TICKET_CACHE_SYNC_SETTING, now);
+            db.exec("COMMIT");
+        }
+        catch (error) {
+            db.exec("ROLLBACK");
+            throw error;
+        }
+        return cachedPortalTicketRows(db).map(summaryFromCacheRow);
+    })();
+    pendingTicketRefreshes.set(db, refresh);
+    try {
+        return await refresh;
+    }
+    finally {
+        pendingTicketRefreshes.delete(db);
+    }
+}
+export async function listPortalTickets(db, options = {}) {
+    ensurePortalTicketCache(db);
+    if (!options.refresh && getSetting(db, TICKET_CACHE_SYNC_SETTING)) {
+        return cachedPortalTicketRows(db).map(summaryFromCacheRow);
+    }
+    return refreshPortalTicketCache(db);
 }
 async function rawPortalTicket(db, ticketId) {
     const payload = await postPortalJson(db, "getTicketDetail", { ticket_id: ticketId }, { referer: `${PORTAL_ORIGIN}/ticket/${encodeURIComponent(ticketId)}` });
@@ -269,22 +441,77 @@ async function rawPortalTicket(db, ticketId) {
     }
     return item;
 }
-export async function getPortalTicket(db, ticketId) {
+function cachedPortalTicketDetail(db, ticketId, summary) {
+    ensurePortalTicketCache(db);
+    const row = db.prepare("SELECT detail_encrypted,detail_fingerprint,fingerprint FROM portal_ticket_cache WHERE id=?").get(ticketId);
+    if (!row?.detail_encrypted || row.detail_fingerprint !== row.fingerprint)
+        return null;
+    try {
+        const cached = JSON.parse(decryptSecret(row.detail_encrypted, config.masterKey, `${DETAIL_CACHE_AAD_PREFIX}${ticketId}`));
+        if (!Array.isArray(cached.threads) || !Array.isArray(cached.attachments))
+            return null;
+        return {
+            ...summary,
+            threads: cached.threads.map(publicThread),
+            attachments: cached.attachments.map(publicAttachment),
+        };
+    }
+    catch {
+        db.prepare("UPDATE portal_ticket_cache SET detail_encrypted=NULL,detail_fingerprint=NULL,detail_cached_at=NULL WHERE id=?").run(ticketId);
+        return null;
+    }
+}
+function storePortalTicketDetail(db, summary, detail) {
+    ensurePortalTicketCache(db);
+    const now = new Date().toISOString();
+    const fingerprint = summaryFingerprint(summary);
+    const previous = db.prepare("SELECT sort_order FROM portal_ticket_cache WHERE id=?").get(summary.id);
+    const encrypted = encryptSecret(JSON.stringify(detail), config.masterKey, `${DETAIL_CACHE_AAD_PREFIX}${summary.id}`);
+    db.prepare(`INSERT INTO portal_ticket_cache(
+       id,ticket_number,subject,status,created_time,thread_count,contact_name,fingerprint,sort_order,synced_at,
+       detail_encrypted,detail_fingerprint,detail_cached_at
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       ticket_number=excluded.ticket_number,subject=excluded.subject,status=excluded.status,
+       created_time=excluded.created_time,thread_count=excluded.thread_count,contact_name=excluded.contact_name,
+       fingerprint=excluded.fingerprint,synced_at=excluded.synced_at,detail_encrypted=excluded.detail_encrypted,
+       detail_fingerprint=excluded.detail_fingerprint,detail_cached_at=excluded.detail_cached_at`).run(summary.id, summary.ticketNumber, summary.subject, summary.status, summary.createdTime, summary.threadCount, summary.contactName, fingerprint, previous?.sort_order ?? 0, now, encrypted, fingerprint, now);
+    return {
+        ...summary,
+        threads: detail.threads.map(publicThread),
+        attachments: detail.attachments.map(publicAttachment),
+    };
+}
+function invalidatePortalTicketCache(db, ticketId) {
+    ensurePortalTicketCache(db);
+    if (ticketId) {
+        db.prepare("UPDATE portal_ticket_cache SET detail_encrypted=NULL,detail_fingerprint=NULL,detail_cached_at=NULL WHERE id=?").run(ticketId);
+    }
+    db.prepare("DELETE FROM settings WHERE key=?").run(TICKET_CACHE_SYNC_SETTING);
+}
+export async function getPortalTicket(db, ticketId, options = {}) {
+    const cachedSummary = cachedPortalTicketSummary(db, ticketId);
+    if (cachedSummary && !options.refresh) {
+        const cached = cachedPortalTicketDetail(db, ticketId, cachedSummary);
+        if (cached)
+            return cached;
+    }
     const item = await rawPortalTicket(db, ticketId);
     const summary = summaryFromPortal({ ...item, id: ticketId });
     if (!summary)
         throw portalError("Detail ticketu není dostupný.", "PORTAL_TICKET_NOT_FOUND");
     const threads = Array.isArray(item.threads)
-        ? item.threads.map(threadFromPortal).filter((thread) => Boolean(thread))
+        ? item.threads.map(cachedThreadFromPortal).filter((thread) => Boolean(thread))
         : [];
     const attachments = Array.isArray(item.attachments)
-        ? item.attachments.map(attachmentFromPortal).filter((entry) => Boolean(entry))
+        ? item.attachments.map(cachedAttachmentFromPortal).filter((entry) => Boolean(entry))
         : [];
-    return { ...summary, threads, attachments };
+    return storePortalTicketDetail(db, summary, { threads, attachments });
 }
 export async function createPortalTicket(db, input) {
     const payload = await postPortalJson(db, "createTicket", { ticket_subject: input.subject, ticket_description: input.description }, { referer: `${PORTAL_ORIGIN}/ticket/new/`, mutation: true });
     const item = portalObject(payload);
+    invalidatePortalTicketCache(db);
     return {
         ok: true,
         ticketId: portalString(item.id ?? item.ticket_id, 120) || null,
@@ -304,6 +531,7 @@ export async function replyPortalTicket(db, ticketId, content) {
         ticket_id: ticketId,
         departmentId,
     }, { referer: `${PORTAL_ORIGIN}/ticket/${encodeURIComponent(ticketId)}`, mutation: true });
+    invalidatePortalTicketCache(db, ticketId);
     return { ok: true };
 }
 function allowedAttachmentUrl(value) {
@@ -361,4 +589,9 @@ export async function downloadPortalTicketAttachment(db, token) {
 export function clearPortalTicketSession(db) {
     sessions.delete(db);
     pendingSessions.delete(db);
+}
+export function clearPortalTicketCache(db) {
+    ensurePortalTicketCache(db);
+    db.exec("DELETE FROM portal_ticket_cache");
+    db.prepare("DELETE FROM settings WHERE key=?").run(TICKET_CACHE_SYNC_SETTING);
 }

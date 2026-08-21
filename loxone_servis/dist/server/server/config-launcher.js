@@ -3,6 +3,8 @@ import { hashToken, randomToken } from "./crypto.js";
 const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
+export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "2.0.0.3";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);
@@ -14,12 +16,37 @@ function parseVersions(value) {
         return [];
     }
 }
+function compareNumericVersions(left, right) {
+    if (!left || !/^\d+(?:\.\d+){1,3}$/.test(left) || !/^\d+(?:\.\d+){1,3}$/.test(right))
+        return null;
+    const leftParts = left.split(".").map(Number);
+    const rightParts = right.split(".").map(Number);
+    const length = Math.max(leftParts.length, rightParts.length);
+    for (let index = 0; index < length; index += 1) {
+        const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+        if (difference !== 0)
+            return difference < 0 ? -1 : 1;
+    }
+    return 0;
+}
+export function configLauncherVersionStatus(helperVersion) {
+    const minimumComparison = compareNumericVersions(helperVersion, MINIMUM_CONFIG_LAUNCHER_VERSION);
+    const latestComparison = compareNumericVersions(helperVersion, CURRENT_CONFIG_LAUNCHER_VERSION);
+    return {
+        requiredHelperVersion: MINIMUM_CONFIG_LAUNCHER_VERSION,
+        latestHelperVersion: CURRENT_CONFIG_LAUNCHER_VERSION,
+        updateRequired: minimumComparison === null || minimumComparison < 0,
+        updateAvailable: latestComparison === null || latestComparison < 0,
+    };
+}
 function publicAgent(row, now = Date.now()) {
+    const versionStatus = configLauncherVersionStatus(row.helper_version);
     return {
         id: row.id,
         name: row.name,
         available: row.active === 1 && Boolean(row.last_seen_at) && now - Date.parse(row.last_seen_at) <= AGENT_ONLINE_MS,
         helperVersion: row.helper_version,
+        ...versionStatus,
         installedVersions: parseVersions(row.installed_versions_json),
         lastSeenAt: row.last_seen_at,
         lastStatus: row.last_status,

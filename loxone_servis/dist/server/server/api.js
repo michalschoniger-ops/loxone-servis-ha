@@ -13,8 +13,8 @@ import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../sh
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
-import { clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
-import { authenticateLauncherAgent, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
+import { authenticateLauncherAgent, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
@@ -105,6 +105,7 @@ export async function registerApi(app, db, jobs) {
         }).parse(request.body);
         const status = await connectPortal(db, body.email, body.portalPassword);
         clearPortalTicketSession(db);
+        clearPortalTicketCache(db);
         audit(db, "portal.connected", user.id, null, { email: body.email, productCount: status.productCount });
         return status;
     });
@@ -122,20 +123,23 @@ export async function registerApi(app, db, jobs) {
         audit(db, "portal.disconnected", user.id, null, {});
         const status = disconnectPortal(db);
         clearPortalTicketSession(db);
+        clearPortalTicketCache(db);
         return status;
     });
     app.get("/api/portal-tickets", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireRole(request, reply, ["admin"]))
             return;
+        const refresh = request.query?.refresh === "1";
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return { items: await listPortalTickets(db) };
+        return { items: await listPortalTickets(db, { refresh }) };
     });
     app.get("/api/portal-tickets/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireRole(request, reply, ["admin"]))
             return;
         const id = portalTicketIdSchema.parse(request.params.id);
+        const refresh = request.query?.refresh === "1";
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return { ticket: await getPortalTicket(db, id) };
+        return { ticket: await getPortalTicket(db, id, { refresh }) };
     });
     app.post("/api/portal-tickets", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -223,16 +227,33 @@ export async function registerApi(app, db, jobs) {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const refresh = request.query?.refresh === "1";
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return { user: { email: identity.email }, items: await listPortalTickets(db) };
+        return { user: { email: identity.email }, items: await listPortalTickets(db, { refresh }) };
     });
     app.get("/api/integrations/worklog/v1/portal-tickets/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const id = portalTicketIdSchema.parse(request.params.id);
+        const refresh = request.query?.refresh === "1";
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return { ticket: await getPortalTicket(db, id) };
+        return { ticket: await getPortalTicket(db, id, { refresh }) };
+    });
+    app.post("/api/integrations/worklog/v1/portal-tickets/attachments/download", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const input = z.object({ token: z.string().min(20).max(20_000) }).parse(request.body);
+        const attachment = await downloadPortalTicketAttachment(db, input.token);
+        const fallbackName = attachment.fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "attachment";
+        return reply
+            .header("Cache-Control", "no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Disposition", `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`)
+            .type(attachment.contentType)
+            .send(attachment.content);
     });
     app.post("/api/integrations/worklog/v1/portal-tickets/confirm", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -301,7 +322,7 @@ export async function registerApi(app, db, jobs) {
                 currentFirmware: server.currentFirmware,
                 hasCredentials: server.hasCredentials,
                 loxoneAppAvailable: server.hasCredentials,
-                loxoneConfigAvailable: Boolean(agent?.available && server.currentFirmware && server.hasCredentials),
+                loxoneConfigAvailable: Boolean(agent?.available && !agent.updateRequired && server.currentFirmware && server.hasCredentials),
                 configVersion: release?.version ?? server.currentFirmware,
                 configDownloadUrl: release?.configUrl ?? null,
                 deviceImageUrl: miniserverDeviceImage(server.type),
@@ -339,6 +360,14 @@ export async function registerApi(app, db, jobs) {
         const agent = preferredLauncherAgent(db, identity.ownerUserId);
         if (!agent?.available) {
             return reply.code(409).send({ error: "Váš Windows Launcher není online.", code: "AGENT_OFFLINE" });
+        }
+        if (agent.updateRequired) {
+            return reply.code(409).send({
+                error: `Windows Launcher ${agent.helperVersion ?? "neznámé verze"} je zastaralý. V Nastavení stáhněte a spusťte aktualizaci alespoň na ${agent.requiredHelperVersion}. Existující spárování zůstane zachované.`,
+                code: "AGENT_UPDATE_REQUIRED",
+                requiredHelperVersion: agent.requiredHelperVersion,
+                latestHelperVersion: agent.latestHelperVersion,
+            });
         }
         const release = exactConfigRelease(db, server.currentFirmware);
         const job = createConfigLaunchJob(db, {
@@ -406,6 +435,11 @@ export async function registerApi(app, db, jobs) {
             installedVersions: z.array(z.string().trim().min(1).max(40)).max(100),
         }).parse(request.body);
         heartbeatLauncherAgent(db, agent, input.helperVersion, input.installedVersions);
+        const versionStatus = configLauncherVersionStatus(input.helperVersion);
+        if (versionStatus.updateRequired) {
+            reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+            return { job: null, ...versionStatus };
+        }
         const job = takeConfigLaunchJob(db, agent.id);
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         if (!job)
@@ -1093,11 +1127,13 @@ export async function registerApi(app, db, jobs) {
             configVersion: release?.version ?? server.currentFirmware,
             currentProgramUrl: user.role === "admin" ? `/api/miniservers/${serial}/exports/current-program` : null,
             credentials,
-            automaticLaunchSupported: Boolean(agent?.available && server.currentFirmware && credentials),
+            automaticLaunchSupported: Boolean(agent?.available && !agent.updateRequired && server.currentFirmware && credentials),
             launcherAgent: agent,
-            launchNote: agent?.available
-                ? "Windows Launcher je online. Přístup se mu předá pouze pro tento jednorázový požadavek a neukládá se do fronty ani do příkazové řádky."
-                : "Windows Launcher není online. Spusťte ho ve Windows nebo ho nejprve spárujte v Nastavení.",
+            launchNote: agent?.available && agent.updateRequired
+                ? `Windows Launcher ${agent.helperVersion ?? "neznámé verze"} je zastaralý. V Nastavení stáhněte aktualizaci ${agent.latestHelperVersion}; instalátor zachová existující spárování.`
+                : agent?.available
+                    ? "Windows Launcher je online. Přístup se mu předá pouze pro tento jednorázový požadavek a neukládá se do fronty ani do příkazové řádky."
+                    : "Windows Launcher není online. Spusťte ho ve Windows nebo ho nejprve spárujte v Nastavení.",
         };
     });
     app.post("/api/miniservers/:serial/config-launch", async (request, reply) => {
@@ -1115,6 +1151,14 @@ export async function registerApi(app, db, jobs) {
         const agent = preferredLauncherAgent(db, user.id);
         if (!agent?.available)
             return reply.code(409).send({ error: "Windows Launcher není online.", code: "AGENT_OFFLINE" });
+        if (agent.updateRequired) {
+            return reply.code(409).send({
+                error: `Windows Launcher ${agent.helperVersion ?? "neznámé verze"} je zastaralý. V Nastavení stáhněte a spusťte aktualizaci ${agent.latestHelperVersion}; spárování se zachová.`,
+                code: "AGENT_UPDATE_REQUIRED",
+                requiredHelperVersion: agent.requiredHelperVersion,
+                latestHelperVersion: agent.latestHelperVersion,
+            });
+        }
         const release = exactConfigRelease(db, server.currentFirmware);
         const job = createConfigLaunchJob(db, {
             serial,
@@ -1543,7 +1587,13 @@ export async function registerApi(app, db, jobs) {
         const row = db.prepare("SELECT avatar_mime AS mime,avatar_data AS data,avatar_updated_at AS updatedAt FROM users WHERE id=?").get(id);
         if (!row?.mime || !row.data)
             return reply.code(404).send({ error: "Profilová fotografie není nastavena.", code: "AVATAR_NOT_FOUND" });
-        return reply.header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff").type(row.mime).send(Buffer.from(row.data, "base64"));
+        const image = Buffer.from(row.data, "base64");
+        return reply
+            .header("Cache-Control", "private, no-store")
+            .header("Content-Length", String(image.length))
+            .header("X-Content-Type-Options", "nosniff")
+            .type(row.mime)
+            .send(image);
     });
     const saveUserAvatar = (targetUserId, body, actorUserId, reply) => {
         const target = db.prepare("SELECT id FROM users WHERE id=?").get(targetUserId);

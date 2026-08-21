@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.3
+
+- Windows Config Launcher 2.0.0.3 se umí bezpečně aktualizovat přímo ve stejném Windows účtu: ukončí jen přesně rozpoznaný starý helper daného uživatele, zachová stávající DPAPI token a bez nového párování spustí opravenou verzi.
+- Hub rozpozná helper starší než 2.0.0.2, jasně vyžádá aktualizaci a do té doby mu nepředá přístupové údaje ani novou úlohu. Verze 2.0.0.2 zůstává funkční a pouze nabídne dostupnou aktualizaci.
+- Stejný stav aktualizace se zobrazuje v Config Bridge, Nastavení i WorkLog AI, takže starší automatizace už neskončí neurčitou chybou až po vyplnění připojovacího dialogu.
+- Mobilní nabídka používá stejnou hierarchii jako desktop v pravém výsuvném panelu; Config zůstává na telefonu zcela skrytý. Podpora má jednotnou výšku položek a mobilní karta bezpečně odděluje SN, datum registrace a firmware.
+- Detail Miniserveru na iOS už nepoužívá rozmazávací vrstvu ani kompoziční animaci. Správa uživatelů má stabilní sloupce a profilová fotografie se načítá přímo z autentizovaného obrazového endpointu bez mezikroku přes FileReader.
+- Centrum ticketů využívá celou výšku okna, oba sloupce se posouvají samostatně a tlačítko Odpovědět je dostupné i u uzavřeného ticketu v Hubu i WorkLog AI.
+- Ticketový seznam a veřejná komunikace se ukládají do lokální cache; obsah komunikace a reference příloh jsou v databázi šifrované. Běžné otevření Hubu i WorkFlowAI už znovu nestahuje všech 140 ticketů; explicitní aktualizace porovná souhrny, přepíše jen změněné záznamy a detail načte znovu pouze po změně. Skutečné přílohy a odkazy vložené do zpráv se zobrazí samostatně a WorkFlowAI je umí bezpečně otevřít přes Hub.
+
 ## 2.0.2
 
 - Správce má přímo v Evora Smart Hubu bezpečné centrum Loxone ticketů: seznam a filtrování, detail veřejné komunikace a příloh, založení ticketu i odpověď. Každé odeslání nejdřív ukáže úplný náhled a potom vyžádá heslo správce; technikům a uživatelům zůstávají jen původní externí odkazy.

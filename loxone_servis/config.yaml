@@ -1,5 +1,5 @@
 name: Evora Smart Hub
-version: "2.2.1"
+version: "2.2.2"
 slug: loxone_fleet
 description: Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.
 url: https://github.com/michalschoniger-ops/loxone-servis

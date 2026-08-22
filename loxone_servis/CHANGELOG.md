@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.2
+
+- Živý sekundový čas Evora Intranetu je izolovaný pouze v malém stavovém řádku menu. Už každou sekundu nepřekresluje celou flotilu 137 Miniserverů ani otevřenou postranní nabídku.
+- Mobilní panel se otevírá kompozičním posunem přes GPU místo průběžné změny polohy a jeho trvalá loga už neanimují náročný stín. Přihlašovací a aktualizační animace zůstávají zachované.
+- Z karty Docházkové akce byl odstraněn počet upozornění a vysvětlující text je přitažen přímo pod nadpis.
+- Intranet je v menu jednotná jednořádková položka se stavem vpravo. Home Assistant používá vloženou značku bez rizika rozbitého obrázku a přihlašovací, horní i mobilní logo dostalo viditelnou transformovou animaci s podporou systémového omezení pohybu.
+- Velké mobilní akční a souhrnné buňky používají společnou výšku 76 px, jednotnou velikost hlavního a pomocného textu i ikon; navigační řádky a běžná ovládací tlačítka zůstávají ve svém jednotném dotykovém rozměru.
+
 ## 2.2.1
 
 - Provozní log už nikdy neukládá query string požadavku. Starší klient tedy může dál používat původní URL, ale jeho API klíč, token ani jiný parametr se do logu nedostane.

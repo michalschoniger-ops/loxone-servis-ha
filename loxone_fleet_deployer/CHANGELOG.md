@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.2.1
+
+- Nasazuje Evora Smart Hub 2.2.2 s plynulejší mobilní postranní nabídkou, izolovaným sekundovým časem docházky, jednotnými mobilními buňkami, animovaným logem, vloženou Home Assistant ikonou a kompaktní kartou Docházkové akce.
+- Zachovává databázi, šifrovaná připojení, WorkLogAI 5.8.2 a úplnou vratnou kopii zdroje 2.2.1.
+
 ## 2.2.1.1
 
 - Nasazuje bezpečnostní opravu Evora Smart Hub 2.2.1, která odstraňuje query stringy včetně starších API klíčů z provozních logů.

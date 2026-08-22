@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0.1
+
+- Nasazuje Evora Smart Hub 2.2.0 se správcovskou integrací Evora Intranetu, živým časem docházky, měsíční historií a přehledem přítomnosti.
+- Sjednocuje mobilní menu, odstraňuje duplicitní odhlášení a opravuje čtyři hlavní akce Miniserverů včetně ikon a zalamování.
+- Obsahuje WorkLogAI 5.8.2 se samostatným Keychain helperem; před výměnou zachová úplnou vratnou kopii zdroje 2.1.2.
+
 ## 2.1.2.2
 
 - Nasazuje Evora Smart Hub 2.1.2 s opraveným spouštěním aktualizací Home Assistantu podle skutečné podpory záloh.

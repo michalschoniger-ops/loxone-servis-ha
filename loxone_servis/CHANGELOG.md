@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- Správce má v Evora Smart Hubu nové centrum `Evora Intranet → Docházka`. Bezpečně zobrazuje aktuální stav, právě běžící pracovní čas, příchod, odchod, Home office, služební cestu, měsíční souhrny, historii aktuálního a předchozího měsíce i přítomnost kolegů.
+- Přihlašovací údaje a obnovovací token Evora Intranetu jsou odděleně šifrované pomocí AES-256-GCM. Integrace automaticky obnovuje relaci, rozlišuje přesné stavy dat, neposílá GPS a její API je dostupné pouze správci.
+- Nativní WorkLogAI zobrazuje běžící docházku v liště i menu s přesností na sekundy jako `HH:MM:SS`; historie si zachovává čitelný hodinový souhrn.
+- Mobilní i desktopové menu má jednotnou hierarchii: Podpora je pod LOXONE a Provozní log, Uživatelé a Nástroje jsou pod Nastavením. V každém rozvržení se zobrazuje jen jedno odhlášení.
+- Horní akce flotily používají samostatné srozumitelné ikony a na telefonu stejně velké dvousloupcové dotykové buňky bez přetékání textu.
+
 ## 2.1.2
 
 - Aktualizace Home Assistantu respektují příznak `supported_features`: záloha se vyžádá jen u entit, které ji skutečně podporují. Při zastaralém příznaku Hub bezpečně zopakuje instalaci bez nepodporované zálohy, takže fungují také HACS karty a doplňky bez funkce BACKUP.

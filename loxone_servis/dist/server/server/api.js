@@ -22,6 +22,7 @@ import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniser
 import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
+import { connectIntranet, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
@@ -160,6 +161,18 @@ function operationalFailure(error) {
         return { code: error.code, message: error.message };
     return { code: "INTERNAL_ERROR", message: "Operace skončila interní chybou Hubu." };
 }
+function sendIntranetError(reply, error) {
+    if (!(error instanceof IntranetError)) {
+        return reply.code(500).send({ error: "Při komunikaci s Evora Intranetem nastala interní chyba Hubu.", code: "INTERNAL_ERROR" });
+    }
+    const status = error.code === "auth_rejected" ? 401
+        : error.code === "permission_denied" ? 403
+            : error.code === "not_configured" ? 409
+                : error.code === "unavailable" ? 503
+                    : error.code === "not_provided" ? 502
+                        : 500;
+    return reply.code(status).send({ error: error.message, code: error.code.toUpperCase() });
+}
 function recordOperationalResult(db, input) {
     try {
         recordOperationalAttempt(db, input);
@@ -174,6 +187,73 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return fleetOverview(db);
+    });
+    app.get("/api/intranet", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireRole(request, reply, ["admin"]))
+            return;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        try {
+            return await getIntranetSnapshot(db);
+        }
+        catch (error) {
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.post("/api/intranet/connect", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z.object({
+            email: z.string().trim().email().max(254),
+            password: z.string().min(1).max(512),
+        }).strict().parse(request.body);
+        try {
+            const snapshot = await connectIntranet(db, input.email, input.password);
+            audit(db, "intranet.connected", user.id, null, { email: input.email.toLowerCase(), state: snapshot.dataState });
+            return snapshot;
+        }
+        catch (error) {
+            audit(db, "intranet.connection_failed", user.id, null, { code: error instanceof IntranetError ? error.code : "internal_error" });
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.post("/api/intranet/refresh", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        try {
+            const snapshot = await refreshIntranet(db, true);
+            audit(db, "intranet.refreshed", user.id, null, { state: snapshot.dataState });
+            return snapshot;
+        }
+        catch (error) {
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.post("/api/intranet/punch", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z.object({
+            kind: z.enum(["arrival", "departure", "home_start", "home_end", "break_out", "break_in", "doctor_out", "doctor_in", "offsite_out", "offsite_in"]),
+        }).strict().parse(request.body);
+        try {
+            const snapshot = await punchIntranet(db, input.kind);
+            audit(db, "intranet.attendance_recorded", user.id, null, { kind: input.kind, state: snapshot.currentState });
+            return snapshot;
+        }
+        catch (error) {
+            audit(db, "intranet.attendance_failed", user.id, null, { kind: input.kind, code: error instanceof IntranetError ? error.code : "internal_error" });
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.delete("/api/intranet", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const snapshot = disconnectIntranet(db);
+        audit(db, "intranet.disconnected", user.id, null, {});
+        return snapshot;
     });
     app.get("/api/portal-sync", async (request, reply) => {
         if (!requireRole(request, reply, ["admin"]))

@@ -55,6 +55,12 @@ Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čte
 
 WorkLog načítá pouze názvy, složky, SN, stav a firmware. Hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou WorkLog ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a WorkLog průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
 
+## Evora Intranet a docházka
+
+Položka **Evora Intranet** je dostupná pouze hlavnímu správci. Název jasně odlišuje firemní zdroj od Loxone Partner Portálu; ikona spojuje budovu a hodiny. Stránka **Docházka** zobrazuje aktuální stav a běžící čas `HH:MM:SS`, příchod, odchod, Home office, služební cestu, saldo, přesčas, dovolenou, historii aktuálního a předchozího měsíce a stav kolegů.
+
+Přístup se zadává jednou v Hubu. Heslo a obnovovací token jsou odděleně šifrované pomocí AES-256-GCM a automaticky se obnovují. Každá informace rozlišuje načítání, aktuální a zastaralá data, nedostupnost zdroje, odmítnuté přihlášení, chybějící přístup, neposkytnutý údaj a interní chybu Hubu. Docházkové změny vyžadují potvrzení a neobsahují GPS.
+
 ## Denní synchronizace Loxone Partner Portalu
 
 Správce může v **Nástroje → Synchronizace Loxone Partner Portalu** propojit firemní účet a okamžitě načíst seznam registrovaných Miniserverů. Další synchronizace proběhne automaticky jednou za 24 hodin pouze na centrálním HA Práce; HA Domov i weboví klienti používají stejná centrální data a nevytvářejí další požadavky.

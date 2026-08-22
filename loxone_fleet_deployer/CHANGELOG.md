@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.0.2
+
+- Používá aktuální mapování `local_apps` se zachovanou cestou `/addons`; Supervisor už nehlásí zastaralý typ `addons`.
+
 ## 2.2.0.1
 
 - Nasazuje Evora Smart Hub 2.2.0 se správcovskou integrací Evora Intranetu, živým časem docházky, měsíční historií a přehledem přítomnosti.

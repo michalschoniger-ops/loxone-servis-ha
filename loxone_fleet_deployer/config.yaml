@@ -1,5 +1,5 @@
 name: Evora Smart Hub Deployment Helper
-version: "2.2.0.1"
+version: "2.2.0.2"
 slug: loxone_fleet_deployer
 description: Jednorázově a vratně připraví lokální Evora Smart Hub 2.2.0 k přestavění.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha
@@ -10,8 +10,9 @@ startup: once
 boot: manual_only
 init: false
 map:
-  - type: addons
+  - type: local_apps
     read_only: false
+    path: /addons
 options:
   operation: deploy
 schema:

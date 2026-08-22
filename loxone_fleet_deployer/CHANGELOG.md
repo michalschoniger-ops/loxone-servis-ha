@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.5.2
+
+- Opravuje instalační runtime 2.2.5 tak, aby používal již ověřený produkční build a při sestavení na Home Assistantu nevyžadoval vývojové TypeScript soubory.
+- Zachovává globální hledání v Hubu i Evora Smart Menu 5.8.5, databázi, šifrovaná připojení a vratnou kopii předchozího zdroje.
+
 ## 2.2.5.1
 
 - Nasazuje Evora Smart Hub 2.2.5 s kontakty a žádostmi o absenci v Intranetu, barevnými buňkami postranního menu, zelenou ikonou „e“ a kompaktní správou uživatelů.

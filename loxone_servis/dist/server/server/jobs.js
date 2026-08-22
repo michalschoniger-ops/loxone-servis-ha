@@ -49,6 +49,14 @@ export function refreshComponentDue(lastRefreshedAt, intervalMs, now = Date.now(
     const parsed = Date.parse(lastRefreshedAt);
     return !Number.isFinite(parsed) || now - parsed >= intervalMs;
 }
+export async function containBackgroundFailure(task, onFailure) {
+    try {
+        await task;
+    }
+    catch (error) {
+        onFailure(error);
+    }
+}
 function mapJob(row) {
     return {
         id: row.id,
@@ -154,14 +162,31 @@ export class JobQueue {
     start() {
         if (this.timer)
             return;
-        this.timer = setInterval(() => void this.tick(), 30_000);
+        this.timer = setInterval(() => this.scheduleTick(), 30_000);
         this.timer.unref();
-        void this.tick();
+        this.scheduleTick();
     }
     stop() {
         if (this.timer)
             clearInterval(this.timer);
         this.timer = null;
+    }
+    recordBackgroundFailure(action, error, serial = null) {
+        const code = typeof error?.code === "string"
+            ? error.code
+            : "background_task_failed";
+        try {
+            audit(this.db, action, null, serial, {
+                code,
+                errorName: error instanceof Error ? error.name : "Error",
+            });
+        }
+        catch {
+            // Ani selhání diagnostického zápisu nesmí shodit hlavní proces Hubu.
+        }
+    }
+    scheduleTick(forceFullCheck = false) {
+        void containBackgroundFailure(this.tick(forceFullCheck), (error) => this.recordBackgroundFailure("jobs.tick_failed", error));
     }
     enqueue(kind, serial, actorUserId, payload = {}, deadlineAt = null) {
         const id = randomUUID();
@@ -169,7 +194,7 @@ export class JobQueue {
         this.db.prepare(`INSERT INTO action_jobs(id,kind,serial,state,progress,message,payload_json,result_json,actor_user_id,created_at,deadline_at)
        VALUES(?,?,?,'queued',0,'Čeká ve frontě',?,'{}',?,?,?)`).run(id, kind, serial, JSON.stringify(payload), actorUserId, now, deadlineAt);
         const job = this.get(id);
-        queueMicrotask(() => void this.tick());
+        queueMicrotask(() => this.scheduleTick());
         return job;
     }
     get(id) {
@@ -221,7 +246,7 @@ export class JobQueue {
                 await processServiceTaskReminders(this.db);
                 this.lastServiceCenterRefreshAt = Date.now();
             }
-            void this.maybeSampleOneWireTemperatures();
+            void containBackgroundFailure(this.maybeSampleOneWireTemperatures(), (error) => this.recordBackgroundFailure("onewire.sample_failed", error));
             this.maybePurgeHistory();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
@@ -233,7 +258,7 @@ export class JobQueue {
                 this.db.prepare("UPDATE action_jobs SET state='running',started_at=?,message='Probíhá' WHERE id=? AND state='queued'").run(new Date().toISOString(), next.id);
                 void this.execute(next).finally(() => {
                     this.running -= 1;
-                    queueMicrotask(() => void this.tick());
+                    queueMicrotask(() => this.scheduleTick());
                 });
             }
         }
@@ -389,6 +414,9 @@ export class JobQueue {
                     persistOneWireSamples(this.db, row.serial, devices, now);
                 });
             }
+        }
+        catch (error) {
+            this.recordBackgroundFailure("onewire.sample_failed", error, row.serial);
         }
         finally {
             const completedAt = new Date().toISOString();

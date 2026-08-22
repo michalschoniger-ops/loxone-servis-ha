@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1.1
+
+- Nasazuje opravné vydání Evora Smart Hub 2.1.1, které bezpečně zachytí dočasné selhání 1-Wire monitoringu a neshodí celý proces.
+- Zachovává schéma databáze 18, šifrované přístupy a úplnou vratnou kopii zdroje 2.1.0.
+
 ## 2.1.0.1
 
 - Nasazuje Evora Smart Hub 2.1.0 s jednotnými stavy dat, centrem incidentů, servisními profily a interními servisními úkoly.

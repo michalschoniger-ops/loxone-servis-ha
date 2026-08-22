@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+
+- Opravuje provozní pád plánovače, který mohl při dočasném síťovém selhání jednoho 1-Wire Miniserveru ukončit celý proces Hubu. Chyba se nyní bezpečně zapíše do auditu bez hesla, tokenu nebo adresy a další monitoring pokračuje.
+- Odděleně zachytává také neočekávané chyby odpojených běhů plánovače, takže jedna chybná kontrola neshodí web, health endpoint ani ostatní Miniservery.
+
 ## 2.1.0
 
 - Každý Miniserver a dílčí zdroj rozlišuje osm explicitních stavů: načítání, aktuální, zastaralý, nedostupný, odmítnuté přihlášení, chybějící přístup, údaj neposkytnutý zdrojem a interní chyba Hubu.

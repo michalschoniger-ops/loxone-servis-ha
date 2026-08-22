@@ -11,7 +11,7 @@ import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBu
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { nextDistinctFolderColor } from "../shared/folder-colors.js";
-import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
+import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, installHomeAssistantUpdate, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
@@ -1074,9 +1074,15 @@ export async function registerApi(app, db, jobs) {
             return reply.code(409).send({ error: "Aktualizace už není dostupná. Nejprve obnovte kontrolu.", code: "UPDATE_NOT_AVAILABLE" });
         z.object({ confirmed: z.literal(true) }).parse(request.body);
         const payload = { id: params.id, entityId: params.entityId };
-        await callHomeAssistantService(db, params.id, "update", "install", { entity_id: params.entityId, backup: true });
-        audit(db, "home_assistant.update_started", user.id, null, { ...payload, title: update.title, target: update.latestVersion, confirmation: "explicit" });
-        return { ok: true };
+        const install = await installHomeAssistantUpdate(db, params.id, update);
+        audit(db, "home_assistant.update_started", user.id, null, {
+            ...payload,
+            title: update.title,
+            target: update.latestVersion,
+            confirmation: "explicit",
+            ...install,
+        });
+        return { ok: true, ...install };
     });
     app.post("/api/home-assistant/updates/install-all", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -1093,7 +1099,7 @@ export async function registerApi(app, db, jobs) {
         const failed = [];
         for (const target of targets) {
             try {
-                await callHomeAssistantService(db, target.item.id, "update", "install", { entity_id: target.update.entityId, backup: true });
+                const install = await installHomeAssistantUpdate(db, target.item.id, target.update);
                 started.push({ id: target.item.id, entityId: target.update.entityId });
                 audit(db, "home_assistant.update_started", user.id, null, {
                     id: target.item.id,
@@ -1101,6 +1107,7 @@ export async function registerApi(app, db, jobs) {
                     title: target.update.title,
                     target: target.update.latestVersion,
                     confirmation: "explicit_bulk",
+                    ...install,
                 });
             }
             catch {

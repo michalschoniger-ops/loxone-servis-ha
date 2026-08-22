@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { HomeAssistantServiceError } from "./home-assistant.js";
 import { LoxoneError } from "./loxone/client.js";
 function validationIssues(error) {
     if (error instanceof ZodError)
@@ -44,6 +45,10 @@ export function registerApplicationErrorHandler(app) {
         if (error instanceof LoxoneError) {
             const status = error.code === "no_access" ? 403 : error.code === "unsupported" ? 409 : error.code === "export_busy" ? 429 : 502;
             return reply.code(status).send({ error: error.message, code: error.code, requestId });
+        }
+        if (error instanceof HomeAssistantServiceError) {
+            request.log.warn({ code: error.code, reason: error.reason }, "Home Assistant service rejected");
+            return reply.code(error.statusCode).send({ error: error.message, code: error.code, requestId });
         }
         const safeClientError = clientError(error);
         if (safeClientError) {

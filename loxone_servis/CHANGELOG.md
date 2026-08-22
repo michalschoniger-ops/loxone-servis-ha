@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.2
+
+- Aktualizace Home Assistantu respektují příznak `supported_features`: záloha se vyžádá jen u entit, které ji skutečně podporují. Při zastaralém příznaku Hub bezpečně zopakuje instalaci bez nepodporované zálohy, takže fungují také HACS karty a doplňky bez funkce BACKUP.
+- Odmítnutý token, nedostupný Home Assistant a odmítnutá aktualizační služba už nekončí neurčitou „Vnitřní chybou aplikace“, ale přesným bezpečným hlášením bez URL nebo tokenu.
+- Mobilní akční tlačítka mají stejnou šířku a výšku; filtry, uložené pohledy a jejich tlačítka používají jednotnou dotykovou výšku 44 px.
+
 ## 2.1.1
 
 - Opravuje provozní pád plánovače, který mohl při dočasném síťovém selhání jednoho 1-Wire Miniserveru ukončit celý proces Hubu. Chyba se nyní bezpečně zapíše do auditu bez hesla, tokenu nebo adresy a další monitoring pokračuje.

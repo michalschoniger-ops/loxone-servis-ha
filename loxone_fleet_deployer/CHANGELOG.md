@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.2.1
+
+- Nasazuje Evora Smart Hub 2.1.2 s opraveným spouštěním aktualizací Home Assistantu podle skutečné podpory záloh.
+- Přidává přesné bezpečné chybové stavy a sjednocuje rozměry mobilních tlačítek a ovládacích prvků servisních úloh.
+- Zachovává schéma databáze 18, šifrované přístupy a úplnou vratnou kopii zdroje 2.1.1.
+
 ## 2.1.1.1
 
 - Nasazuje opravné vydání Evora Smart Hub 2.1.1, které bezpečně zachytí dočasné selhání 1-Wire monitoringu a neshodí celý proces.

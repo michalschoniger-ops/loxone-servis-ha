@@ -43,12 +43,42 @@ export async function notifyHomeAssistant(options) {
         return false;
     }
 }
+export class HomeAssistantServiceError extends Error {
+    code;
+    statusCode;
+    reason;
+    constructor(message, code, statusCode, reason) {
+        super(message);
+        this.code = code;
+        this.statusCode = statusCode;
+        this.reason = reason;
+        this.name = "HomeAssistantServiceError";
+    }
+}
 function parseUpdates(value) {
     if (!value)
         return [];
     try {
         const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed.filter((item) => Boolean(item && typeof item === "object" && typeof item.entityId === "string")) : [];
+        if (!Array.isArray(parsed))
+            return [];
+        return parsed.flatMap((item) => {
+            if (!item || typeof item !== "object" || typeof item.entityId !== "string")
+                return [];
+            const update = item;
+            const supportedFeatures = Number.isInteger(update.supportedFeatures) && Number(update.supportedFeatures) >= 0
+                ? Number(update.supportedFeatures)
+                : 0;
+            return [{
+                    entityId: update.entityId,
+                    title: typeof update.title === "string" ? update.title : update.entityId,
+                    installedVersion: typeof update.installedVersion === "string" ? update.installedVersion : null,
+                    latestVersion: typeof update.latestVersion === "string" ? update.latestVersion : null,
+                    category: update.category ?? updateCategory(update.entityId),
+                    supportedFeatures,
+                    backupSupported: update.backupSupported === true || (supportedFeatures & 8) === 8,
+                }];
+        });
     }
     catch {
         return [];
@@ -156,22 +186,55 @@ export async function callHomeAssistantService(db, id, domain, service, data = {
     if (!allowed)
         throw new Error("Tato služba Home Assistantu není povolena.");
     const access = getHomeAssistantAccessToken(db, id);
-    if (!access)
-        throw new Error("Home Assistant nemá uložený dlouhodobý token.");
-    const response = await fetch(`${access.baseUrl}/api/services/${domain}/${service}`, {
-        method: "POST",
-        redirect: "manual",
-        signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 20_000)),
-        headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${access.token}`,
-            "Content-Type": "application/json",
-            "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}`,
-        },
-        body: JSON.stringify(data),
-    });
-    if (!response.ok)
-        throw new Error(`Home Assistant odmítl službu (${response.status}).`);
+    if (!access) {
+        throw new HomeAssistantServiceError("Home Assistant nemá uložený dlouhodobý API token.", "HOME_ASSISTANT_TOKEN_NOT_CONFIGURED", 409, "not_configured");
+    }
+    let response;
+    try {
+        response = await fetch(`${access.baseUrl}/api/services/${domain}/${service}`, {
+            method: "POST",
+            redirect: "manual",
+            signal: AbortSignal.timeout(Math.min(config.requestTimeoutMs, 20_000)),
+            headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${access.token}`,
+                "Content-Type": "application/json",
+                "User-Agent": `EVORA-Loxone-Servis/${config.appVersion}`,
+            },
+            body: JSON.stringify(data),
+        });
+    }
+    catch {
+        throw new HomeAssistantServiceError("Home Assistant není dostupný. Zkontrolujte síťové spojení a zkuste akci znovu.", "HOME_ASSISTANT_UNAVAILABLE", 502, "unavailable");
+    }
+    if (response.ok)
+        return;
+    const responseText = (await response.text().catch(() => "")).slice(0, 2_000).toLocaleLowerCase("en");
+    if (response.status === 401 || response.status === 403) {
+        throw new HomeAssistantServiceError("Home Assistant odmítl API token nebo token nepatří správci.", "HOME_ASSISTANT_AUTH_REJECTED", 403, "authentication_rejected");
+    }
+    if (response.status === 400 && responseText.includes("backup") && responseText.includes("not supported")) {
+        throw new HomeAssistantServiceError("Tato aktualizace nepodporuje automatickou zálohu.", "HOME_ASSISTANT_BACKUP_NOT_SUPPORTED", 409, "backup_not_supported");
+    }
+    if (response.status === 404) {
+        throw new HomeAssistantServiceError("Aktualizační služba není na tomto Home Assistantu dostupná.", "HOME_ASSISTANT_SERVICE_NOT_FOUND", 502, "service_not_found");
+    }
+    throw new HomeAssistantServiceError("Home Assistant aktualizaci odmítl. Obnovte kontrolu a ověřte stav cílové aktualizace.", "HOME_ASSISTANT_SERVICE_REJECTED", 502, "request_rejected");
+}
+export async function installHomeAssistantUpdate(db, id, update) {
+    const data = { entity_id: update.entityId };
+    if (update.backupSupported)
+        data.backup = true;
+    try {
+        await callHomeAssistantService(db, id, "update", "install", data);
+        return { backupRequested: update.backupSupported, backupFallback: false };
+    }
+    catch (error) {
+        if (!(error instanceof HomeAssistantServiceError) || error.reason !== "backup_not_supported" || !update.backupSupported)
+            throw error;
+        await callHomeAssistantService(db, id, "update", "install", { entity_id: update.entityId });
+        return { backupRequested: true, backupFallback: true };
+    }
 }
 export function saveHomeAssistantSecrets(db, id, secrets) {
     const fields = [];
@@ -257,13 +320,20 @@ export async function checkHomeAssistant(db, id) {
             if (statesResponse.ok) {
                 const states = await statesResponse.json();
                 updates = states.filter((state) => typeof state.entity_id === "string" && state.entity_id.startsWith("update.") && state.state === "on")
-                    .map((state) => ({
-                    entityId: String(state.entity_id),
-                    title: String(state.attributes?.friendly_name ?? state.attributes?.title ?? state.entity_id),
-                    installedVersion: typeof state.attributes?.installed_version === "string" ? state.attributes.installed_version : null,
-                    latestVersion: typeof state.attributes?.latest_version === "string" ? state.attributes.latest_version : null,
-                    category: updateCategory(String(state.entity_id)),
-                }));
+                    .map((state) => {
+                    const supportedFeatures = typeof state.attributes?.supported_features === "number" && Number.isInteger(state.attributes.supported_features)
+                        ? state.attributes.supported_features
+                        : 0;
+                    return {
+                        entityId: String(state.entity_id),
+                        title: String(state.attributes?.friendly_name ?? state.attributes?.title ?? state.entity_id),
+                        installedVersion: typeof state.attributes?.installed_version === "string" ? state.attributes.installed_version : null,
+                        latestVersion: typeof state.attributes?.latest_version === "string" ? state.attributes.latest_version : null,
+                        category: updateCategory(String(state.entity_id)),
+                        supportedFeatures,
+                        backupSupported: (supportedFeatures & 8) === 8,
+                    };
+                });
             }
         }
         catch {

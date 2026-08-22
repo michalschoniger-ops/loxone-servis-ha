@@ -15,6 +15,7 @@ import { registerEncryptedBackup } from "./backup.js";
 import { registerCanonicalProxy } from "./proxy.js";
 import { registerApplicationErrorHandler } from "./error-handler.js";
 import { cacheControlForStaticPath, isSpaNavigationRequest } from "./static-assets.js";
+import { requestLogSerializer } from "./logging.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -34,6 +35,9 @@ const app = Fastify({
                 "body.secret",
             ],
             censor: "[REDACTED]",
+        },
+        serializers: {
+            req: requestLogSerializer,
         },
     },
     trustProxy: config.trustProxy,

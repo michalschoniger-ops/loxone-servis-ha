@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.1
+
+- Provozní log už nikdy neukládá query string požadavku. Starší klient tedy může dál používat původní URL, ale jeho API klíč, token ani jiný parametr se do logu nedostane.
+- Zachovává všechny funkce, menu a správcovskou integraci Evora Intranetu z verze 2.2.0.
+
 ## 2.2.0
 
 - Správce má v Evora Smart Hubu nové centrum `Evora Intranet → Docházka`. Bezpečně zobrazuje aktuální stav, právě běžící pracovní čas, příchod, odchod, Home office, služební cestu, měsíční souhrny, historii aktuálního a předchozího měsíce i přítomnost kolegů.

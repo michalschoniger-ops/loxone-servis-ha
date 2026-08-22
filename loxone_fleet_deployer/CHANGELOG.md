@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.1.1
+
+- Nasazuje bezpečnostní opravu Evora Smart Hub 2.2.1, která odstraňuje query stringy včetně starších API klíčů z provozních logů.
+- Používá aktuální mapování `local_apps`, zachovává úplnou vratnou kopii zdroje 2.2.0 a nemění databázi ani uložená připojení.
+
 ## 2.2.0.2
 
 - Používá aktuální mapování `local_apps` se zachovanou cestou `/addons`; Supervisor už nehlásí zastaralý typ `addons`.

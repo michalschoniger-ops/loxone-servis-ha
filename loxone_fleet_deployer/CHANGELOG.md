@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0.1
+
+- Nasazuje Evora Smart Hub 2.1.0 s jednotnými stavy dat, centrem incidentů, servisními profily a interními servisními úkoly.
+- Přidává devítikrokový tester připojení a diagnostiku Windows Launcheru 2.1.0.0 s ověřenou automatickou aktualizací.
+- Zachovává databázi, šifrované přístupy a úplnou vratnou kopii zdroje 2.0.10.
+
 ## 2.0.10.1
 
 - Nasazuje Evora Smart Hub 2.0.10 s postupnou obnovou flotily, samostatnou aktualizací Health Checku, LoxAPP3 a 1-Wire a opraveným BIN exportem Statistik V2.

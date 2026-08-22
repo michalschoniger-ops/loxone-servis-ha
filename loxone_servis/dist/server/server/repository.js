@@ -1,7 +1,70 @@
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
+function isStale(timestamp, maxAgeMs) {
+    if (!timestamp)
+        return false;
+    const parsed = Date.parse(timestamp);
+    return !Number.isFinite(parsed) || Date.now() - parsed > maxAgeMs;
+}
+export function connectionDataState(row) {
+    const hasCredentials = Boolean(row.username_encrypted && row.password_encrypted);
+    if (!hasCredentials)
+        return { state: "not_configured", at: row.updated_at, message: "Přístup k Miniserveru není nastaven." };
+    if (row.active_check_count > 0)
+        return { state: "loading", at: row.last_checked_at, message: "Právě probíhá ověření Miniserveru." };
+    if (row.connection_state === "no_access")
+        return { state: "auth_rejected", at: row.last_checked_at, message: "Miniserver odmítl přihlašovací údaje." };
+    if (row.connection_state === "unavailable")
+        return { state: "unavailable", at: row.last_checked_at, message: "Miniserver neodpovídá." };
+    if (row.connection_state === "error")
+        return { state: "internal_error", at: row.last_checked_at, message: "Kontrola skončila interní chybou Hubu." };
+    if (row.connection_state === "online") {
+        const maxAgeMs = Math.max(60, config.fullCheckIntervalMinutes * 2) * 60_000;
+        return isStale(row.last_success_at ?? row.last_checked_at, maxAgeMs)
+            ? { state: "stale", at: row.last_success_at ?? row.last_checked_at, message: "Poslední úspěšné ověření je zastaralé." }
+            : { state: "current", at: row.last_success_at ?? row.last_checked_at, message: "Údaj je aktuální." };
+    }
+    return { state: "not_provided", at: row.last_checked_at, message: "Dostupnost zatím nebyla ověřena." };
+}
+function sourceState(row, source) {
+    if (source === "loxapp3" && row.active_loxapp_count > 0) {
+        return { state: "loading", updatedAt: row.loxapp_refreshed_at, message: "Právě se načítá LoxAPP3 a porovnává projekt." };
+    }
+    if (source === "weather" && row.active_weather_count > 0) {
+        return { state: "loading", updatedAt: row.weather_service_checked_at, message: "Právě se aktualizuje údaj Weather Service z Partner Portálu." };
+    }
+    const base = connectionDataState(row);
+    if (source !== "weather" && ["not_configured", "loading", "unavailable", "auth_rejected", "internal_error"].includes(base.state)) {
+        return { state: base.state, updatedAt: base.at, message: base.message };
+    }
+    const timestamp = source === "status"
+        ? row.last_success_at
+        : source === "loxapp3"
+            ? row.loxapp_refreshed_at
+            : source === "health"
+                ? row.health_refreshed_at
+                : row.weather_service_checked_at;
+    const provided = source === "status"
+        ? row.connection_state === "online"
+        : source === "loxapp3"
+            ? Boolean(row.loxapp_version)
+            : source === "health"
+                ? Boolean(row.health_verdict)
+                : row.weather_service_status !== "unknown";
+    if (!provided || !timestamp) {
+        const names = { status: "Stav", loxapp3: "LoxAPP3", health: "Health Check", weather: "Počasí" };
+        return { state: "not_provided", updatedAt: timestamp, message: `${names[source]} zdroj údaj neposkytl.` };
+    }
+    const maxAgeMs = source === "weather"
+        ? 48 * 60 * 60_000
+        : Math.max(120, config.fullCheckIntervalMinutes * 2) * 60_000;
+    return isStale(timestamp, maxAgeMs)
+        ? { state: "stale", updatedAt: timestamp, message: "Zdrojový údaj je zastaralý." }
+        : { state: "current", updatedAt: timestamp, message: "Zdrojový údaj je aktuální." };
+}
 function mapMiniServer(row) {
+    const dataState = connectionDataState(row);
     return {
         serial: row.serial,
         type: row.type,
@@ -47,6 +110,15 @@ function mapMiniServer(row) {
             ? row.weather_service_status
             : "unknown",
         weatherServiceCheckedAt: row.weather_service_checked_at,
+        dataState: dataState.state,
+        dataStateAt: dataState.at,
+        dataStateMessage: dataState.message,
+        dataSources: {
+            status: sourceState(row, "status"),
+            loxapp3: sourceState(row, "loxapp3"),
+            health: sourceState(row, "health"),
+            weather: sourceState(row, "weather"),
+        },
         updatedAt: row.updated_at,
     };
 }
@@ -60,6 +132,14 @@ const miniserverSelect = `
         AND d.online=1) AS inventory_online,
     (SELECT COUNT(*) FROM device_inventory d
       WHERE d.serial=m.serial AND d.device_serial NOT GLOB '*[^0-9A-F]*' AND length(d.device_serial) BETWEEN 6 AND 16) AS inventory_total
+    ,(SELECT COUNT(*) FROM action_jobs j
+      WHERE (j.serial=m.serial AND j.kind IN ('check','fleet_refresh')
+        OR j.serial IS NULL AND j.kind='bulk_check')
+        AND j.state IN ('queued','running','waiting')) AS active_check_count
+    ,(SELECT COUNT(*) FROM action_jobs j
+      WHERE j.serial=m.serial AND j.kind='project_sync' AND j.state IN ('queued','running','waiting')) AS active_loxapp_count
+    ,(SELECT COUNT(*) FROM action_jobs j
+      WHERE j.kind='portal_sync' AND j.state IN ('queued','running','waiting')) AS active_weather_count
   FROM miniservers m LEFT JOIN project_folders f ON f.id=m.folder_id`;
 export function listMiniservers(db) {
     return db.prepare(`${miniserverSelect} ORDER BY

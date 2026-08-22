@@ -1,10 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { hashToken, randomToken } from "./crypto.js";
 const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
 export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
-export const CURRENT_CONFIG_LAUNCHER_VERSION = "2.0.0.3";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "2.1.0.0";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);
@@ -29,6 +31,25 @@ function compareNumericVersions(left, right) {
     }
     return 0;
 }
+function parseDiagnostics(value) {
+    try {
+        const parsed = JSON.parse(value ?? "{}");
+        const keys = [
+            "signature", "uiAutomation", "permissions", "hubConnection", "configDiscovery", "safeLogging", "automaticUpdate",
+        ];
+        const result = {};
+        for (const key of keys) {
+            const candidate = parsed[key];
+            if (!candidate || !["passed", "warning", "failed", "not_supported"].includes(String(candidate.state)) || typeof candidate.message !== "string")
+                return null;
+            result[key] = { state: candidate.state, message: candidate.message.slice(0, 300) };
+        }
+        return result;
+    }
+    catch {
+        return null;
+    }
+}
 export function configLauncherVersionStatus(helperVersion) {
     const minimumComparison = compareNumericVersions(helperVersion, MINIMUM_CONFIG_LAUNCHER_VERSION);
     const latestComparison = compareNumericVersions(helperVersion, CURRENT_CONFIG_LAUNCHER_VERSION);
@@ -37,6 +58,23 @@ export function configLauncherVersionStatus(helperVersion) {
         latestHelperVersion: CURRENT_CONFIG_LAUNCHER_VERSION,
         updateRequired: minimumComparison === null || minimumComparison < 0,
         updateAvailable: latestComparison === null || latestComparison < 0,
+    };
+}
+export function configLauncherUpdateManifest() {
+    const configured = process.env.EVORA_CONFIG_LAUNCHER_SCRIPT_PATH?.trim();
+    const candidates = [
+        configured || "",
+        resolve(process.cwd(), "dist/client/downloads/EvoraConfigLauncher.ps1"),
+        resolve(process.cwd(), "src/client/public/downloads/EvoraConfigLauncher.ps1"),
+    ].filter(Boolean);
+    const path = candidates.find((candidate) => existsSync(candidate));
+    if (!path)
+        return null;
+    const content = readFileSync(path);
+    return {
+        version: CURRENT_CONFIG_LAUNCHER_VERSION,
+        url: "/downloads/EvoraConfigLauncher.ps1",
+        sha256: createHash("sha256").update(content).digest("hex"),
     };
 }
 function publicAgent(row, now = Date.now()) {
@@ -51,6 +89,8 @@ function publicAgent(row, now = Date.now()) {
         lastSeenAt: row.last_seen_at,
         lastStatus: row.last_status,
         lastError: row.last_error,
+        diagnostics: parseDiagnostics(row.diagnostics_json),
+        diagnosticsAt: row.diagnostics_at,
     };
 }
 function publicJob(row) {
@@ -115,10 +155,12 @@ export function authenticateLauncherAgent(db, authorization) {
         return null;
     return db.prepare("SELECT * FROM config_launcher_agents WHERE token_hash=? AND active=1").get(hashToken(token)) ?? null;
 }
-export function heartbeatLauncherAgent(db, agent, helperVersion, installedVersions) {
+export function heartbeatLauncherAgent(db, agent, helperVersion, installedVersions, diagnostics) {
     const versions = [...new Set(installedVersions.map((value) => value.trim()).filter(Boolean))].slice(0, 100);
     const now = new Date().toISOString();
-    db.prepare(`UPDATE config_launcher_agents SET helper_version=?,installed_versions_json=?,last_seen_at=?,last_status='online',last_error=NULL,updated_at=? WHERE id=?`).run(helperVersion, JSON.stringify(versions), now, now, agent.id);
+    db.prepare(`UPDATE config_launcher_agents SET helper_version=?,installed_versions_json=?,last_seen_at=?,last_status='online',last_error=NULL,
+     diagnostics_json=CASE WHEN ? IS NULL THEN diagnostics_json ELSE ? END,
+     diagnostics_at=CASE WHEN ? IS NULL THEN diagnostics_at ELSE ? END,updated_at=? WHERE id=?`).run(helperVersion, JSON.stringify(versions), now, diagnostics ? 1 : null, diagnostics ? JSON.stringify(diagnostics) : null, diagnostics ? 1 : null, diagnostics ? now : null, now, agent.id);
 }
 export function preferredLauncherAgent(db, ownerUserId) {
     const row = db.prepare("SELECT * FROM config_launcher_agents WHERE owner_user_id=? AND active=1 ORDER BY last_seen_at IS NULL,last_seen_at DESC LIMIT 1").get(ownerUserId);

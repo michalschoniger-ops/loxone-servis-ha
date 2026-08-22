@@ -708,13 +708,179 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_portal_ticket_cache_order
       ON portal_ticket_cache(sort_order,id);
+    CREATE TABLE IF NOT EXISTS miniserver_profiles (
+      serial TEXT PRIMARY KEY,
+      customer_name TEXT NOT NULL DEFAULT '',
+      contact_name TEXT NOT NULL DEFAULT '',
+      contact_role TEXT NOT NULL DEFAULT '',
+      contact_phone TEXT NOT NULL DEFAULT '',
+      contact_email TEXT NOT NULL DEFAULT '',
+      preferred_channel TEXT NOT NULL DEFAULT 'phone',
+      site_address TEXT NOT NULL DEFAULT '',
+      site_type TEXT NOT NULL DEFAULT '',
+      service_contract TEXT NOT NULL DEFAULT '',
+      sla_hours INTEGER,
+      warranty_until TEXT,
+      next_service_at TEXT,
+      custom_fields_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      color TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS miniserver_tags (
+      serial TEXT NOT NULL,
+      tag_id TEXT NOT NULL,
+      PRIMARY KEY(serial,tag_id),
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE,
+      FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS saved_views (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      filters_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id,scope,name),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS incidents (
+      id TEXT PRIMARY KEY,
+      fingerprint TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL,
+      severity TEXT NOT NULL CHECK(severity IN ('info','warning','critical')),
+      status TEXT NOT NULL CHECK(status IN ('open','acknowledged','resolved')),
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      serial TEXT,
+      ha_instance_id TEXT,
+      launcher_agent_id TEXT,
+      assignee_user_id TEXT,
+      sla_due_at TEXT,
+      first_detected_at TEXT NOT NULL,
+      last_detected_at TEXT NOT NULL,
+      resolved_at TEXT,
+      source TEXT NOT NULL DEFAULT 'monitoring',
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE SET NULL,
+      FOREIGN KEY(ha_instance_id) REFERENCES home_assistant_instances(id) ON DELETE SET NULL,
+      FOREIGN KEY(launcher_agent_id) REFERENCES config_launcher_agents(id) ON DELETE SET NULL,
+      FOREIGN KEY(assignee_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_incidents_status_severity ON incidents(status,severity,last_detected_at DESC);
+    CREATE TABLE IF NOT EXISTS incident_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      incident_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      author_user_id TEXT,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(incident_id) REFERENCES incidents(id) ON DELETE CASCADE,
+      FOREIGN KEY(author_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_incident_events_time ON incident_events(incident_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS service_tasks (
+      id TEXT PRIMARY KEY,
+      number INTEGER NOT NULL UNIQUE,
+      public_id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK(status IN ('new','planned','in_progress','waiting','done','cancelled')),
+      priority TEXT NOT NULL CHECK(priority IN ('low','normal','high','urgent')),
+      assignee_user_id TEXT,
+      created_by_user_id TEXT NOT NULL,
+      serial TEXT,
+      incident_id TEXT,
+      source TEXT NOT NULL DEFAULT 'internal',
+      contact_name TEXT NOT NULL DEFAULT '',
+      contact_phone TEXT NOT NULL DEFAULT '',
+      contact_email TEXT NOT NULL DEFAULT '',
+      due_at TEXT,
+      reminder_at TEXT,
+      reminder_sent_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(assignee_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE SET NULL,
+      FOREIGN KEY(incident_id) REFERENCES incidents(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_tasks_status_due ON service_tasks(status,due_at,priority);
+    CREATE INDEX IF NOT EXISTS idx_service_tasks_assignee ON service_tasks(assignee_user_id,status);
+    CREATE TABLE IF NOT EXISTS service_task_comments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      author_user_id TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY(author_user_id) REFERENCES users(id) ON DELETE RESTRICT
+    );
+    CREATE TABLE IF NOT EXISTS service_task_attachments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      data_encrypted TEXT NOT NULL,
+      uploaded_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY(uploaded_by) REFERENCES users(id) ON DELETE RESTRICT
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON service_task_attachments(task_id,created_at);
+    CREATE TABLE IF NOT EXISTS service_task_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      author_user_id TEXT,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY(author_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS service_task_tags (
+      task_id TEXT NOT NULL,
+      tag_id TEXT NOT NULL,
+      PRIMARY KEY(task_id,tag_id),
+      FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS connection_test_runs (
+      id TEXT PRIMARY KEY,
+      serial TEXT NOT NULL,
+      actor_user_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL,
+      FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE CASCADE,
+      FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT
+    );
+    CREATE INDEX IF NOT EXISTS idx_connection_tests_serial_time ON connection_test_runs(serial,started_at DESC);
   `);
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
+    addColumn(db, "config_launcher_agents", "diagnostics_json TEXT NOT NULL DEFAULT '{}'");
+    addColumn(db, "config_launcher_agents", "diagnostics_at TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
     migrateDistinctFolderColors(db);
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(17, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(18, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

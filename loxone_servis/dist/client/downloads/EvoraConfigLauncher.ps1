@@ -11,12 +11,15 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "2.0.0.3"
+$HelperVersion = "2.1.0.0"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
 $MutexName = "Local\EvoraSmartHubConfigLauncher"
 $script:LauncherPhase = "startup"
+$script:HubConnectionVerified = $false
+$script:AutomaticUpdateState = "passed"
+$script:AutomaticUpdateMessage = "Updates use an authenticated Hub manifest and an exact SHA-256 check."
 
 function Write-SafeLog([string]$Message) {
   if (-not (Test-Path -LiteralPath $AppDirectory)) {
@@ -168,6 +171,98 @@ function Get-ConfigExecutables {
     }
   }
   return @($result | Sort-Object Version, Path -Unique)
+}
+
+function New-DiagnosticCheck([string]$State, [string]$Message) {
+  return [ordered]@{ state = $State; message = $Message }
+}
+
+function Get-LauncherDiagnostics($Executables) {
+  $signature = try {
+    $value = Get-AuthenticodeSignature -LiteralPath $PSCommandPath
+    if ($value.Status -eq [System.Management.Automation.SignatureStatus]::Valid) {
+      New-DiagnosticCheck "passed" "The launcher has a valid Authenticode signature."
+    } elseif ($value.Status -eq [System.Management.Automation.SignatureStatus]::NotSigned) {
+      New-DiagnosticCheck "warning" "The launcher is not Authenticode-signed; authenticated SHA-256 updates are still enforced."
+    } else {
+      New-DiagnosticCheck "failed" "Authenticode verification returned $($value.Status)."
+    }
+  } catch {
+    New-DiagnosticCheck "failed" "Authenticode verification could not be completed."
+  }
+
+  $uiAutomation = try {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    if ($null -eq [Windows.Automation.AutomationElement]::RootElement) { throw "missing" }
+    New-DiagnosticCheck "passed" "Windows UI Automation is available in this user session."
+  } catch {
+    New-DiagnosticCheck "failed" "Windows UI Automation is unavailable in this user session."
+  }
+
+  $permissions = try {
+    if (-not (Test-Path -LiteralPath $AppDirectory)) { New-Item -ItemType Directory -Path $AppDirectory -Force | Out-Null }
+    $probe = Join-Path $AppDirectory "permission-test.tmp"
+    [IO.File]::WriteAllText($probe, "ok", [Text.Encoding]::ASCII)
+    Remove-Item -LiteralPath $probe -Force
+    New-DiagnosticCheck "passed" "The current Windows user can read and write the launcher directory."
+  } catch {
+    New-DiagnosticCheck "failed" "The current Windows user cannot write the launcher directory."
+  }
+
+  $configCount = @($Executables).Count
+  $configDiscovery = if ($configCount -gt 0) {
+    New-DiagnosticCheck "passed" "$configCount installed Loxone Config executable(s) were identified by exact file version."
+  } else {
+    New-DiagnosticCheck "warning" "No installed Loxone Config executable was found."
+  }
+  $hubConnection = if ($script:HubConnectionVerified) {
+    New-DiagnosticCheck "passed" "The authenticated connection to Evora Smart Hub is working."
+  } else {
+    New-DiagnosticCheck "warning" "The Hub connection has not yet been confirmed in this launcher session."
+  }
+
+  return [ordered]@{
+    signature = $signature
+    uiAutomation = $uiAutomation
+    permissions = $permissions
+    hubConnection = $hubConnection
+    configDiscovery = $configDiscovery
+    safeLogging = New-DiagnosticCheck "passed" "Diagnostic logs contain phases and error codes, never passwords or tokens."
+    automaticUpdate = New-DiagnosticCheck $script:AutomaticUpdateState $script:AutomaticUpdateMessage
+  }
+}
+
+function Install-LauncherUpdate($Update, [string]$BaseUrl) {
+  if ($null -eq $Update -or -not $Update.version -or -not $Update.url -or -not $Update.sha256) { return $false }
+  if ([string]$Update.version -eq $HelperVersion) { return $false }
+  Set-LauncherPhase "automatic-update-download"
+  $targetUri = [Uri]::new([Uri]$BaseUrl, [string]$Update.url)
+  $pendingPath = Join-Path $AppDirectory "EvoraConfigLauncher.pending.ps1"
+  try {
+    Invoke-WebRequest -Uri $targetUri.AbsoluteUri -OutFile $pendingPath -UseBasicParsing -TimeoutSec 45
+    $actualHash = (Get-FileHash -LiteralPath $pendingPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedHash = ([string]$Update.sha256).ToLowerInvariant()
+    if ($actualHash -ne $expectedHash) {
+      throw "hash mismatch"
+    }
+    $expectedVersionLine = '$HelperVersion = "' + [string]$Update.version + '"'
+    if (-not (Select-String -LiteralPath $pendingPath -SimpleMatch $expectedVersionLine -Quiet)) { throw "version marker missing" }
+    if ([IO.Path]::GetExtension($PSCommandPath) -ne ".ps1") { throw "unsupported launch path" }
+    Set-LauncherPhase "automatic-update-install"
+    Copy-Item -LiteralPath $PSCommandPath -Destination "$PSCommandPath.bak" -Force
+    Copy-Item -LiteralPath $pendingPath -Destination $PSCommandPath -Force
+    Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+    Write-SafeLog "Launcher update installed after exact SHA-256 verification."
+    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$PSCommandPath`"") -WindowStyle Hidden
+    return $true
+  } catch {
+    $script:AutomaticUpdateState = "warning"
+    $script:AutomaticUpdateMessage = "Automatic update failed safely; the existing launcher remains available."
+    Write-SafeLog "Automatic update failed safely ($(Get-SafeExceptionFingerprint $_))."
+    Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+    return $false
+  }
 }
 
 function Get-AutomationElementById($Root, [string]$AutomationId) {
@@ -585,7 +680,7 @@ $agentToken = Unprotect-LauncherToken ([string]$configuration.tokenProtected)
 
 if ($SelfTest) {
   $found = @(Get-ConfigExecutables)
-  Write-Output (ConvertTo-Json @{ helperVersion = $HelperVersion; installedVersions = @($found | ForEach-Object { $_.Version }); paths = @($found | ForEach-Object { $_.Path }) } -Depth 4)
+  Write-Output (ConvertTo-Json @{ helperVersion = $HelperVersion; installedVersions = @($found | ForEach-Object { $_.Version }); paths = @($found | ForEach-Object { $_.Path }); diagnostics = (Get-LauncherDiagnostics $found) } -Depth 6)
   exit 0
 }
 
@@ -597,23 +692,34 @@ try {
   Write-SafeLog "Launcher started."
   $lastScan = [DateTime]::MinValue
   $executables = @()
+  $diagnostics = $null
   while ($true) {
     try {
       if ((Get-Date) -gt $lastScan.AddMinutes(1)) {
         $executables = @(Get-ConfigExecutables)
+        $diagnostics = Get-LauncherDiagnostics $executables
         $lastScan = Get-Date
       }
       $pollBody = @{
         helperVersion = $HelperVersion
         installedVersions = @($executables | ForEach-Object { $_.Version })
+        diagnostics = $diagnostics
       }
       $response = Invoke-HubJson "POST" $configuredHubUrl "/api/config-launcher/agent/poll" $pollBody $agentToken
+      if (-not $script:HubConnectionVerified) {
+        $script:HubConnectionVerified = $true
+        $diagnostics = Get-LauncherDiagnostics $executables
+      }
+      if ($null -ne $response.update) {
+        if (Install-LauncherUpdate $response.update $configuredHubUrl) { exit 0 }
+        $diagnostics = Get-LauncherDiagnostics $executables
+      }
       if ($null -ne $response.job) {
         try {
           Start-ConfigJob $response.job $configuredHubUrl $agentToken $executables
         } catch {
           $failureCode = if ($_.Exception.Data.Contains("EvoraCode")) { [string]$_.Exception.Data["EvoraCode"] } else { "UI_AUTOMATION_FAILED" }
-          $failureMessage = Get-SafeFailureMessage $failureCode
+          $failureMessage = "$(Get-SafeFailureMessage $failureCode) Failed step: $script:LauncherPhase. Config remains open for safe manual connection."
           Write-SafeLog "Config launch job failed safely ($failureCode; $(Get-SafeExceptionFingerprint $_))."
           try { Post-JobStatus $configuredHubUrl $agentToken ([string]$response.job.id) "failed" $failureMessage $failureCode } catch { }
           Show-LauncherNotice "Evora Smart Hub" "$failureMessage Details are available in the Hub."

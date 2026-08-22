@@ -39,6 +39,16 @@ V Parallels se ZIP rozbalí a instalátor spustí přímo uvnitř Windows; macOS
 
 Při kliknutí na **Otevřít v Loxone Config** Hub vybere pouze online agenta přihlášeného uživatele. Do databázové fronty uloží SN, požadovanou verzi a odkaz na Config, nikdy login ani heslo. Přístupy odešle až při autorizovaném převzetí konkrétní úlohy. Helper vyhledá přesný `FileVersion` souboru `LoxoneConfig.exe`; chybí-li, ukončí úlohu bezpečnou chybou a nabídne oficiální odkaz ke stažení. Při nalezení otevře přesnou instalaci, jednoznačně ověří prvky okna přes Windows UI Automation, ponechá lokální adresu prázdnou a do externí adresy vloží SN Miniserveru.
 
+Launcher 2.1.0.0 jednou za minutu obnovuje diagnostiku podpisu skriptu, nalezených Configů, UI Automation, oprávnění a bezpečného spojení s Hubem. Přesný krok neúspěšné automatizace vrátí do Hubu bez loginu, hesla nebo tokenu a Config ponechá otevřený pro ruční připojení. Novou verzi přijme jen z manifestu vráceného po autentizovaném pollingu a po přesné shodě SHA-256; před nahrazením ponechá lokální `.bak` kopii.
+
+## Incidenty, servisní profily a interní úkoly
+
+Sekce **Incidenty** automaticky slučuje opakované výpadky Miniserveru, kolísání dostupnosti, odmítnuté přihlášení, zhoršení SD, dlouhodobě offline prvky, nízké baterie, slabý Air signál, změny projektu, selhání servisního balíčku, Launcheru a Home Assistantu. Každý incident má stabilní fingerprint, závažnost, odpovědnou osobu, SLA, komentáře a auditní historii. Průběžně monitorované podmínky se po potvrzeném zotavení automaticky označí jako vyřešené; jednorázové změny projektu a selhání zůstávají k ručnímu vyhodnocení.
+
+V detailu Gateway nebo samostatného Miniserveru lze uložit zákazníka, kontaktní osobu, adresu, typ objektu, servisní smlouvu, SLA, záruku, datum další kontroly, vlastní pole a barevné tagy. Client tyto údaje vždy čte ze své Gateway a nemůže je přepsat vlastním profilem.
+
+Sekce **Servisní úkoly** je interní náhrada sdíleného Excelu a je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
+
 ## WorkLog AI na macOS
 
 Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čtení její panel neuvidí a jejich případný starší token server odmítne. Správce v **Nástroje → WorkLog AI · Evora Smart Hub** stáhne integrační balíček a vytvoří osobní token. Nešifrovaná adresa Hubu se uloží do uživatelských předvoleb macOS, ale token pouze do Klíčenky. Hub uchovává jen SHA-256 hash a krátkou nápovědu tokenu; token lze kdykoli odvolat.

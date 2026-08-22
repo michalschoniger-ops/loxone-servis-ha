@@ -9,6 +9,8 @@ import { stabilizeAvailability } from "./availability.js";
 import { persistOneWireSamples, purgeOneWireHistory } from "./onewire-history.js";
 import { checkHomeAssistantMonitors, persistHomeAssistantMonitorCheck, purgeHomeAssistantMonitorEvents, } from "./ha-service-monitors.js";
 import { portalSyncDue, syncPortal } from "./portal-sync.js";
+import { refreshIncidents } from "./incidents.js";
+import { processServiceTaskReminders } from "./service-tasks.js";
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
@@ -136,6 +138,7 @@ export class JobQueue {
     ticking = false;
     monitorChecking = false;
     oneWireSampling = false;
+    lastServiceCenterRefreshAt = 0;
     startedAt = Date.now();
     constructor(db) {
         this.db = db;
@@ -213,6 +216,11 @@ export class JobQueue {
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeCheckHomeAssistantServices(forceFullCheck);
+            if (Date.now() - this.lastServiceCenterRefreshAt >= 5 * 60_000) {
+                refreshIncidents(this.db);
+                await processServiceTaskReminders(this.db);
+                this.lastServiceCenterRefreshAt = Date.now();
+            }
             void this.maybeSampleOneWireTemperatures();
             this.maybePurgeHistory();
             while (this.running < config.checkConcurrency) {

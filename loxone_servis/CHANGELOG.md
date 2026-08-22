@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0
+
+- Každý Miniserver a dílčí zdroj rozlišuje osm explicitních stavů: načítání, aktuální, zastaralý, nedostupný, odmítnuté přihlášení, chybějící přístup, údaj neposkytnutý zdrojem a interní chyba Hubu.
+- Nové centrum incidentů slučuje opakované výpadky a provozní závady podle stabilního fingerprintu, hlídá závažnost, odpovědnou osobu a SLA a uchovává komentáře i historii; po potvrzeném zotavení automaticky uzavírá průběžně monitorované incidenty.
+- Gateway a samostatné Miniservery mají servisní profil se zákazníkem, kontaktem, adresou, smlouvou, zárukou, další kontrolou, vlastními poli a barevnými tagy. Client profil je pouze pro čtení a dědí kontakt své Gateway.
+- Interní servisní úkoly nahrazují sdílený Excel: mají číslo, prioritu, stav, odpovědnou osobu, termín, připomenutí, vazbu na incident a Miniserver, kontakt, komentáře, historii, uložené pohledy a šifrované fotografie nebo PDF do 8 MB.
+- Tester připojení postupně ověřuje DNS a síť, Remote Connect, Miniserver, TLS, přihlášení, `/data/status`, LoxAPP3 a Health Check, Partner Portal a osobní Windows Launcher. Chybějící přístup, odmítnuté heslo a síťová chyba mají odlišné výsledky.
+- Windows Launcher 2.1.0.0 hlásí podpis, nainstalované Configy, UI Automation, oprávnění, spojení s Hubem, bezpečný protokol a automatickou aktualizaci. Aktualizaci stahuje z ověřeného manifestu Hubu a přijme ji pouze při přesné shodě SHA-256; při selhání ponechá Config otevřený pro ruční připojení a vrátí přesný krok chyby.
+- Schéma databáze 18 přidává servisní profily, tagy, uložené pohledy, incidenty, interní úkoly, šifrované přílohy a historii testeru připojení.
+
 ## 2.0.10
 
 - průběžná fronta obnovuje Miniservery jednotlivě s minimálním 30sekundovým rozestupem místo automatického nárazu celé flotily

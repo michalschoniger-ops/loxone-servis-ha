@@ -5,7 +5,7 @@ import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, saveCredentials } from "./repository.js";
-import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, } from "./loxone/client.js";
+import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, LoxoneError, } from "./loxone/client.js";
 import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readProgramBackupCatalog, readSelectedProgramBackup, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
@@ -15,12 +15,76 @@ import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCr
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
-import { authenticateLauncherAgent, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
+import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
+import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
+import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
+import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
+const launcherDiagnosticCheckSchema = z.object({
+    state: z.enum(["passed", "warning", "failed", "not_supported"]),
+    message: z.string().trim().min(1).max(300),
+}).strict();
+const launcherDiagnosticsSchema = z.object({
+    signature: launcherDiagnosticCheckSchema,
+    uiAutomation: launcherDiagnosticCheckSchema,
+    permissions: launcherDiagnosticCheckSchema,
+    hubConnection: launcherDiagnosticCheckSchema,
+    configDiscovery: launcherDiagnosticCheckSchema,
+    safeLogging: launcherDiagnosticCheckSchema,
+    automaticUpdate: launcherDiagnosticCheckSchema,
+}).strict();
+const nullableDateTimeSchema = z.string().datetime({ offset: true }).nullable();
+const coloredTagInputSchema = z.object({
+    id: z.string().uuid().optional(),
+    name: z.string().trim().min(1).max(60),
+    color: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+}).strict();
+const serviceTaskInputSchema = z.object({
+    title: z.string().trim().min(3).max(240),
+    description: z.string().trim().max(20_000).default(""),
+    priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+    assigneeUserId: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/).nullable().default(null),
+    serial: serialSchema.nullable().default(null),
+    incidentId: z.string().uuid().nullable().default(null),
+    source: z.enum(["phone", "email", "in_person", "internal", "monitoring", "other"]).default("internal"),
+    contactName: z.string().trim().max(160).default(""),
+    contactPhone: z.string().trim().max(80).default(""),
+    contactEmail: z.union([z.string().trim().email().max(254), z.literal("")]).default(""),
+    dueAt: nullableDateTimeSchema.default(null),
+    reminderAt: nullableDateTimeSchema.default(null),
+    tags: z.array(coloredTagInputSchema).max(20).default([]),
+}).strict();
+function savedViewFilters(value) {
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    }
+    catch {
+        return {};
+    }
+}
+export function attachmentMatchesMime(data, mimeType) {
+    if (mimeType === "image/jpeg")
+        return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    if (mimeType === "image/png")
+        return data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    if (mimeType === "image/webp")
+        return data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+    if (mimeType === "application/pdf")
+        return data.length >= 5 && data.subarray(0, 5).toString("ascii") === "%PDF-";
+    if (mimeType === "image/heic" || mimeType === "image/heif") {
+        if (data.length < 12 || data.subarray(4, 8).toString("ascii") !== "ftyp")
+            return false;
+        const brand = data.subarray(8, 12).toString("ascii").toLowerCase();
+        return ["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"].includes(brand);
+    }
+    return false;
+}
 // Older installations keep the immutable owner under a stable `owner-*` id,
 // while accounts created in the UI use UUIDs. Both are first-party user ids.
 // Keep the accepted alphabet narrow so the path parameter cannot become a
@@ -90,6 +154,20 @@ function sendDownload(reply, exported) {
         .header("Content-Disposition", `attachment; filename="${fileName}"`)
         .type(exported.contentType)
         .send(exported.content);
+}
+function operationalFailure(error) {
+    if (error instanceof LoxoneError)
+        return { code: error.code, message: error.message };
+    return { code: "INTERNAL_ERROR", message: "Operace skončila interní chybou Hubu." };
+}
+function recordOperationalResult(db, input) {
+    try {
+        recordOperationalAttempt(db, input);
+        refreshIncidents(db);
+    }
+    catch {
+        // Evidence collection must never replace the original download result or error.
+    }
 }
 export async function registerApi(app, db, jobs) {
     app.get("/api/overview", async (request, reply) => {
@@ -440,24 +518,28 @@ export async function registerApi(app, db, jobs) {
         const input = z.object({
             helperVersion: z.string().trim().min(1).max(40),
             installedVersions: z.array(z.string().trim().min(1).max(40)).max(100),
+            diagnostics: launcherDiagnosticsSchema.nullable().optional(),
         }).parse(request.body);
-        heartbeatLauncherAgent(db, agent, input.helperVersion, input.installedVersions);
+        heartbeatLauncherAgent(db, agent, input.helperVersion, input.installedVersions, input.diagnostics);
         const versionStatus = configLauncherVersionStatus(input.helperVersion);
+        const update = versionStatus.updateAvailable ? configLauncherUpdateManifest() : null;
         if (versionStatus.updateRequired) {
             reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-            return { job: null, ...versionStatus };
+            return { job: null, ...versionStatus, update };
         }
         const job = takeConfigLaunchJob(db, agent.id);
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         if (!job)
-            return { job: null };
+            return { job: null, ...versionStatus, update };
         const credentials = getStoredCredentials(db, job.serial);
         if (!credentials) {
             updateConfigLaunchJob(db, agent.id, job.id, "failed", "U Miniserveru chybí uložené přístupy.", "CREDENTIALS_MISSING");
-            return { job: null };
+            return { job: null, ...versionStatus, update };
         }
         audit(db, "config_launcher.job_delivered", null, job.serial, { jobId: job.id, agentId: agent.id, requiredVersion: job.required_version });
         return {
+            ...versionStatus,
+            update,
             job: {
                 id: job.id,
                 serial: job.serial,
@@ -507,6 +589,253 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listMiniservers(db) };
+    });
+    app.get("/api/miniservers/:serial/profile", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const profile = getMiniserverProfile(db, serial);
+        if (!profile)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        return { profile };
+    });
+    app.put("/api/miniservers/:serial/profile", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({
+            customerName: z.string().trim().max(160).default(""),
+            contactName: z.string().trim().max(160).default(""),
+            contactRole: z.string().trim().max(120).default(""),
+            contactPhone: z.string().trim().max(80).default(""),
+            contactEmail: z.union([z.string().trim().email().max(254), z.literal("")]).default(""),
+            preferredChannel: z.enum(["phone", "email", "sms", "whatsapp", "other"]).default("phone"),
+            siteAddress: z.string().trim().max(500).default(""),
+            siteType: z.string().trim().max(120).default(""),
+            serviceContract: z.string().trim().max(160).default(""),
+            slaHours: z.number().int().min(1).max(8_760).nullable().default(null),
+            warrantyUntil: z.string().date().nullable().default(null),
+            nextServiceAt: z.string().date().nullable().default(null),
+            customFields: z.array(z.object({ key: z.string().trim().min(1).max(80), value: z.string().trim().max(500) }).strict()).max(30).default([]),
+            tags: z.array(coloredTagInputSchema).max(20).default([]),
+        }).strict().parse(request.body);
+        try {
+            const profile = saveMiniserverProfile(db, serial, input);
+            audit(db, "miniserver.profile_updated", user.id, serial, {
+                fields: Object.keys(input).filter((key) => key !== "contactEmail" && key !== "contactPhone"),
+                hasContact: Boolean(input.contactName || input.contactEmail || input.contactPhone),
+            });
+            return { profile };
+        }
+        catch (error) {
+            const code = error.code;
+            if (code === "NOT_FOUND")
+                return reply.code(404).send({ error: error.message, code });
+            if (code === "CLIENT_PROFILE_INHERITED")
+                return reply.code(409).send({ error: error.message, code });
+            throw error;
+        }
+    });
+    app.get("/api/tags", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        return { items: listTags(db) };
+    });
+    app.get("/api/assignees", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const items = db.prepare("SELECT id,email,display_name,role FROM users WHERE active=1 AND role IN ('admin','technician') ORDER BY display_name COLLATE NOCASE,email").all().map((row) => ({
+            id: row.id, email: row.email, displayName: row.display_name || row.email, role: row.role,
+        }));
+        return { items };
+    });
+    app.get("/api/saved-views", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const query = z.object({ scope: z.enum(["fleet", "incidents", "service_tasks"]) }).parse(request.query);
+        const items = db.prepare("SELECT id,name,scope,filters_json,created_at,updated_at FROM saved_views WHERE user_id=? AND scope=? ORDER BY name COLLATE NOCASE")
+            .all(user.id, query.scope).map((row) => ({
+            id: row.id, name: row.name, scope: row.scope, filters: savedViewFilters(row.filters_json), createdAt: row.created_at, updatedAt: row.updated_at,
+        }));
+        return { items };
+    });
+    app.post("/api/saved-views", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const input = z.object({
+            name: z.string().trim().min(1).max(100), scope: z.enum(["fleet", "incidents", "service_tasks"]),
+            filters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())])),
+        }).strict().parse(request.body);
+        const now = new Date().toISOString();
+        const id = randomUUID();
+        db.prepare(`INSERT INTO saved_views(id,user_id,name,scope,filters_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
+       ON CONFLICT(user_id,scope,name) DO UPDATE SET filters_json=excluded.filters_json,updated_at=excluded.updated_at`).run(id, user.id, input.name, input.scope, JSON.stringify(input.filters), now, now);
+        return reply.code(201).send({ ok: true });
+    });
+    app.delete("/api/saved-views/:id", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        db.prepare("DELETE FROM saved_views WHERE id=? AND user_id=?").run(id, user.id);
+        return { ok: true };
+    });
+    app.post("/api/miniservers/:serial/connection-test", { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const result = await runConnectionTest(db, serial, user.id);
+        audit(db, "miniserver.connection_test", user.id, serial, {
+            state: result.state,
+            steps: result.steps.map((step) => ({ key: step.key, state: step.state, code: step.code })),
+        });
+        return { result };
+    });
+    app.get("/api/miniservers/:serial/connection-test", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        return { result: lastConnectionTest(db, serial) };
+    });
+    app.get("/api/incidents", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        return { items: listIncidents(db) };
+    });
+    app.post("/api/incidents/refresh", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const items = refreshIncidents(db);
+        audit(db, "incidents.refreshed", user.id, null, { count: items.length });
+        return { items };
+    });
+    app.get("/api/incidents/:id", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const incident = getIncident(db, id);
+        if (!incident)
+            return reply.code(404).send({ error: "Incident nebyl nalezen.", code: "NOT_FOUND" });
+        return { incident };
+    });
+    app.patch("/api/incidents/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({
+            status: z.enum(["open", "acknowledged", "resolved"]).optional(),
+            severity: z.enum(["info", "warning", "critical"]).optional(),
+            assigneeUserId: appUserIdSchema.nullable().optional(),
+            slaDueAt: nullableDateTimeSchema.optional(),
+            comment: z.string().trim().min(1).max(5_000).optional(),
+        }).strict().refine((value) => Object.keys(value).length > 0).parse(request.body);
+        const incident = updateIncident(db, id, user.id, input);
+        if (!incident)
+            return reply.code(404).send({ error: "Incident nebyl nalezen.", code: "NOT_FOUND" });
+        audit(db, "incident.updated", user.id, incident.serial, { incidentId: id, fields: Object.keys(input) });
+        return { incident };
+    });
+    app.get("/api/service-tasks", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        return { items: listServiceTasks(db) };
+    });
+    app.post("/api/service-tasks", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const input = serviceTaskInputSchema.parse(request.body);
+        const task = createServiceTask(db, user.id, input);
+        audit(db, "service_task.created", user.id, task.serial, { taskId: task.id, publicId: task.publicId, priority: task.priority });
+        return reply.code(201).send({ task });
+    });
+    app.get("/api/service-tasks/:id", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const task = getServiceTask(db, id);
+        if (!task)
+            return reply.code(404).send({ error: "Servisní úkol nebyl nalezen.", code: "NOT_FOUND" });
+        return { task };
+    });
+    app.patch("/api/service-tasks/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = serviceTaskInputSchema.partial().extend({ status: z.enum(["new", "planned", "in_progress", "waiting", "done", "cancelled"]).optional() })
+            .strict().refine((value) => Object.keys(value).length > 0).parse(request.body);
+        const task = updateServiceTask(db, id, user.id, input);
+        if (!task)
+            return reply.code(404).send({ error: "Servisní úkol nebyl nalezen.", code: "NOT_FOUND" });
+        audit(db, "service_task.updated", user.id, task.serial, { taskId: id, fields: Object.keys(input) });
+        return { task };
+    });
+    app.post("/api/service-tasks/:id/comments", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({ body: z.string().trim().min(1).max(10_000) }).strict().parse(request.body);
+        const task = addServiceTaskComment(db, id, user.id, input.body);
+        if (!task)
+            return reply.code(404).send({ error: "Servisní úkol nebyl nalezen.", code: "NOT_FOUND" });
+        audit(db, "service_task.comment_added", user.id, task.serial, { taskId: id });
+        return reply.code(201).send({ task });
+    });
+    app.post("/api/service-tasks/:id/attachments", {
+        bodyLimit: 12 * 1024 * 1024,
+        config: { rateLimit: { max: 12, timeWindow: "1 minute" } },
+    }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({
+            fileName: z.string().trim().min(1).max(180).regex(/^[^\\/\0]+$/),
+            mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"]),
+            dataBase64: z.string().min(4).max(11_200_000),
+        }).strict().parse(request.body);
+        const data = Buffer.from(input.dataBase64, "base64");
+        if (data.length === 0 || data.length > 8 * 1024 * 1024 || data.toString("base64").replace(/=+$/, "") !== input.dataBase64.replace(/=+$/, "")) {
+            return reply.code(400).send({ error: "Příloha není platný Base64 soubor do 8 MB.", code: "ATTACHMENT_INVALID" });
+        }
+        if (!attachmentMatchesMime(data, input.mimeType)) {
+            return reply.code(400).send({ error: "Obsah přílohy neodpovídá deklarovanému typu souboru.", code: "ATTACHMENT_TYPE_MISMATCH" });
+        }
+        let task;
+        try {
+            task = addServiceTaskAttachment(db, id, user.id, { fileName: input.fileName, mimeType: input.mimeType, data });
+        }
+        catch (error) {
+            if (error.code === "ATTACHMENT_LIMIT") {
+                return reply.code(409).send({ error: error.message, code: "ATTACHMENT_LIMIT" });
+            }
+            throw error;
+        }
+        if (!task)
+            return reply.code(404).send({ error: "Servisní úkol nebyl nalezen.", code: "NOT_FOUND" });
+        audit(db, "service_task.attachment_added", user.id, task.serial, { taskId: id, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: data.length });
+        return reply.code(201).send({ task });
+    });
+    app.get("/api/service-tasks/:taskId/attachments/:id", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const params = z.object({ taskId: z.string().uuid(), id: z.string().uuid() }).parse(request.params);
+        const attachment = readServiceTaskAttachment(db, params.taskId, params.id);
+        if (!attachment)
+            return reply.code(404).send({ error: "Příloha nebyla nalezena.", code: "NOT_FOUND" });
+        reply.header("Cache-Control", "private, no-store");
+        reply.header("X-Content-Type-Options", "nosniff");
+        reply.header("Content-Type", attachment.mimeType);
+        reply.header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+        return reply.send(attachment.data);
     });
     app.get("/api/folders", async (request, reply) => {
         if (!requireUser(request, reply))
@@ -1418,7 +1747,23 @@ export async function registerApi(app, db, jobs) {
         const serial = serialSchema.parse(request.params.serial);
         if (!getMiniserver(db, serial))
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
-        const exported = await readCurrentProgramArchive(db, serial);
+        let exported;
+        try {
+            exported = await readCurrentProgramArchive(db, serial);
+            recordOperationalResult(db, {
+                kind: "program_backup", serial, actorUserId: user.id, state: "succeeded",
+                message: "Aktuální program Miniserveru byl bezpečně stažen.",
+                details: { mode: "current", fileName: exported.fileName },
+            });
+        }
+        catch (error) {
+            const failure = operationalFailure(error);
+            recordOperationalResult(db, {
+                kind: "program_backup", serial, actorUserId: user.id, state: "failed",
+                message: failure.message, errorCode: failure.code, details: { mode: "current" },
+            });
+            throw error;
+        }
         audit(db, "miniserver.current_program_exported", user.id, serial, {
             fileName: exported.fileName,
             bytes: exported.content.length,
@@ -1445,7 +1790,23 @@ export async function registerApi(app, db, jobs) {
         const params = z.object({ serial: serialSchema, fileName: programBackupFileSchema }).parse(request.params);
         if (!getMiniserver(db, params.serial))
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
-        const exported = await readSelectedProgramBackup(db, params.serial, params.fileName);
+        let exported;
+        try {
+            exported = await readSelectedProgramBackup(db, params.serial, params.fileName);
+            recordOperationalResult(db, {
+                kind: "program_backup", serial: params.serial, actorUserId: user.id, state: "succeeded",
+                message: "Vybraná záloha programu byla bezpečně stažena.",
+                details: { mode: "selected", fileName: params.fileName },
+            });
+        }
+        catch (error) {
+            const failure = operationalFailure(error);
+            recordOperationalResult(db, {
+                kind: "program_backup", serial: params.serial, actorUserId: user.id, state: "failed",
+                message: failure.message, errorCode: failure.code, details: { mode: "selected", fileName: params.fileName },
+            });
+            throw error;
+        }
         audit(db, "miniserver.program_backup_exported", user.id, params.serial, {
             fileName: exported.fileName,
             sourceFileName: exported.sourceFileName ?? params.fileName,
@@ -1572,7 +1933,22 @@ export async function registerApi(app, db, jobs) {
             return;
         const serial = serialSchema.parse(request.params.serial);
         const input = z.object({ anonymized: z.boolean().default(true) }).parse(request.body ?? {});
-        const bundle = await createServiceBundle(db, serial, user.id, input.anonymized);
+        let bundle;
+        try {
+            bundle = await createServiceBundle(db, serial, user.id, input.anonymized);
+            recordOperationalResult(db, {
+                kind: "service_bundle", serial, actorUserId: user.id, state: "succeeded",
+                message: "Servisní balíček byl vytvořen.", details: { anonymized: input.anonymized, bundleId: bundle.id },
+            });
+        }
+        catch (error) {
+            const failure = operationalFailure(error);
+            recordOperationalResult(db, {
+                kind: "service_bundle", serial, actorUserId: user.id, state: "failed",
+                message: failure.message, errorCode: failure.code, details: { anonymized: input.anonymized },
+            });
+            throw error;
+        }
         return reply.code(201).send({ id: bundle.id, fileName: bundle.fileName, sha256: bundle.sha256, size: bundle.size, expiresAt: bundle.expiresAt });
     });
     app.get("/api/service-bundles/:id/download", async (request, reply) => {
@@ -1824,6 +2200,8 @@ export async function registerApi(app, db, jobs) {
         }
         await jobs.tick();
         cleanupServiceBundles(db);
+        refreshIncidents(db);
+        await processServiceTaskReminders(db);
         return { ok: true };
     });
 }

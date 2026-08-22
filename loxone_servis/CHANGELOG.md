@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.3
+
+- Mobilní nabídka zobrazuje právě jedno odhlášení: profil a mobilní tlačítko tvoří jeden spodní blok a desktopový účet je na telefonu výslovně skrytý.
+- Intranet má samostatný pravý sloupec pro stavovou tečku a čas, takže název ani běžící čas se nepřekrývají. Úplný stav zůstává dostupný jako popis prvku.
+- Interní centrum i položka nabídky používají kratší jednotný název `Úkoly`.
+
 ## 2.2.2
 
 - Živý sekundový čas Evora Intranetu je izolovaný pouze v malém stavovém řádku menu. Už každou sekundu nepřekresluje celou flotilu 137 Miniserverů ani otevřenou postranní nabídku.

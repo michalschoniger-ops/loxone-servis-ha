@@ -11,7 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "2.1.0.0"
+$HelperVersion = "2.1.1.0"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -20,6 +20,7 @@ $script:LauncherPhase = "startup"
 $script:HubConnectionVerified = $false
 $script:AutomaticUpdateState = "passed"
 $script:AutomaticUpdateMessage = "Updates use an authenticated Hub manifest and an exact SHA-256 check."
+$script:PairingRejectedNoticeShown = $false
 
 function Write-SafeLog([string]$Message) {
   if (-not (Test-Path -LiteralPath $AppDirectory)) {
@@ -138,6 +139,14 @@ function Invoke-HubJson([string]$Method, [string]$BaseUrl, [string]$Path, $Body,
     $parameters.Headers = @{ Authorization = "Bearer $Token" }
   }
   return Invoke-RestMethod @parameters
+}
+
+function Test-HubRejectedPairing($ErrorRecord) {
+  try {
+    return [int]$ErrorRecord.Exception.Response.StatusCode -eq 401
+  } catch {
+    return $false
+  }
 }
 
 function Save-Pairing([string]$BaseUrl, [string]$Code, [string]$Name) {
@@ -732,7 +741,15 @@ try {
       }
       Start-Sleep -Seconds 3
     } catch {
-      Write-SafeLog "Hub poll failed; retrying later."
+      if (Test-HubRejectedPairing $_) {
+        Write-SafeLog "Hub rejected the stored launcher pairing. Re-pairing is required."
+        if (-not $script:PairingRejectedNoticeShown) {
+          $script:PairingRejectedNoticeShown = $true
+          Show-LauncherNotice "Evora Smart Hub" "Stored pairing is no longer valid. Create a new code in Hub and run Opravit-parovani.cmd from the latest ZIP."
+        }
+      } else {
+        Write-SafeLog "Hub poll failed; retrying later."
+      }
       Start-Sleep -Seconds 30
     }
   }

@@ -22,7 +22,7 @@ import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniser
 import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { connectIntranet, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
+import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
@@ -60,6 +60,20 @@ const serviceTaskInputSchema = z.object({
     reminderAt: nullableDateTimeSchema.default(null),
     tags: z.array(coloredTagInputSchema).max(20).default([]),
 }).strict();
+const intranetLeaveSchema = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("create"),
+        type: z.enum(["vacation", "sick", "sickday", "doctor"]),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        portion: z.union([z.literal(0.5), z.literal(1)]).default(1),
+        note: z.string().trim().max(1_000).nullable().default(null),
+    }).strict(),
+    z.object({
+        action: z.literal("cancel"),
+        id: z.string().trim().min(1).max(128),
+    }).strict(),
+]);
 function savedViewFilters(value) {
     try {
         const parsed = JSON.parse(value);
@@ -247,6 +261,34 @@ export async function registerApi(app, db, jobs) {
             return sendIntranetError(reply, error);
         }
     });
+    app.post("/api/intranet/leave", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = intranetLeaveSchema.parse(request.body);
+        try {
+            if (input.action === "create") {
+                const snapshot = await createIntranetLeave(db, input);
+                audit(db, "intranet.leave_created", user.id, null, {
+                    type: input.type,
+                    dateFrom: input.dateFrom,
+                    dateTo: input.dateTo,
+                    portion: input.portion,
+                });
+                return snapshot;
+            }
+            const snapshot = await cancelIntranetLeave(db, input.id);
+            audit(db, "intranet.leave_cancelled", user.id, null, { id: input.id });
+            return snapshot;
+        }
+        catch (error) {
+            audit(db, "intranet.leave_failed", user.id, null, {
+                action: input.action,
+                code: error instanceof IntranetError ? error.code : "internal_error",
+            });
+            return sendIntranetError(reply, error);
+        }
+    });
     app.delete("/api/intranet", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
         if (!user)
@@ -370,7 +412,7 @@ export async function registerApi(app, db, jobs) {
             });
         }
         const input = z.object({
-            name: z.string().trim().min(1).max(100).default("WorkLog AI – Mac"),
+            name: z.string().trim().min(1).max(100).default("Evora Smart Menu – Mac"),
         }).parse(request.body ?? {});
         const created = createWorkLogToken(db, user.id, input.name);
         audit(db, "worklog.token_created", user.id, null, { integrationId: created.item.id, name: created.item.name });

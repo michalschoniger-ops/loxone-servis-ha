@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.2.5
+
+- Hlavní nabídka Hubu má globální hledání bez ohledu na diakritiku. Prohledává i skryté podsložky LOXONE, Podpora a Nastavení, při shodě je otevře a po volbě obnoví běžný stav menu.
+- Evora Smart Menu 5.8.5 dostalo stejné globální hledání. Prochází všechny nativní podsložky včetně Miniserverů, docházky, ticketů a systémových akcí a spouští přímo původní nalezenou položku.
+- Správcovský Evora Intranet načítá z oficiálních stránek také pracovní kontakty a dovolené/absence. Telefon lze vytočit přímo a novou žádost nebo zrušení Hub zapisuje přes oficiální Intranet API s potvrzením a auditním záznamem bez poznámky.
+- Postranní menu má jednotné řádky s jemně barevným pozadím podle sekce. Intranet používá bílou značku `e` na zeleném podkladu; aktivní stav je výraznější, ale geometrie se nemění.
+- Desktopová správa uživatelů používá kompaktní padesátipixelové řádky a menší jednotné editory, avatary a stavová tlačítka. Mobilní uživatelské karty zůstávají samostatně dotykové.
+- Evora Smart Menu 5.8.5 má značku Hubu v liště, barevné ikony a čitelné hodnoty, živý pracovní čas, přesný stav sledování a zobrazuje jen právě použitelnou akci pozastavit/pokračovat. Počet nepřečtených upozornění se v menu vůbec nevykresluje.
+- Integrační balíček nově přenáší i značku Evora Smart Hubu a ověřuje její přítomnost před instalací. Uživatelské názvy v Hubu i instalátoru používají jednotně `Evora Smart Menu`.
+
+## 2.2.4
+
+- Windows Launcher 2.1.1.0 dostal výslovné bezpečné znovuspojení. Hub vytvoří nový jednorázový kód, balíček nabízí dvojklik `Opravit-parovani.cmd` a po úspěchu zneplatní starý token stejného Windows agenta; běžná aktualizace dál zachovává platné párování.
+- Launcher nyní odmítnutý uložený token rozpozná jako chybu párování a uživatele nasměruje na opravný postup místo neurčité chyby spojení.
+- Mobilní Intranet používá stejnou třísloupcovou geometrii jako ostatní řádky nabídky a stav s časem zůstává zarovnaný vpravo. Profilová fotografie je čistě kruhová bez barevného podkladu mimo snímek.
+- WorkLogAI 5.8.3 vkládá symboly přímo do titulku položky NSMenuItem, takže macOS menu již nemůže potlačit samostatnou vlastnost ikony.
+
 ## 2.2.3
 
 - Mobilní nabídka zobrazuje právě jedno odhlášení: profil a mobilní tlačítko tvoří jeden spodní blok a desktopový účet je na telefonu výslovně skrytý.

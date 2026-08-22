@@ -1,0 +1,42 @@
+param(
+  [string]$PairingCode = "",
+  [string]$AgentName = ""
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$installer = Join-Path $PSScriptRoot "Install-EvoraConfigLauncher.ps1"
+$configPath = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher\config.json"
+
+if (-not (Test-Path -LiteralPath $installer)) {
+  throw "Install-EvoraConfigLauncher.ps1 must be in the same extracted folder."
+}
+if (-not (Test-Path -LiteralPath $configPath)) {
+  throw "Existing launcher pairing was not found. Run Install-EvoraConfigLauncher.ps1 instead."
+}
+
+$configuration = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+$hubUrl = [string]$configuration.hubUrl
+if ([string]::IsNullOrWhiteSpace($hubUrl)) {
+  throw "Existing launcher configuration does not contain the Hub URL."
+}
+$storedAgentName = [string]$configuration.agentName
+if ([string]::IsNullOrWhiteSpace($AgentName)) {
+  $AgentName = if ([string]::IsNullOrWhiteSpace($storedAgentName)) { $env:COMPUTERNAME } else { $storedAgentName }
+}
+
+if ([string]::IsNullOrWhiteSpace($PairingCode)) {
+  $PairingCode = Read-Host "New one-time pairing code from Evora Smart Hub Settings"
+}
+if ([string]::IsNullOrWhiteSpace($PairingCode)) {
+  throw "A new pairing code is required."
+}
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer `
+  -HubUrl $hubUrl -PairingCode $PairingCode.Trim() -AgentName $AgentName
+if ($LASTEXITCODE -ne 0) {
+  throw "Re-pairing failed. The previous configuration was left in place."
+}
+
+Write-Host "Evora Config Launcher was paired again and restarted."

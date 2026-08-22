@@ -10,6 +10,8 @@ const PRAGUE_TIME_ZONE = "Europe/Prague";
 const STATUS_MAX_AGE_MS = 30_000;
 const SUMMARY_MAX_AGE_MS = 10 * 60_000;
 const ROSTER_MAX_AGE_MS = 5 * 60_000;
+const CONTACTS_MAX_AGE_MS = 10 * 60_000;
+const LEAVES_MAX_AGE_MS = 10 * 60_000;
 const HISTORY_MAX_AGE_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 18_000;
 const SETTINGS = {
@@ -88,6 +90,8 @@ function emptySnapshot(configured = false, email = null) {
         fetchedAt: null,
         summaryFetchedAt: null,
         rosterFetchedAt: null,
+        contactsFetchedAt: null,
+        leavesFetchedAt: null,
         historyFetchedAt: null,
         currentState: "none",
         currentSince: null,
@@ -98,6 +102,7 @@ function emptySnapshot(configured = false, email = null) {
         workloadHours: 0,
         cards: {},
         people: [],
+        leaves: [],
         notificationsUnread: 0,
         history: {
             currentMonth: monthKey(),
@@ -120,6 +125,7 @@ function loadSnapshot(db) {
     try {
         const parsed = JSON.parse(encoded);
         const snapshot = { ...emptySnapshot(configured, email), ...parsed, configured, email };
+        snapshot.people = snapshot.people.map((person) => ({ ...person, phone: person.phone ?? null }));
         const age = snapshot.fetchedAt ? Date.now() - Date.parse(snapshot.fetchedAt) : Number.POSITIVE_INFINITY;
         if (configured && snapshot.dataState === "current" && age > 150_000)
             snapshot.dataState = "stale";
@@ -529,9 +535,78 @@ function parseRoster(html, ownProfileId, now = new Date()) {
         const name = typeof object.name === "string" ? object.name.trim() : "";
         if (!id || !name)
             return [];
-        return [{ name, ...personState(id) }];
+        return [{ name, ...personState(id), phone: null }];
     }).sort((left, right) => left.name.localeCompare(right.name, "cs"));
     return { people, ownState: ownProfileId ? personState(ownProfileId).state : null };
+}
+function normalizedPersonName(value) {
+    return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLocaleLowerCase("cs");
+}
+function comparablePersonName(value) {
+    return normalizedPersonName(value).split(" ").filter(Boolean).sort((left, right) => left.localeCompare(right, "cs")).join(" ");
+}
+export function parseIntranetTeamPhones(html) {
+    const phones = new Map();
+    const walk = (value) => {
+        if (Array.isArray(value)) {
+            value.forEach(walk);
+            return;
+        }
+        if (!value || typeof value !== "object")
+            return;
+        const object = value;
+        const href = typeof object.href === "string" ? object.href : "";
+        const label = typeof object["aria-label"] === "string" ? object["aria-label"] : "";
+        if (href.toLowerCase().startsWith("tel:") && /^Zavolat\s+/i.test(label)) {
+            const name = label.replace(/^Zavolat\s+/i, "").trim();
+            const phone = decodeURIComponent(href.slice(4)).replace(/[^+0-9]/g, "");
+            if (name && phone.length >= 6 && phone.length <= 20) {
+                phones.set(normalizedPersonName(name), phone);
+                phones.set(comparablePersonName(name), phone);
+            }
+        }
+        Object.values(object).forEach(walk);
+    };
+    nextFlightObjects(html).forEach(walk);
+    return phones;
+}
+const INTRANET_LEAVE_TYPES = new Set(["vacation", "sick", "sickday", "doctor"]);
+export function parseIntranetLeaves(html) {
+    let root = null;
+    for (const object of nextFlightObjects(html)) {
+        root = findDictionary(object, ["hrProfileId", "uvazekH", "vacDays", "leaves"]);
+        if (root)
+            break;
+    }
+    if (!root || !Array.isArray(root.leaves))
+        return null;
+    const leaves = root.leaves.flatMap((raw) => {
+        if (!raw || typeof raw !== "object")
+            return [];
+        const object = raw;
+        const id = typeof object.id === "string" ? object.id : "";
+        const type = typeof object.type === "string" && INTRANET_LEAVE_TYPES.has(object.type)
+            ? object.type
+            : null;
+        const dateFrom = typeof object.date_from === "string" ? object.date_from : "";
+        const dateTo = typeof object.date_to === "string" ? object.date_to : "";
+        const status = typeof object.status === "string" ? object.status : "";
+        if (!id || !type || !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo) || !status)
+            return [];
+        return [{
+                id,
+                type,
+                dateFrom,
+                dateTo,
+                portion: typeof object.portion === "number" && object.portion === 0.5 ? 0.5 : 1,
+                note: typeof object.note === "string" && object.note.trim() ? object.note.trim() : null,
+                status,
+                hours: typeof object.hours === "number" && Number.isFinite(object.hours) ? object.hours : null,
+                createdAt: typeof object.created_at === "string" ? object.created_at : null,
+            }];
+    }).sort((left, right) => right.dateFrom.localeCompare(left.dateFrom));
+    const vacationDays = typeof root.vacDays === "number" && Number.isFinite(root.vacDays) ? root.vacDays : null;
+    return { leaves, vacationDays };
 }
 function decodeHtml(value) {
     const named = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
@@ -635,7 +710,17 @@ async function performRefresh(db, forceAll) {
             try {
                 const roster = parseRoster(await (await intranetRequest(db, "/nastenka")).text(), response.hrProfileId, now);
                 if (roster) {
-                    snapshot.people = roster.people;
+                    const existingPhones = new Map();
+                    for (const person of snapshot.people) {
+                        if (!person.phone)
+                            continue;
+                        existingPhones.set(normalizedPersonName(person.name), person.phone);
+                        existingPhones.set(comparablePersonName(person.name), person.phone);
+                    }
+                    snapshot.people = roster.people.map((person) => ({
+                        ...person,
+                        phone: existingPhones.get(normalizedPersonName(person.name)) ?? existingPhones.get(comparablePersonName(person.name)) ?? null,
+                    }));
                     snapshot.rosterFetchedAt = now.toISOString();
                     if (roster.ownState && !["in_building", "home_office", "on_break", "doctor", "offsite"].includes(snapshot.currentState)) {
                         snapshot.currentState = roster.ownState;
@@ -646,6 +731,34 @@ async function performRefresh(db, forceAll) {
             }
             catch {
                 // Roster is secondary to the signed-in employee status.
+            }
+        }
+        if (due(snapshot.contactsFetchedAt, CONTACTS_MAX_AGE_MS)) {
+            try {
+                const phones = parseIntranetTeamPhones(await (await intranetRequest(db, "/tym")).text());
+                snapshot.people = snapshot.people.map((person) => ({
+                    ...person,
+                    phone: phones.get(normalizedPersonName(person.name)) ?? phones.get(comparablePersonName(person.name)) ?? person.phone ?? null,
+                }));
+                snapshot.contactsFetchedAt = now.toISOString();
+            }
+            catch {
+                // Contacts are an optional admin convenience and must not invalidate attendance.
+            }
+        }
+        if (due(snapshot.leavesFetchedAt, LEAVES_MAX_AGE_MS)) {
+            try {
+                const parsed = parseIntranetLeaves(await (await intranetRequest(db, "/dovolena")).text());
+                if (parsed) {
+                    snapshot.leaves = parsed.leaves;
+                    snapshot.leavesFetchedAt = now.toISOString();
+                    if (parsed.vacationDays !== null && !snapshot.cards.vacation_remaining) {
+                        snapshot.cards.vacation_remaining = `${parsed.vacationDays.toLocaleString("cs-CZ")} dní`;
+                    }
+                }
+            }
+            catch {
+                // Leave requests are secondary to the signed-in employee status.
             }
         }
         try {
@@ -726,5 +839,36 @@ export async function punchIntranet(db, kind) {
         client_ref: randomUUID().toLowerCase(),
     };
     await intranetRequest(db, "/api/attendance/events", { method: "POST", body: JSON.stringify(body) });
+    return refreshIntranet(db, true);
+}
+export async function createIntranetLeave(db, input) {
+    if (!INTRANET_LEAVE_TYPES.has(input.type) || !/^\d{4}-\d{2}-\d{2}$/.test(input.dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(input.dateTo)) {
+        throw new IntranetError("internal_error", "Žádost o volno obsahuje neplatná data.");
+    }
+    if (input.dateFrom > input.dateTo)
+        throw new IntranetError("internal_error", "Datum konce nesmí být před začátkem volna.");
+    const ownResponse = attendanceResponse(await (await intranetRequest(db, "/api/attendance/me", { method: "POST" })).json());
+    await intranetRequest(db, "/api/hr/leave", {
+        method: "POST",
+        body: JSON.stringify({
+            action: "create",
+            hr_profile_id: ownResponse.hrProfileId,
+            type: input.type,
+            date_from: input.dateFrom,
+            date_to: input.dateTo,
+            portion: input.portion,
+            note: input.note,
+            propustky: [],
+        }),
+    });
+    return refreshIntranet(db, true);
+}
+export async function cancelIntranetLeave(db, id) {
+    if (!id || id.length > 128)
+        throw new IntranetError("internal_error", "Žádost o volno má neplatný identifikátor.");
+    await intranetRequest(db, "/api/hr/leave", {
+        method: "POST",
+        body: JSON.stringify({ action: "cancel", id }),
+    });
     return refreshIntranet(db, true);
 }

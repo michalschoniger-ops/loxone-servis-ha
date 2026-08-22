@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.5.1
+
+- Nasazuje Evora Smart Hub 2.2.5 s kontakty a žádostmi o absenci v Intranetu, barevnými buňkami postranního menu, zelenou ikonou „e“ a kompaktní správou uživatelů.
+- Obsahuje globální hledání v celé nabídce Hubu i ve všech podsložkách Evora Smart Menu 5.8.5; Smart Menu zachovává živý čas, jasný stav sledování a nezobrazuje počet nepřečtených upozornění.
+- Zachovává databázi, šifrovaná připojení a úplnou vratnou kopii zdroje 2.2.4.
+
+## 2.2.4.1
+
+- Nasazuje Evora Smart Hub 2.2.4 a Windows Launcher 2.1.1.0 s bezpečným znovuspárováním pomocí nového jednorázového kódu.
+- Obsahuje mobilní zarovnání Intranetu, kruhovou fotografii bez barevného podkladu a WorkLogAI 5.8.3 s viditelnými ikonami menu.
+- Zachovává databázi, šifrovaná připojení a úplnou vratnou kopii zdroje 2.2.3.
+
 ## 2.2.3.1
 
 - Nasazuje Evora Smart Hub 2.2.3 s jediným mobilním odhlášením, odděleným názvem a časem Intranetu a jednotným názvem `Úkoly`.

@@ -1,5 +1,7 @@
 # Instalace a aktualizace
 
+Hlavní navigace obsahuje pole **Hledat v nabídce…**. Vyhledává bez ohledu na diakritiku v hlavních položkách i v podsložkách LOXONE, Podpora a Nastavení; odpovídající skupinu samo rozbalí. Stejné globální hledání nabízí Evora Smart Menu 5.8.5 pro celé nativní macOS menu a všechny jeho vnořené položky.
+
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.
 3. Na hlavní instalaci HA Práce vložte 32bajtový Base64 `credentials_master_key` a PBKDF2 hash hesla prvního správce. Při migraci obnovte celý adresář `/data` ze zálohy původní instalace.
@@ -39,7 +41,7 @@ V Parallels se ZIP rozbalí a instalátor spustí přímo uvnitř Windows; macOS
 
 Při kliknutí na **Otevřít v Loxone Config** Hub vybere pouze online agenta přihlášeného uživatele. Do databázové fronty uloží SN, požadovanou verzi a odkaz na Config, nikdy login ani heslo. Přístupy odešle až při autorizovaném převzetí konkrétní úlohy. Helper vyhledá přesný `FileVersion` souboru `LoxoneConfig.exe`; chybí-li, ukončí úlohu bezpečnou chybou a nabídne oficiální odkaz ke stažení. Při nalezení otevře přesnou instalaci, jednoznačně ověří prvky okna přes Windows UI Automation, ponechá lokální adresu prázdnou a do externí adresy vloží SN Miniserveru.
 
-Launcher 2.1.0.0 jednou za minutu obnovuje diagnostiku podpisu skriptu, nalezených Configů, UI Automation, oprávnění a bezpečného spojení s Hubem. Přesný krok neúspěšné automatizace vrátí do Hubu bez loginu, hesla nebo tokenu a Config ponechá otevřený pro ruční připojení. Novou verzi přijme jen z manifestu vráceného po autentizovaném pollingu a po přesné shodě SHA-256; před nahrazením ponechá lokální `.bak` kopii.
+Launcher 2.1.1.0 jednou za minutu obnovuje diagnostiku podpisu skriptu, nalezených Configů, UI Automation, oprávnění a bezpečného spojení s Hubem. Přesný krok neúspěšné automatizace vrátí do Hubu bez loginu, hesla nebo tokenu a Config ponechá otevřený pro ruční připojení. Novou verzi přijme jen z manifestu vráceného po autentizovaném pollingu a po přesné shodě SHA-256; před nahrazením ponechá lokální `.bak` kopii. Při odmítnutí uloženého tokenu oznámí nutnost nového párování. Nový kód se zadá pomocí `Opravit-parovani.cmd` z aktuálního ZIPu; po úspěchu Hub zneplatní starý token stejného uživatele a stejného Windows agenta.
 
 ## Incidenty, servisní profily a interní úkoly
 
@@ -49,15 +51,15 @@ V detailu Gateway nebo samostatného Miniserveru lze uložit zákazníka, kontak
 
 Sekce **Servisní úkoly** je interní náhrada sdíleného Excelu a je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
 
-## WorkLog AI na macOS
+## Evora Smart Menu na macOS
 
-Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čtení její panel neuvidí a jejich případný starší token server odmítne. Správce v **Nástroje → WorkLog AI · Evora Smart Hub** stáhne integrační balíček a vytvoří osobní token. Nešifrovaná adresa Hubu se uloží do uživatelských předvoleb macOS, ale token pouze do Klíčenky. Hub uchovává jen SHA-256 hash a krátkou nápovědu tokenu; token lze kdykoli odvolat.
+Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čtení její panel neuvidí a jejich případný starší token server odmítne. Správce v **Nástroje a zabezpečení → Evora Smart Menu · Evora Smart Hub** stáhne integrační balíček a vytvoří osobní token. Nešifrovaná adresa Hubu se uloží do uživatelských předvoleb macOS, ale token pouze do Klíčenky. Hub uchovává jen SHA-256 hash a krátkou nápovědu tokenu; token lze kdykoli odvolat.
 
-WorkLog načítá pouze názvy, složky, SN, stav a firmware. Hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou WorkLog ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a WorkLog průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
+Evora Smart Menu načítá pouze názvy, složky, SN, stav a firmware. Hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou menu ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a menu průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
 
 ## Evora Intranet a docházka
 
-Položka **Evora Intranet** je dostupná pouze hlavnímu správci. Název jasně odlišuje firemní zdroj od Loxone Partner Portálu; ikona spojuje budovu a hodiny. Stránka **Docházka** zobrazuje aktuální stav a běžící čas `HH:MM:SS`, příchod, odchod, Home office, služební cestu, saldo, přesčas, dovolenou, historii aktuálního a předchozího měsíce a stav kolegů.
+Položka **Intranet** je dostupná pouze správci a používá firemní bílé `e` na zeleném podkladu. Stránka **Docházka** zobrazuje aktuální stav a běžící čas `HH:MM:SS`, příchod, odchod, Home office, služební cestu, saldo, přesčas, dovolenou, historii aktuálního a předchozího měsíce, stav kolegů a jejich dostupné telefonní kontakty. V samostatném panelu lze podat žádost o dovolenou, nemoc, sickday nebo lékaře a zobrazit či zrušit vlastní žádosti.
 
 Přístup se zadává jednou v Hubu. Heslo a obnovovací token jsou odděleně šifrované pomocí AES-256-GCM a automaticky se obnovují. Každá informace rozlišuje načítání, aktuální a zastaralá data, nedostupnost zdroje, odmítnuté přihlášení, chybějící přístup, neposkytnutý údaj a interní chybu Hubu. Docházkové změny vyžadují potvrzení a neobsahují GPS.
 

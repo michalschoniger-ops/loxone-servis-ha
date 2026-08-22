@@ -6,7 +6,7 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
 export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
-export const CURRENT_CONFIG_LAUNCHER_VERSION = "2.1.0.0";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "2.1.1.0";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);
@@ -130,6 +130,7 @@ export function pairLauncherAgent(db, code, requestedName) {
     const now = new Date().toISOString();
     const agentId = randomUUID();
     const agentToken = randomToken(36);
+    const agentName = requestedName?.trim() || pairing.name;
     db.exec("BEGIN IMMEDIATE");
     try {
         const consumed = db.prepare("UPDATE config_launcher_pairings SET used_at=? WHERE id=? AND used_at IS NULL").run(now, pairing.id);
@@ -137,8 +138,10 @@ export function pairLauncherAgent(db, code, requestedName) {
             db.exec("ROLLBACK");
             return null;
         }
+        db.prepare(`UPDATE config_launcher_agents SET active=0,last_status='replaced',updated_at=?
+       WHERE owner_user_id=? AND name=? AND active=1`).run(now, pairing.actor_user_id, agentName);
         db.prepare(`INSERT INTO config_launcher_agents(id,owner_user_id,name,token_hash,active,last_status,created_at,updated_at)
-       VALUES(?,?,?,?,1,'paired',?,?)`).run(agentId, pairing.actor_user_id, requestedName?.trim() || pairing.name, hashToken(agentToken), now, now);
+       VALUES(?,?,?,?,1,'paired',?,?)`).run(agentId, pairing.actor_user_id, agentName, hashToken(agentToken), now, now);
         db.exec("COMMIT");
     }
     catch (error) {

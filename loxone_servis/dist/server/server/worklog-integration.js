@@ -27,7 +27,7 @@ export function createWorkLogToken(db, ownerUserId, name) {
     const now = new Date().toISOString();
     const tokenHint = `…${token.slice(-6)}`;
     db.prepare(`INSERT INTO worklog_tokens(id,owner_user_id,name,token_hash,token_hint,active,created_at)
-     VALUES(?,?,?,?,?,1,?)`).run(id, ownerUserId, name.trim() || "WorkLog AI – Mac", hashToken(token), tokenHint, now);
+     VALUES(?,?,?,?,?,1,?)`).run(id, ownerUserId, name.trim() || "Evora Smart Menu – Mac", hashToken(token), tokenHint, now);
     const item = db.prepare(`SELECT id,name,token_hint,active,created_at,last_used_at,revoked_at
      FROM worklog_tokens WHERE id=?`).get(id);
     return { token, item: publicToken(item) };

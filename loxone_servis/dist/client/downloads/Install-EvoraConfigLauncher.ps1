@@ -50,14 +50,17 @@ function Stop-InstalledLauncher([string]$ScriptPath) {
   }
 }
 
+if (-not $reuseExistingPairing) {
+  # Verify the new Hub URL and token before touching the working installation.
+  # The Hub retires the old token only after the newly paired helper sends its
+  # first authenticated heartbeat.
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $source -HubUrl $HubUrl -PairingCode $PairingCode -AgentName $AgentName -PairOnly
+  if ($LASTEXITCODE -ne 0) { throw "Pairing failed. The previous installation and pairing were left in place." }
+}
+
 Stop-InstalledLauncher $installedScript
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
 Copy-Item -LiteralPath $source -Destination $installedScript -Force
-
-if (-not $reuseExistingPairing) {
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installedScript -HubUrl $HubUrl -PairingCode $PairingCode -AgentName $AgentName -PairOnly
-  if ($LASTEXITCODE -ne 0) { throw "Pairing failed." }
-}
 
 $startupDirectory = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
 $shortcutPath = Join-Path $startupDirectory "Evora Config Launcher.lnk"

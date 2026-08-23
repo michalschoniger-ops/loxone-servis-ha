@@ -11,7 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.0"
+$HelperVersion = "3.0.0.1"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -275,6 +275,44 @@ function Normalize-HubUrl([string]$Value) {
   return $normalized
 }
 
+function Test-HubPreflight([string]$BaseUrl) {
+  $uri = [Uri]$BaseUrl
+  $parsedAddress = $null
+  $isIpAddress = [Net.IPAddress]::TryParse($uri.DnsSafeHost, [ref]$parsedAddress)
+  if (-not $isIpAddress -and $uri.DnsSafeHost -ne "localhost") {
+    try {
+      $addresses = [Net.Dns]::GetHostAddresses($uri.DnsSafeHost)
+      if ($null -eq $addresses -or $addresses.Count -eq 0) {
+        throw "No address was returned."
+      }
+    } catch {
+      throw "HUB_DNS_FAILED: Windows cannot resolve '$($uri.DnsSafeHost)'. Start Tailscale and verify MagicDNS, or enter another reachable HTTPS Hub URL."
+    }
+  }
+
+  try {
+    $health = Invoke-RestMethod -Uri "$BaseUrl/healthz" -Method GET -UseBasicParsing -TimeoutSec 12
+  } catch {
+    $webException = $_.Exception
+    if ($webException -is [Net.WebException]) {
+      if ($webException.Status -eq [Net.WebExceptionStatus]::NameResolutionFailure) {
+        throw "HUB_DNS_FAILED: Windows cannot resolve '$($uri.DnsSafeHost)'. Start Tailscale and verify MagicDNS, or enter another reachable HTTPS Hub URL."
+      }
+      if ($webException.Status -eq [Net.WebExceptionStatus]::TrustFailure) {
+        throw "HUB_TLS_FAILED: The HTTPS certificate for '$($uri.DnsSafeHost)' could not be verified."
+      }
+      if ($webException.Status -in @([Net.WebExceptionStatus]::ConnectFailure, [Net.WebExceptionStatus]::Timeout)) {
+        throw "HUB_UNREACHABLE: '$BaseUrl' did not respond. Verify Tailscale, the Hub address, and firewall access."
+      }
+    }
+    throw "HUB_PREFLIGHT_FAILED: '$BaseUrl/healthz' could not be verified. $($webException.Message)"
+  }
+
+  if ($null -eq $health -or [string]$health.status -ne "ok") {
+    throw "HUB_IDENTITY_FAILED: The address responded, but it is not a healthy Evora Smart Hub."
+  }
+}
+
 function Invoke-HubJson([string]$Method, [string]$BaseUrl, [string]$Path, $Body, [string]$Token = "") {
   $parameters = @{
     Uri = "$BaseUrl$Path"
@@ -301,6 +339,7 @@ function Test-HubRejectedPairing($ErrorRecord) {
 }
 
 function Save-Pairing([string]$BaseUrl, [string]$Code, [string]$Name) {
+  Test-HubPreflight $BaseUrl
   $paired = Invoke-HubJson "POST" $BaseUrl "/api/config-launcher/agent/pair" @{ code = $Code; name = $Name }
   $configuration = [ordered]@{
     hubUrl = $BaseUrl
@@ -311,7 +350,15 @@ function Save-Pairing([string]$BaseUrl, [string]$Code, [string]$Name) {
   if (-not (Test-Path -LiteralPath $AppDirectory)) {
     New-Item -ItemType Directory -Path $AppDirectory -Force | Out-Null
   }
-  Set-Content -LiteralPath $ConfigPath -Value (ConvertTo-Json $configuration -Compress) -Encoding UTF8
+  $pendingConfigPath = "$ConfigPath.pending"
+  try {
+    Set-Content -LiteralPath $pendingConfigPath -Value (ConvertTo-Json $configuration -Compress) -Encoding UTF8
+    Move-Item -LiteralPath $pendingConfigPath -Destination $ConfigPath -Force
+  } finally {
+    if (Test-Path -LiteralPath $pendingConfigPath) {
+      Remove-Item -LiteralPath $pendingConfigPath -Force -ErrorAction SilentlyContinue
+    }
+  }
   Write-SafeLog "Launcher paired successfully."
 }
 

@@ -15,7 +15,7 @@ import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCr
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
-import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
@@ -518,6 +518,7 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }
         const agent = preferredLauncherAgent(db, identity.ownerUserId);
+        const folderColors = new Map(listProjectFolders(db).map((folder) => [folder.id, folder.color]));
         const items = listMiniservers(db).map((server) => {
             const release = exactConfigRelease(db, server.currentFirmware);
             return {
@@ -525,6 +526,7 @@ export async function registerApi(app, db, jobs) {
                 project: server.project,
                 type: server.type,
                 folderName: server.folderName ?? "Ostatní",
+                folderColor: server.folderId ? (folderColors.get(server.folderId) ?? "#58D73A") : "#8A948C",
                 connectionState: server.connectionState,
                 currentFirmware: server.currentFirmware,
                 hasCredentials: server.hasCredentials,
@@ -610,6 +612,17 @@ export async function registerApi(app, db, jobs) {
         if (!user)
             return;
         return { agent: preferredLauncherAgent(db, user.id) };
+    });
+    app.delete("/api/config-launcher/:id", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const agentId = configLaunchJobIdSchema.parse(request.params.id);
+        if (!revokeLauncherAgent(db, user.id, agentId)) {
+            return reply.code(404).send({ error: "Počítač nebyl nalezen nebo už je odebraný.", code: "NOT_FOUND" });
+        }
+        audit(db, "config_launcher.revoked", user.id, null, { agentId });
+        return { ok: true };
     });
     app.post("/api/config-launcher/pairings", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

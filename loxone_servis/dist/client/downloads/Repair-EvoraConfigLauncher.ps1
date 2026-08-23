@@ -1,4 +1,5 @@
 param(
+  [string]$HubUrl = "",
   [string]$PairingCode = "",
   [string]$AgentName = ""
 )
@@ -17,12 +18,16 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 }
 
 $configuration = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-$hubUrl = [string]$configuration.hubUrl
-if ([string]::IsNullOrWhiteSpace($hubUrl)) {
+$storedHubUrl = [string]$configuration.hubUrl
+if ([string]::IsNullOrWhiteSpace($storedHubUrl)) {
   throw "Existing launcher configuration does not contain the Hub URL."
 }
-if ($hubUrl -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
-  $hubUrl = "https://$($hubUrl.Trim().TrimEnd('/'))"
+if ([string]::IsNullOrWhiteSpace($HubUrl)) {
+  $enteredHubUrl = Read-Host "Hub HTTPS URL (Enter keeps $storedHubUrl)"
+  $HubUrl = if ([string]::IsNullOrWhiteSpace($enteredHubUrl)) { $storedHubUrl } else { $enteredHubUrl }
+}
+if ($HubUrl -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+  $HubUrl = "https://$($HubUrl.Trim().TrimEnd('/'))"
 }
 $storedAgentName = [string]$configuration.agentName
 if ([string]::IsNullOrWhiteSpace($AgentName)) {
@@ -37,7 +42,7 @@ if ([string]::IsNullOrWhiteSpace($PairingCode)) {
 }
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer `
-  -HubUrl $hubUrl -PairingCode $PairingCode.Trim() -AgentName $AgentName
+  -HubUrl $HubUrl -PairingCode $PairingCode.Trim() -AgentName $AgentName
 if ($LASTEXITCODE -ne 0) {
   throw "Re-pairing failed. The previous configuration was left in place."
 }

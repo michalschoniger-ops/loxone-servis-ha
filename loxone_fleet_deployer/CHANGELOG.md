@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0.4
+
+- Nahrazuje výchozí ikonu složky ve všech nativních oknech Evora Smart Menu významovou ikonou dané akce nebo značkou Evora.
+- Opravuje trackpadový posuv detailu ticketu odstraněním vlastní skokové animace; scrollbar, klávesnice i gesto dvěma prsty používají jeden nativní scroll container.
+- Obsahuje aktuální balíček Evora Smart Menu 3.0.0 a zachovává vratnou kopii zdroje, databázi i šifrovaný obsah `/data`.
+
 ## 3.0.0.3
 
 - Nasazuje aktuální ověřený Hub 3.0.0 s bezpečnými inline náhledy ticketových obrázků, čitelnými stavy a sjednoceným načítáním detailu.

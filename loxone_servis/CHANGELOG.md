@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.4
+
+- Přidává úsporný interní stav a ruční spuštění synchronizace servisních úkolů z Excelu, chráněné stejným silným tokenem jako šifrovaná záloha.
+- Diagnostika vrací jen počty a stav synchronizace, takže už není nutné stahovat velkou databázovou zálohu ani zveřejňovat obsah úkolů.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; tento balíček mění pouze Hub.
+
 ## 3.0.3
 
 - Úkoly načítají aktivní řádky z listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` sdíleného Excelu, bezpečně končí před oddílem `HOTOVO` a používají stabilní vazbu na řádek i otisk obsahu, takže hodinová nebo ruční synchronizace nevytváří duplikáty.

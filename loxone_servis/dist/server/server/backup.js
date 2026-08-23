@@ -3,6 +3,7 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { config, optionsPath } from "./config.js";
 import { encryptBackupPayload } from "./backup-format.js";
+import { getServiceTaskExcelDiagnostic, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
 function quoteSqlitePath(path) {
     return `'${path.replaceAll("'", "''")}'`;
 }
@@ -16,6 +17,10 @@ function tokenMatches(value) {
     const received = createHash("sha256").update(value).digest();
     return timingSafeEqual(expected, received);
 }
+function backupRequestAuthorized(authorization) {
+    const value = authorization ?? "";
+    return tokenMatches(value.startsWith("Bearer ") ? value.slice(7) : "");
+}
 export async function registerEncryptedBackup(app, db) {
     app.get("/api/system/encrypted-backup", {
         config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
@@ -23,9 +28,7 @@ export async function registerEncryptedBackup(app, db) {
         if (!config.backupEnabled) {
             return reply.code(503).send({ error: "Šifrované zálohy nejsou nakonfigurované.", code: "BACKUP_DISABLED" });
         }
-        const authorization = request.headers.authorization ?? "";
-        const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-        if (!tokenMatches(token)) {
+        if (!backupRequestAuthorized(request.headers.authorization)) {
             reply.header("WWW-Authenticate", "Bearer");
             return reply.code(401).send({ error: "Neplatné oprávnění pro zálohu.", code: "UNAUTHORIZED" });
         }
@@ -55,6 +58,42 @@ export async function registerEncryptedBackup(app, db) {
         finally {
             if (existsSync(snapshotPath))
                 unlinkSync(snapshotPath);
+        }
+    });
+    app.get("/api/system/service-tasks-excel/status", {
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+    }, async (request, reply) => {
+        if (!config.backupEnabled) {
+            return reply.code(503).send({ error: "Interní diagnostika není nakonfigurovaná.", code: "DIAGNOSTIC_DISABLED" });
+        }
+        if (!backupRequestAuthorized(request.headers.authorization)) {
+            reply.header("WWW-Authenticate", "Bearer");
+            return reply.code(401).send({ error: "Neplatné oprávnění pro diagnostiku.", code: "UNAUTHORIZED" });
+        }
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return getServiceTaskExcelDiagnostic(db);
+    });
+    app.post("/api/system/service-tasks-excel/sync", {
+        config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
+    }, async (request, reply) => {
+        if (!config.backupEnabled) {
+            return reply.code(503).send({ error: "Interní diagnostika není nakonfigurovaná.", code: "DIAGNOSTIC_DISABLED" });
+        }
+        if (!backupRequestAuthorized(request.headers.authorization)) {
+            reply.header("WWW-Authenticate", "Bearer");
+            return reply.code(401).send({ error: "Neplatné oprávnění pro diagnostiku.", code: "UNAUTHORIZED" });
+        }
+        try {
+            await syncServiceTasksFromExcel(db);
+            reply.header("Cache-Control", "no-store, max-age=0");
+            return getServiceTaskExcelDiagnostic(db);
+        }
+        catch (error) {
+            const known = error instanceof ServiceTaskExcelError ? error : null;
+            return reply.code(known?.code === "NOT_CONFIGURED" ? 409 : 502).send({
+                error: known?.message ?? "Synchronizace Excelu se nezdařila.",
+                code: known?.code ?? "SYNC_FAILED",
+            });
         }
     });
 }

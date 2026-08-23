@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.4.1
+
+- Nasazuje Evora Smart Hub 3.0.4 s chráněnou úspornou diagnostikou a ručním spuštěním synchronizace servisních úkolů z Excelu.
+- Zachovává hodinový idempotentní import, databázi, šifrovaná připojení a vratnou kopii zdroje 3.0.3; obsah úkolů ani sdílený odkaz nejsou součástí diagnostiky či payloadu.
+- Evora Smart Menu a Windows klient zůstávají 3.0.1 a Config Launcher 3.0.0.2.
+
 ## 3.0.3.1
 
 - Nasazuje Evora Smart Hub 3.0.3 s bezpečným, idempotentním importem aktivních servisních úkolů ze sdíleného Excelu, ruční a hodinovou synchronizací a viditelným stavem zdroje.

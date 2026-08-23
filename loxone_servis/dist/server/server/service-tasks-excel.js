@@ -340,6 +340,22 @@ export function getServiceTaskExcelSyncStatus(db) {
         writebackMessage: READ_ONLY_MESSAGE,
     };
 }
+export function getServiceTaskExcelDiagnostic(db) {
+    const count = (sql) => {
+        const row = db.prepare(sql).get();
+        return Number(row?.value ?? 0);
+    };
+    return {
+        status: getServiceTaskExcelSyncStatus(db),
+        counts: {
+            totalTasks: count("SELECT COUNT(*) AS value FROM service_tasks"),
+            excelTasks: count("SELECT COUNT(*) AS value FROM service_tasks WHERE source='excel'"),
+            activeExcelTasks: count("SELECT COUNT(*) AS value FROM service_tasks WHERE source='excel' AND status NOT IN ('done','cancelled')"),
+            excelLinks: count("SELECT COUNT(*) AS value FROM service_task_excel_links"),
+            pendingWriteback: count("SELECT COUNT(*) AS value FROM service_task_excel_links WHERE local_status_dirty=1"),
+        },
+    };
+}
 export async function syncServiceTasksFromExcel(db) {
     setSetting(db, "service_tasks_excel_last_attempt_at", new Date().toISOString());
     try {

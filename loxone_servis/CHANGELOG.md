@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.9
+
+- Opravuje párování dlouhých Excel požadavků: podobnost se počítá z celého pole „Požadavek“ uloženého v popisu, nikoli ze zkráceného 240znakového titulku. I změna na konci dlouhého textu tak aktualizuje stejné ID úkolu.
+- Při dalším importu bezpečně sloučí čerstvý systémový duplikát vzniklý starším párováním pouze tehdy, když jde o téměř totožný řádek, záznam nemá lokálně změněný stav a neobsahuje komentář, přílohu, štítek ani uživatelskou událost.
+- Excel zůstává pouze pro čtení směrem do Hubu a Evora Smart Menu zůstává ve verzi 3.0.3.
+
 ## 3.0.8
 
 - Přidává tenantově omezené Microsoft Graph device-code připojení pro organizační SharePoint bez klientského tajemství nebo uloženého Office hesla. Obnovovací token je šifrovaný a hodinový import začne až po úspěšném připojení správce.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.9.1
+
+- Nasazuje Evora Smart Hub 3.0.9 s párováním dlouhých Excel požadavků podle plného textu a přísně omezeným sloučením čerstvého systémového duplikátu bez uživatelského obsahu.
+- Zachovává databázi, čtecí Graph nastavení, šifrovaná připojení a vratnou kopii zdroje 3.0.8; Evora Smart Menu zůstává ve verzi 3.0.3.
+
 ## 3.0.8.1
 
 - Nasazuje Evora Smart Hub 3.0.8 se zabezpečenými náhledy Milesight kamer, čtecí Graph synchronizací Excelu bez duplicit a Evora Smart Menu 3.0.3 s diagnostikou Miniserverů.

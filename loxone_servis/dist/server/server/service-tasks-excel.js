@@ -9,6 +9,7 @@ const SYNC_INTERVAL_MS = 60 * 60_000;
 const ERROR_RETRY_MS = 5 * 60_000;
 const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;
 const MAX_XML_BYTES = 32 * 1024 * 1024;
+const RECENT_DUPLICATE_MAX_AGE_MS = 24 * 60 * 60_000;
 const READ_ONLY_MESSAGE = "Excel se synchronizuje pouze směrem do Hubu; zápis zpět je nyní vypnutý.";
 const parser = new XMLParser({
     ignoreAttributes: false,
@@ -72,6 +73,9 @@ function textSimilarity(leftValue, rightValue) {
     return 1 - previous[right.length] / Math.max(left.length, right.length);
 }
 function requestFromExistingTask(link) {
+    const request = link.description.match(/^Požadavek:\s*([\s\S]*?)(?:\n\n(?:Průběh \/ dokončení|Kdo řeší|Poznámka|Další poznámka|Zdroj):|$)/)?.[1]?.trim();
+    if (request)
+        return request;
     const prefix = `${link.contact_name}:`;
     return link.title.startsWith(prefix) ? link.title.slice(prefix.length).trim() : link.title;
 }
@@ -80,6 +84,41 @@ function taskIdentitySimilarity(link, task) {
     const request = textSimilarity(requestFromExistingTask(link), task.identityRequest);
     const combined = textSimilarity(`${link.contact_name}\n${requestFromExistingTask(link)}`, `${task.identityPlace}\n${task.identityRequest}`);
     return Math.max(combined, place * 0.35 + request * 0.65);
+}
+function hasUserTaskData(db, taskId) {
+    const row = db.prepare(`SELECT
+       (SELECT COUNT(*) FROM service_task_comments WHERE task_id=?) +
+       (SELECT COUNT(*) FROM service_task_attachments WHERE task_id=?) +
+       (SELECT COUNT(*) FROM service_task_tags WHERE task_id=?) +
+       (SELECT COUNT(*) FROM service_task_events
+        WHERE task_id=? AND (event_type<>'excel_import' OR author_user_id IS NOT NULL)) AS value`).get(taskId, taskId, taskId, taskId);
+    return Number(row?.value ?? 0) > 0;
+}
+function safeRecentDuplicateTasks(db, prepared, existingLinks, plannedMatches, reservedTaskIds, now) {
+    const result = new Map();
+    for (const item of prepared) {
+        const canonical = plannedMatches.get(item.row.rowNumber);
+        if (!canonical || canonical.source_fingerprint !== item.task.sourceFingerprint)
+            continue;
+        const canonicalCreatedAt = Date.parse(canonical.created_at);
+        for (const candidate of existingLinks) {
+            if (candidate.task_id === canonical.task_id || reservedTaskIds.has(candidate.task_id))
+                continue;
+            if (candidate.row_number !== item.row.rowNumber || candidate.local_status_dirty)
+                continue;
+            const createdAt = Date.parse(candidate.created_at);
+            if (!Number.isFinite(createdAt) || now - createdAt > RECENT_DUPLICATE_MAX_AGE_MS)
+                continue;
+            if (Number.isFinite(canonicalCreatedAt) && createdAt < canonicalCreatedAt)
+                continue;
+            if (taskIdentitySimilarity(candidate, item.task) < 0.995)
+                continue;
+            if (hasUserTaskData(db, candidate.task_id))
+                continue;
+            result.set(candidate.task_id, canonical.task_id);
+        }
+    }
+    return result;
 }
 function entry(workbook, name) {
     const result = readZipEntry(workbook, name, MAX_XML_BYTES);
@@ -266,7 +305,7 @@ function persistRows(db, parsed, workbookHash) {
     const ownerId = systemUserId(db);
     const prepared = parsed.rows.map((row) => ({ row, task: taskFromRow(db, row) }));
     const existingLinks = db.prepare(`SELECT links.task_id,links.row_number,links.source_fingerprint,links.row_hash,links.local_status_dirty,
-            tasks.contact_name,tasks.title
+            tasks.contact_name,tasks.title,tasks.description,tasks.created_at
      FROM service_task_excel_links links JOIN service_tasks tasks ON tasks.id=links.task_id
      WHERE links.sheet_name=?`).all(parsed.sheetName);
     const plannedMatches = new Map();
@@ -298,10 +337,12 @@ function persistRows(db, parsed, workbookHash) {
         plannedMatches.set(candidate.item.row.rowNumber, candidate.link);
         reservedTaskIds.add(candidate.link.task_id);
     }
+    const duplicateTasks = safeRecentDuplicateTasks(db, prepared, existingLinks, plannedMatches, reservedTaskIds, Date.now());
     const seen = new Set();
     let created = 0;
     let updated = 0;
     let completed = 0;
+    let deduplicated = 0;
     transaction(db, () => {
         for (const { row, task } of prepared) {
             const link = plannedMatches.get(row.rowNumber);
@@ -327,6 +368,14 @@ function persistRows(db, parsed, workbookHash) {
            writeback_state=CASE WHEN service_task_excel_links.local_status_dirty=1 THEN service_task_excel_links.writeback_state ELSE 'current' END,
            writeback_error=CASE WHEN service_task_excel_links.local_status_dirty=1 THEN service_task_excel_links.writeback_error ELSE NULL END`).run(taskId, parsed.sheetName, row.rowNumber, task.sourceFingerprint, task.rowHash, now);
         }
+        for (const [taskId, canonicalTaskId] of duplicateTasks) {
+            const deleted = db.prepare("DELETE FROM service_tasks WHERE id=? AND source='excel'").run(taskId);
+            if (Number(deleted.changes) > 0) {
+                db.prepare("DELETE FROM service_task_excel_links WHERE task_id=?").run(taskId);
+                deduplicated += 1;
+                insertEvent(db, canonicalTaskId, "Duplicitní Excel úkol byl bezpečně sloučen.", now);
+            }
+        }
         const existing = db.prepare("SELECT task_id,local_status_dirty FROM service_task_excel_links WHERE sheet_name=?").all(parsed.sheetName);
         for (const link of existing) {
             if (seen.has(link.task_id) || link.local_status_dirty)
@@ -339,7 +388,7 @@ function persistRows(db, parsed, workbookHash) {
         }
         setSetting(db, "service_tasks_excel_workbook_hash", workbookHash);
     });
-    return { activeRows: parsed.rows.length, created, updated, completed };
+    return { activeRows: parsed.rows.length, created, updated, completed, deduplicated };
 }
 export function importServiceTasksFromWorkbook(db, workbook) {
     return persistRows(db, parseServiceTaskWorkbook(workbook), createHash("sha256").update(workbook).digest("hex"));

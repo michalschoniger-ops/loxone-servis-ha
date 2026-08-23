@@ -21,6 +21,9 @@ $hubUrl = [string]$configuration.hubUrl
 if ([string]::IsNullOrWhiteSpace($hubUrl)) {
   throw "Existing launcher configuration does not contain the Hub URL."
 }
+if ($hubUrl -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+  $hubUrl = "https://$($hubUrl.Trim().TrimEnd('/'))"
+}
 $storedAgentName = [string]$configuration.agentName
 if ([string]::IsNullOrWhiteSpace($AgentName)) {
   $AgentName = if ([string]::IsNullOrWhiteSpace($storedAgentName)) { $env:COMPUTERNAME } else { $storedAgentName }

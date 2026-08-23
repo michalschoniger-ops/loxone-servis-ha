@@ -1,6 +1,6 @@
 # Instalace a aktualizace
 
-Hlavní navigace obsahuje pole **Hledat v nabídce…**. Vyhledává bez ohledu na diakritiku v hlavních položkách i v podsložkách LOXONE, Podpora a Nastavení; odpovídající skupinu samo rozbalí. Stejné globální hledání nabízí Evora Smart Menu 5.8.5 pro celé nativní macOS menu a všechny jeho vnořené položky.
+Hlavní navigace obsahuje pole **Hledat v nabídce…**. Vyhledává bez ohledu na diakritiku v hlavních položkách i v podsložkách LOXONE, Podpora a Nastavení; odpovídající skupinu samo rozbalí. Stejné globální hledání nabízí Evora Smart Menu 3.0.0 pro celé nativní macOS menu a všechny jeho vnořené položky.
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.
@@ -41,7 +41,7 @@ V Parallels se ZIP rozbalí a instalátor spustí přímo uvnitř Windows; macOS
 
 Při kliknutí na **Otevřít v Loxone Config** Hub vybere pouze online agenta přihlášeného uživatele. Do databázové fronty uloží SN, požadovanou verzi a odkaz na Config, nikdy login ani heslo. Přístupy odešle až při autorizovaném převzetí konkrétní úlohy. Helper vyhledá přesný `FileVersion` souboru `LoxoneConfig.exe`; chybí-li, ukončí úlohu bezpečnou chybou a nabídne oficiální odkaz ke stažení. Při nalezení otevře přesnou instalaci, jednoznačně ověří prvky okna přes Windows UI Automation, ponechá lokální adresu prázdnou a do externí adresy vloží SN Miniserveru.
 
-Launcher 2.1.1.0 jednou za minutu obnovuje diagnostiku podpisu skriptu, nalezených Configů, UI Automation, oprávnění a bezpečného spojení s Hubem. Přesný krok neúspěšné automatizace vrátí do Hubu bez loginu, hesla nebo tokenu a Config ponechá otevřený pro ruční připojení. Novou verzi přijme jen z manifestu vráceného po autentizovaném pollingu a po přesné shodě SHA-256; před nahrazením ponechá lokální `.bak` kopii. Při odmítnutí uloženého tokenu oznámí nutnost nového párování. Nový kód se zadá pomocí `Opravit-parovani.cmd` z aktuálního ZIPu; po úspěchu Hub zneplatní starý token stejného uživatele a stejného Windows agenta.
+Launcher 3.0.0.0 jednou za minutu obnovuje diagnostiku podpisu skriptu, nalezených Configů, UI Automation, oprávnění a bezpečného spojení s Hubem. Běží skrytě v oznamovací oblasti Windows pod značkou Evora; stavová tečka rozlišuje online, offline, aktualizaci a start. Z ikony lze otevřít Hub, ověřit připojení a aktualizace, spustit nové párování nebo otevřít diagnostický protokol. Starší uloženou adresu bez `https://` bezpečně převede na HTTPS, což opravuje párování po aktualizaci starších instalací. Přesný krok neúspěšné automatizace vrátí do Hubu bez loginu, hesla nebo tokenu a Config ponechá otevřený pro ruční připojení. Novou verzi přijme jen z manifestu vráceného po autentizovaném pollingu a po přesné shodě SHA-256; před nahrazením ponechá lokální `.bak` kopii. Při odmítnutí uloženého tokenu oznámí nutnost nového párování. Nový kód se zadá pomocí `Opravit-parovani.cmd` z aktuálního ZIPu; po úspěchu Hub zneplatní starý token stejného uživatele a stejného Windows agenta.
 
 ## Incidenty, servisní profily a interní úkoly
 

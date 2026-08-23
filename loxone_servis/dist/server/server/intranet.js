@@ -281,69 +281,106 @@ function attendanceResponse(value) {
     };
 }
 export function deriveIntranetAttendance(events, now = new Date()) {
+    const latest = attendanceSessions(events, now).at(-1);
+    if (!latest)
+        return { state: "none", since: null, worked: 0, arrival: null, departure: null };
+    const isOpen = latest.departure === null;
     const today = pragueDateKey(now);
+    const belongsToToday = latest.date === today || (latest.endedAt ? pragueDateKey(latest.endedAt) === today : false);
+    if ((!isOpen && !belongsToToday) || (isOpen && now.getTime() - latest.startedAt.getTime() > 36 * 60 * 60 * 1_000)) {
+        return { state: "none", since: null, worked: 0, arrival: null, departure: null };
+    }
+    const worked = latest.workedMs + (latest.activeStart ? Math.max(0, now.getTime() - latest.activeStart.getTime()) : 0);
+    return {
+        state: latest.temporaryState ?? latest.baseState,
+        since: (latest.temporarySince ?? latest.baseSince)?.toISOString() ?? null,
+        worked: Math.max(0, Math.floor(worked / 1_000)),
+        arrival: latest.arrival,
+        departure: latest.departure,
+    };
+}
+function attendanceSessions(events, now = new Date()) {
     const parsed = events
         .map((event) => ({ event, date: new Date(event.ts) }))
-        .filter(({ date }) => !Number.isNaN(date.getTime()) && date <= now && pragueDateKey(date) === today)
+        .filter(({ date }) => !Number.isNaN(date.getTime()) && date <= now)
         .sort((left, right) => left.date.getTime() - right.date.getTime());
-    let baseState = "none";
-    let baseSince = null;
-    let temporaryState = null;
-    let temporarySince = null;
-    let activeStart = null;
-    let worked = 0;
-    let lastArrival = null;
-    let lastDeparture = null;
+    const sessions = [];
+    let session = null;
+    const begin = (date) => ({
+        date: pragueDateKey(date),
+        startedAt: date,
+        endedAt: null,
+        events: [],
+        arrival: null,
+        departure: null,
+        workedMs: 0,
+        activeStart: null,
+        baseState: "none",
+        baseSince: null,
+        temporaryState: null,
+        temporarySince: null,
+    });
+    const closeStale = (date) => {
+        if (!session || date.getTime() - session.startedAt.getTime() <= 36 * 60 * 60 * 1_000)
+            return;
+        session.activeStart = null;
+        session.baseState = "away";
+        session.baseSince = session.events.length ? new Date(session.events.at(-1).ts) : session.startedAt;
+        sessions.push(session);
+        session = null;
+    };
     for (const { event, date } of parsed) {
-        if (event.kind === "arrival" || event.kind === "home_start") {
-            baseState = event.kind === "arrival" ? "in_building" : "home_office";
-            baseSince = date;
-            temporaryState = null;
-            temporarySince = null;
-            activeStart ??= date;
-            lastArrival = date;
+        closeStale(date);
+        const startsSession = event.kind === "arrival" || event.kind === "home_start";
+        if (!session)
+            session = begin(date);
+        session.events.push(event);
+        if (startsSession) {
+            session.baseState = event.kind === "arrival" ? "in_building" : "home_office";
+            session.baseSince = date;
+            session.temporaryState = null;
+            session.temporarySince = null;
+            session.activeStart ??= date;
+            session.arrival ??= event.ts;
         }
         else if (event.kind === "break_out" || event.kind === "doctor_out") {
-            if (activeStart)
-                worked += Math.max(0, date.getTime() - activeStart.getTime());
-            activeStart = null;
-            temporaryState = event.kind === "break_out" ? "on_break" : "doctor";
-            temporarySince = date;
+            if (session.activeStart)
+                session.workedMs += Math.max(0, date.getTime() - session.activeStart.getTime());
+            session.activeStart = null;
+            session.temporaryState = event.kind === "break_out" ? "on_break" : "doctor";
+            session.temporarySince = date;
         }
         else if (event.kind === "offsite_out") {
-            temporaryState = "offsite";
-            temporarySince = date;
-            activeStart ??= date;
+            session.temporaryState = "offsite";
+            session.temporarySince = date;
+            session.activeStart ??= date;
         }
         else if (["break_in", "doctor_in", "offsite_in"].includes(event.kind)) {
-            temporaryState = null;
-            temporarySince = null;
-            if (baseState === "none") {
-                baseState = "in_building";
-                baseSince = date;
+            session.temporaryState = null;
+            session.temporarySince = null;
+            if (session.baseState === "none") {
+                session.baseState = "in_building";
+                session.baseSince = date;
             }
-            activeStart ??= date;
+            session.activeStart ??= date;
         }
         else if (event.kind === "departure" || event.kind === "home_end") {
-            if (activeStart)
-                worked += Math.max(0, date.getTime() - activeStart.getTime());
-            activeStart = null;
-            temporaryState = null;
-            temporarySince = null;
-            baseState = "away";
-            baseSince = date;
-            lastDeparture = date;
+            if (session.activeStart)
+                session.workedMs += Math.max(0, date.getTime() - session.activeStart.getTime());
+            session.activeStart = null;
+            session.temporaryState = null;
+            session.temporarySince = null;
+            session.baseState = "away";
+            session.baseSince = date;
+            session.departure = event.ts;
+            session.endedAt = date;
+            sessions.push(session);
+            session = null;
         }
     }
-    if (activeStart)
-        worked += Math.max(0, now.getTime() - activeStart.getTime());
-    return {
-        state: temporaryState ?? baseState,
-        since: (temporarySince ?? baseSince)?.toISOString() ?? null,
-        worked: Math.max(0, Math.floor(worked / 1_000)),
-        arrival: lastArrival?.toISOString() ?? null,
-        departure: lastDeparture?.toISOString() ?? null,
-    };
+    if (session)
+        sessions.push(session);
+    return sessions;
 }
 export function intranetAvailableActions(state) {
     if (state === "in_building")
@@ -419,47 +456,19 @@ function mergeEvents(existing, incoming) {
     }
     return [...merged.values()].sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
 }
-function historyDays(events, targetMonth, now = new Date()) {
-    const grouped = new Map();
-    for (const event of events) {
-        const date = new Date(event.ts);
-        if (Number.isNaN(date.getTime()))
-            continue;
-        const key = pragueDateKey(date);
-        if (!key.startsWith(targetMonth))
-            continue;
-        grouped.set(key, [...(grouped.get(key) ?? []), event]);
-    }
-    return [...grouped.entries()].sort(([left], [right]) => right.localeCompare(left)).map(([date, dayEvents]) => {
-        const sorted = dayEvents.sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
-        let activeStart = null;
-        let worked = 0;
-        let arrival = null;
-        let departure = null;
-        for (const event of sorted) {
-            const at = new Date(event.ts);
-            if (["arrival", "home_start"].includes(event.kind)) {
-                arrival ??= event.ts;
-                activeStart ??= at;
-            }
-            else if (["break_out", "doctor_out"].includes(event.kind)) {
-                if (activeStart)
-                    worked += Math.max(0, at.getTime() - activeStart.getTime());
-                activeStart = null;
-            }
-            else if (["break_in", "doctor_in", "offsite_in", "offsite_out"].includes(event.kind)) {
-                activeStart ??= at;
-            }
-            else if (["departure", "home_end"].includes(event.kind)) {
-                if (activeStart)
-                    worked += Math.max(0, at.getTime() - activeStart.getTime());
-                activeStart = null;
-                departure = event.ts;
-            }
-        }
-        if (date === pragueDateKey(now) && activeStart)
-            worked += Math.max(0, now.getTime() - activeStart.getTime());
-        return { date, arrival, departure, workedSeconds: Math.floor(worked / 1_000), events: sorted };
+export function intranetHistoryDays(events, targetMonth, now = new Date()) {
+    return attendanceSessions(events, now)
+        .filter((session) => session.date.startsWith(targetMonth))
+        .sort((left, right) => right.date.localeCompare(left.date))
+        .map((session) => {
+        const liveMs = session.activeStart ? Math.max(0, now.getTime() - session.activeStart.getTime()) : 0;
+        return {
+            date: session.date,
+            arrival: session.arrival,
+            departure: session.departure,
+            workedSeconds: Math.floor((session.workedMs + liveMs) / 1_000),
+            events: [...session.events],
+        };
     });
 }
 function findDictionary(value, keys) {
@@ -647,8 +656,8 @@ function snapshotWithHistory(snapshot, events) {
         history: {
             currentMonth,
             previousMonth,
-            current: historyDays(events, currentMonth),
-            previous: historyDays(events, previousMonth),
+            current: intranetHistoryDays(events, currentMonth),
+            previous: intranetHistoryDays(events, previousMonth),
         },
     };
 }

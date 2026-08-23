@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0
+
+- Evora Smart Hub a Evora Smart Menu jsou sjednocené do společného vydání 3.0.0. Hlavní i vnořená navigace zachovává jednotné rozměry, barevné ikony a globální hledání v celé nabídce.
+- Evora Smart Menu používá pro Evora Intranet stejnou zelenou značku `e` jako Hub. Detail ticketu ukazuje animovaný stav načítání, komunikaci dělí podle účastníků a přesný trackpadový posun zobrazuje plynule.
+- Docházkové relace přes půlnoc se slučují do jediného pracovního záznamu přiřazeného dni začátku. Součet, historie i aktivní stav tak neztrácejí Home office nebo práci ukončenou po půlnoci.
+- Sledování práce se automaticky řídí ověřeným aktivním stavem Evora Intranetu; při práci běží, při pauze se pozastaví a mimo docházku zůstává neaktivní.
+- Windows Config Launcher 3.0.0.0 běží v oznamovací oblasti Windows s vlastní značkou a stavovou tečkou, umí ruční kontrolu aktualizace, otevření diagnostiky a bezpečné znovupárování. Staré adresy Hubu bez schématu automaticky opraví na HTTPS.
+- Správa uživatelů, složek, podpory a žádostí o absenci dostala kompaktní a responzivní geometrii bez přetékání textu; avatar zůstává skutečně kruhový.
+
 ## 2.2.5
 
 - Hlavní nabídka Hubu má globální hledání bez ohledu na diakritiku. Prohledává i skryté podsložky LOXONE, Podpora a Nastavení, při shodě je otevře a po volbě obnoví běžný stav menu.

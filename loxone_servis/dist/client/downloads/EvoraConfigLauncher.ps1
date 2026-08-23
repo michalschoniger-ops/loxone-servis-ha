@@ -11,7 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "2.1.1.0"
+$HelperVersion = "3.0.0.0"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -21,6 +21,13 @@ $script:HubConnectionVerified = $false
 $script:AutomaticUpdateState = "passed"
 $script:AutomaticUpdateMessage = "Updates use an authenticated Hub manifest and an exact SHA-256 check."
 $script:PairingRejectedNoticeShown = $false
+$script:TrayIcon = $null
+$script:TrayIconImage = $null
+$script:TrayStatusItem = $null
+$script:TrayState = ""
+$script:TrayExitRequested = $false
+$script:ForceLauncherScan = $false
+$script:TrayHubUrl = ""
 
 function Write-SafeLog([string]$Message) {
   if (-not (Test-Path -LiteralPath $AppDirectory)) {
@@ -70,6 +77,12 @@ function Show-LauncherNotice([string]$Title, [string]$Message, [string]$Url = ""
   try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
+    if ($null -ne $script:TrayIcon) {
+      $script:TrayIcon.BalloonTipTitle = $Title
+      $script:TrayIcon.BalloonTipText = $Message
+      $script:TrayIcon.ShowBalloonTip(8000)
+      return
+    }
     $notice = New-Object System.Windows.Forms.NotifyIcon
     $notice.Icon = [System.Drawing.SystemIcons]::Information
     $notice.Visible = $true
@@ -84,6 +97,141 @@ function Show-LauncherNotice([string]$Title, [string]$Message, [string]$Url = ""
   } catch {
     Write-SafeLog "Windows notification could not be displayed."
   }
+}
+
+function New-EvoraTrayIconImage([string]$State = "starting") {
+  Add-Type -AssemblyName System.Drawing
+  if ($null -eq ("EvoraTrayNative" -as [type])) {
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class EvoraTrayNative {
+  [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool DestroyIcon(IntPtr handle);
+}
+'@
+  }
+  $bitmap = [System.Drawing.Bitmap]::new(64, 64)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $graphics.Clear([System.Drawing.Color]::Transparent)
+  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+  $path.AddArc(2, 2, 18, 18, 180, 90)
+  $path.AddArc(44, 2, 18, 18, 270, 90)
+  $path.AddArc(44, 44, 18, 18, 0, 90)
+  $path.AddArc(2, 44, 18, 18, 90, 90)
+  $path.CloseFigure()
+  $green = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(86, 224, 56))
+  $graphics.FillPath($green, $path)
+  $font = [System.Drawing.Font]::new("Segoe UI", 39, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  $white = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
+  $format = [System.Drawing.StringFormat]::new()
+  $format.Alignment = [System.Drawing.StringAlignment]::Center
+  $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+  $graphics.DrawString("e", $font, $white, [System.Drawing.RectangleF]::new(0, -3, 64, 64), $format)
+  $statusColor = switch ($State) {
+    "online" { [System.Drawing.Color]::FromArgb(55, 203, 73) }
+    "offline" { [System.Drawing.Color]::FromArgb(235, 70, 82) }
+    "updating" { [System.Drawing.Color]::FromArgb(34, 151, 230) }
+    default { [System.Drawing.Color]::FromArgb(244, 166, 35) }
+  }
+  $statusBrush = [System.Drawing.SolidBrush]::new($statusColor)
+  $outline = [System.Drawing.Pen]::new([System.Drawing.Color]::White, 4)
+  $graphics.FillEllipse($statusBrush, 42, 42, 20, 20)
+  $graphics.DrawEllipse($outline, 42, 42, 20, 20)
+  $handle = $bitmap.GetHicon()
+  try {
+    return ([System.Drawing.Icon]::FromHandle($handle).Clone())
+  } finally {
+    [EvoraTrayNative]::DestroyIcon($handle) | Out-Null
+    $outline.Dispose()
+    $statusBrush.Dispose()
+    $format.Dispose()
+    $white.Dispose()
+    $font.Dispose()
+    $green.Dispose()
+    $path.Dispose()
+    $graphics.Dispose()
+    $bitmap.Dispose()
+  }
+}
+
+function Set-LauncherTrayStatus([string]$State, [string]$Label) {
+  if ($null -eq $script:TrayIcon) { return }
+  if ($script:TrayState -ne $State) {
+    $nextIcon = New-EvoraTrayIconImage $State
+    $previousIcon = $script:TrayIconImage
+    $script:TrayIconImage = $nextIcon
+    $script:TrayIcon.Icon = $nextIcon
+    $script:TrayState = $State
+    if ($null -ne $previousIcon) { $previousIcon.Dispose() }
+  }
+  $tooltip = "Evora Config Launcher - $Label"
+  $script:TrayIcon.Text = $tooltip.Substring(0, [Math]::Min(63, $tooltip.Length))
+  if ($null -ne $script:TrayStatusItem) { $script:TrayStatusItem.Text = "Stav: $Label" }
+}
+
+function Initialize-LauncherTray([string]$BaseUrl) {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $script:TrayHubUrl = $BaseUrl
+  $menu = [System.Windows.Forms.ContextMenuStrip]::new()
+  $status = [System.Windows.Forms.ToolStripMenuItem]::new("Stav: spouštím")
+  $status.Enabled = $false
+  $openHub = [System.Windows.Forms.ToolStripMenuItem]::new("Otevřít Evora Smart Hub")
+  $refresh = [System.Windows.Forms.ToolStripMenuItem]::new("Zkontrolovat připojení a aktualizace")
+  $repair = [System.Windows.Forms.ToolStripMenuItem]::new("Vytvořit nový párovací kód")
+  $diagnostics = [System.Windows.Forms.ToolStripMenuItem]::new("Otevřít diagnostický protokol")
+  $exit = [System.Windows.Forms.ToolStripMenuItem]::new("Ukončit Launcher")
+  $openHub.add_Click({ if ($script:TrayHubUrl) { Start-Process $script:TrayHubUrl } })
+  $refresh.add_Click({ $script:ForceLauncherScan = $true })
+  $repair.add_Click({
+    if ($script:TrayHubUrl) {
+      $settingsUrl = $script:TrayHubUrl.TrimEnd("/") + "/?page=settings"
+      Start-Process $settingsUrl
+    }
+  })
+  $diagnostics.add_Click({
+    if (-not (Test-Path -LiteralPath $LogPath)) { Write-SafeLog "Diagnostic log opened from the tray menu." }
+    Start-Process explorer.exe -ArgumentList @("/select,`"$LogPath`"")
+  })
+  $exit.add_Click({ $script:TrayExitRequested = $true })
+  [void]$menu.Items.Add($status)
+  [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
+  [void]$menu.Items.Add($openHub)
+  [void]$menu.Items.Add($refresh)
+  [void]$menu.Items.Add($repair)
+  [void]$menu.Items.Add($diagnostics)
+  [void]$menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new())
+  [void]$menu.Items.Add($exit)
+  $notify = [System.Windows.Forms.NotifyIcon]::new()
+  $notify.ContextMenuStrip = $menu
+  $notify.Visible = $true
+  $notify.add_DoubleClick({ if ($script:TrayHubUrl) { Start-Process $script:TrayHubUrl } })
+  $script:TrayIcon = $notify
+  $script:TrayStatusItem = $status
+  Set-LauncherTrayStatus -State "starting" -Label "spouštím"
+}
+
+function Wait-WithTrayEvents([int]$Milliseconds) {
+  $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(0, $Milliseconds))
+  do {
+    if ($null -ne $script:TrayIcon) { [System.Windows.Forms.Application]::DoEvents() }
+    if ($script:TrayExitRequested) { return }
+    Start-Sleep -Milliseconds 50
+  } while ([DateTime]::UtcNow -lt $deadline)
+}
+
+function Dispose-LauncherTray {
+  if ($null -ne $script:TrayIcon) {
+    $script:TrayIcon.Visible = $false
+    $script:TrayIcon.Dispose()
+    $script:TrayIcon = $null
+  }
+  if ($null -ne $script:TrayIconImage) {
+    $script:TrayIconImage.Dispose()
+    $script:TrayIconImage = $null
+  }
+  $script:TrayState = ""
 }
 
 function Protect-LauncherToken([string]$Token) {
@@ -110,6 +258,9 @@ function Unprotect-LauncherToken([string]$Encoded) {
 
 function Normalize-HubUrl([string]$Value) {
   $normalized = $Value.Trim().TrimEnd("/")
+  if ($normalized -notmatch '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+    $normalized = "https://$normalized"
+  }
   $uri = $null
   if (-not [Uri]::TryCreate($normalized, [UriKind]::Absolute, [ref]$uri)) {
     throw "Hub URL is not valid."
@@ -684,7 +835,13 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
 }
 
 $configuration = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-$configuredHubUrl = Normalize-HubUrl ([string]$configuration.hubUrl)
+$storedHubUrl = [string]$configuration.hubUrl
+$configuredHubUrl = Normalize-HubUrl $storedHubUrl
+if ($storedHubUrl -ne $configuredHubUrl) {
+  $configuration.hubUrl = $configuredHubUrl
+  Set-Content -LiteralPath $ConfigPath -Value (ConvertTo-Json $configuration -Compress) -Encoding UTF8
+  Write-SafeLog "Legacy Hub URL was migrated to an explicit HTTPS URL."
+}
 $agentToken = Unprotect-LauncherToken ([string]$configuration.tokenProtected)
 
 if ($SelfTest) {
@@ -699,12 +856,14 @@ if (-not $createdNew) { exit 0 }
 
 try {
   Write-SafeLog "Launcher started."
+  Initialize-LauncherTray $configuredHubUrl
   $lastScan = [DateTime]::MinValue
   $executables = @()
   $diagnostics = $null
-  while ($true) {
+  while (-not $script:TrayExitRequested) {
     try {
-      if ((Get-Date) -gt $lastScan.AddMinutes(1)) {
+      if ($script:ForceLauncherScan -or (Get-Date) -gt $lastScan.AddMinutes(1)) {
+        $script:ForceLauncherScan = $false
         $executables = @(Get-ConfigExecutables)
         $diagnostics = Get-LauncherDiagnostics $executables
         $lastScan = Get-Date
@@ -714,6 +873,7 @@ try {
         installedVersions = @($executables | ForEach-Object { $_.Version })
         diagnostics = $diagnostics
       }
+      Set-LauncherTrayStatus -State "updating" -Label "kontroluji"
       $response = Invoke-HubJson "POST" $configuredHubUrl "/api/config-launcher/agent/poll" $pollBody $agentToken
       if (-not $script:HubConnectionVerified) {
         $script:HubConnectionVerified = $true
@@ -739,21 +899,25 @@ try {
           }
         }
       }
-      Start-Sleep -Seconds 3
+      Set-LauncherTrayStatus -State "online" -Label "online"
+      Wait-WithTrayEvents 3000
     } catch {
       if (Test-HubRejectedPairing $_) {
+        Set-LauncherTrayStatus -State "offline" -Label "párování je neplatné"
         Write-SafeLog "Hub rejected the stored launcher pairing. Re-pairing is required."
         if (-not $script:PairingRejectedNoticeShown) {
           $script:PairingRejectedNoticeShown = $true
           Show-LauncherNotice "Evora Smart Hub" "Stored pairing is no longer valid. Create a new code in Hub and run Opravit-parovani.cmd from the latest ZIP."
         }
       } else {
+        Set-LauncherTrayStatus -State "offline" -Label "Hub je nedostupný"
         Write-SafeLog "Hub poll failed; retrying later."
       }
-      Start-Sleep -Seconds 30
+      Wait-WithTrayEvents 30000
     }
   }
 } finally {
+  Dispose-LauncherTray
   if ($agentToken) { $agentToken = $null }
   $mutex.ReleaseMutex()
   $mutex.Dispose()

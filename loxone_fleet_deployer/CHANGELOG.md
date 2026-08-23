@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0.1
+
+- Nasazuje Evora Smart Hub 3.0.0 a Evora Smart Menu 3.0.0 s jednotnou navigací, značkou Intranetu, plynulým ticketovým náhledem a opravenou docházkou přes půlnoc.
+- Obsahuje Windows Config Launcher 3.0.0.0 s oznamovací ikonou, stavovou diagnostikou, automatickou aktualizací a bezpečným znovupárováním.
+- Před výměnou zachová úplnou vratnou kopii zdroje 2.2.5; databázi, šifrované přístupy ani jiný obsah `/data` nemění.
+
 ## 2.2.5.2
 
 - Opravuje instalační runtime 2.2.5 tak, aby používal již ověřený produkční build a při sestavení na Home Assistantu nevyžadoval vývojové TypeScript soubory.

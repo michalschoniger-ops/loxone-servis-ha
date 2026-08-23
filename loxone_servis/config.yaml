@@ -1,5 +1,5 @@
 name: Evora Smart Hub
-version: "3.0.2"
+version: "3.0.3"
 slug: loxone_fleet
 description: Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.
 url: https://github.com/michalschoniger-ops/loxone-servis
@@ -28,6 +28,7 @@ options:
   bootstrap_admin_password_hash: ""
   cron_secret: ""
   local_setup_allowed: false
+  service_tasks_excel_share_url: ""
 schema:
   credentials_master_key: password
   bootstrap_admin_email: str
@@ -40,3 +41,4 @@ schema:
   canonical_base_url: url?
   backup_encryption_key: password?
   backup_pull_token: password?
+  service_tasks_excel_share_url: password?

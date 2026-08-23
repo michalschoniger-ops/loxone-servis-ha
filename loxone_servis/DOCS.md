@@ -49,7 +49,9 @@ Sekce **Incidenty** automaticky slučuje opakované výpadky Miniserveru, kolís
 
 V detailu Gateway nebo samostatného Miniserveru lze uložit zákazníka, kontaktní osobu, adresu, typ objektu, servisní smlouvu, SLA, záruku, datum další kontroly, vlastní pole a barevné tagy. Client tyto údaje vždy čte ze své Gateway a nemůže je přepsat vlastním profilem.
 
-Sekce **Servisní úkoly** je interní náhrada sdíleného Excelu a je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
+Sekce **Servisní úkoly** je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
+
+Na HA Práce lze v chráněné volbě `service_tasks_excel_share_url` nastavit sdílený sešit. Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Stabilní vazba na řádek a otisk obsahu brání duplicitám a obrazovka ukazuje poslední úspěch, chybu i počet řádků. Veřejný sdílený odkaz podporuje pouze čtení; lokální změna stavu se proto uloží v Hubu a označí jako čekající zápis, ale nevydává se za změnu původního Excelu.
 
 ## Evora Smart Menu na macOS
 

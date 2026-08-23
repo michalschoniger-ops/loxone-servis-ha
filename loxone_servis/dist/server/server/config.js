@@ -14,6 +14,7 @@ const optionsSchema = z.object({
     canonical_base_url: z.string().optional(),
     backup_encryption_key: z.string().optional(),
     backup_pull_token: z.string().optional(),
+    service_tasks_excel_share_url: z.string().optional(),
 });
 function readOptions(path) {
     try {
@@ -38,12 +39,35 @@ function optionalHttpsUrl(value, name) {
     parsed.pathname = parsed.pathname.replace(/\/+$/, "");
     return parsed.toString().replace(/\/$/, "");
 }
+export function normalizeServiceTasksExcelShareUrl(value) {
+    const normalized = value?.trim() ?? "";
+    if (!normalized)
+        return "";
+    if (normalized.length > 4_096)
+        throw new Error("Odkaz na Excel je příliš dlouhý.");
+    const parsed = new URL(normalized);
+    const hostname = parsed.hostname.toLocaleLowerCase("en");
+    if (parsed.protocol !== "https:" || !hostname.endsWith(".sharepoint.com")) {
+        throw new Error("Excel úkolů musí být sdílený HTTPS odkaz na SharePoint.");
+    }
+    if (parsed.username || parsed.password || parsed.hash) {
+        throw new Error("Odkaz na Excel nesmí obsahovat přihlašovací údaje ani fragment.");
+    }
+    for (const key of parsed.searchParams.keys()) {
+        if (!["e", "download", "web"].includes(key))
+            throw new Error("Odkaz na Excel obsahuje nepovolený parametr.");
+    }
+    parsed.searchParams.delete("web");
+    parsed.searchParams.set("download", "1");
+    return parsed.toString();
+}
 const dataDirectory = resolve(process.env.DATA_DIRECTORY ?? "/data");
 export const optionsPath = resolve(process.env.OPTIONS_PATH ?? `${dataDirectory}/options.json`);
 const options = readOptions(optionsPath);
 mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
 const canonicalBaseUrl = optionalHttpsUrl(process.env.CANONICAL_BASE_URL ?? options.canonical_base_url, "CANONICAL_BASE_URL");
 const publicBaseUrl = optionalHttpsUrl(process.env.PUBLIC_BASE_URL ?? options.public_base_url, "PUBLIC_BASE_URL");
+const serviceTasksExcelShareUrl = normalizeServiceTasksExcelShareUrl(process.env.SERVICE_TASKS_EXCEL_SHARE_URL ?? options.service_tasks_excel_share_url);
 const masterKeyBase64 = process.env.CREDENTIALS_MASTER_KEY ?? options.credentials_master_key ?? "";
 const masterKey = masterKeyBase64 ? Buffer.from(masterKeyBase64, "base64") : Buffer.alloc(0);
 if (!canonicalBaseUrl && masterKey.length !== 32) {
@@ -80,7 +104,7 @@ export const config = {
     checkConcurrency: Math.max(1, Math.min(10, Number(process.env.CHECK_CONCURRENCY ?? 2))),
     fullCheckIntervalMinutes: Math.max(30, Number(process.env.FULL_CHECK_INTERVAL_MINUTES ?? 120)),
     requestTimeoutMs: Math.max(3_000, Number(process.env.LOXONE_REQUEST_TIMEOUT_MS ?? 18_000)),
-    appVersion: process.env.APP_VERSION ?? "3.0.2",
+    appVersion: process.env.APP_VERSION ?? "3.0.3",
     appUuid: process.env.LOXONE_APP_UUID ?? "1bfb0d5e-3d6e-4e77-9ed4-fc2b2f0682ba",
     appInfo: process.env.LOXONE_APP_INFO ?? "Evora Smart Hub",
     schedulerEnabled: (process.env.SCHEDULER_ENABLED ?? "true").toLowerCase() === "true",
@@ -91,4 +115,5 @@ export const config = {
     backupEncryptionKey,
     backupPullToken,
     backupEnabled: !canonicalBaseUrl && backupEncryptionKey.length === 32 && backupPullToken.length >= 32,
+    serviceTasksExcelShareUrl,
 };

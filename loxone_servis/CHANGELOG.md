@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.3
+
+- Úkoly načítají aktivní řádky z listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` sdíleného Excelu, bezpečně končí před oddílem `HOTOVO` a používají stabilní vazbu na řádek i otisk obsahu, takže hodinová nebo ruční synchronizace nevytváří duplikáty.
+- Stav synchronizace, počet načtených řádků, poslední úspěch a případná chyba jsou vidět přímo v centru Úkoly. Sdílený odkaz je pouze pro čtení; Hub proto změnu stavu uchová lokálně a výslovně označí čekající zápis místo nepravdivého potvrzení změny původního Excelu.
+- Mobilní stránka už nemůže odjet do prázdného pravého prostoru: kořen aplikace a obsah mají uzavřenou šířku a nabídka se odkrývá uvnitř viewportu bez prvku posunutého mimo obrazovku.
+- iPhone správa uživatelů používá kompaktnější avatar, kartu a 44px ovládací prvky. Mezi registrační informační ikonou Miniserveru a verzí firmwaru je samostatná mezera.
+- Text diagnostiky Windows Launcheru se dál skládá z českých stavových vět v Hubu; nový cache identifikátor 3.0.3 vynutí načtení této verze i na telefonu.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; tento balíček mění pouze Hub.
+
 ## 3.0.2
 
 - Opravuje živým desktopovým screenshotem potvrzené přetékání a špatné zarovnání v tabulce uživatelů: řádky zůstávají kompaktní, ale jméno, e-mail, kruhový avatar, fotografické akce, role i stav mají čitelné jednotné rozměry.

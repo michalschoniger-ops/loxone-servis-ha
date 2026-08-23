@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.3.1
+
+- Nasazuje Evora Smart Hub 3.0.3 s bezpečným, idempotentním importem aktivních servisních úkolů ze sdíleného Excelu, ruční a hodinovou synchronizací a viditelným stavem zdroje.
+- Přidává iPhone opravy přetékání, kompaktní správy uživatelů a mezery u firmwaru; Evora Smart Menu a Windows klient zůstávají 3.0.1 a Config Launcher 3.0.0.2.
+- Zachovává databázi, šifrovaná připojení a vratnou kopii zdroje 3.0.2; veřejný Excel odkaz zůstává mimo payload a ukládá se jen do chráněných voleb cílového add-onu.
+
 ## 3.0.2.1
 
 - Nasazuje čistě hubový grafický patch Evora Smart Hubu 3.0.2: čitelné a zarovnané desktopové uživatele, nezkrácený text globálního hledání a větší českou diagnostiku Windows Launcheru.

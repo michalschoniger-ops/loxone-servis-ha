@@ -20,6 +20,7 @@ import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, 
 import { officialConfigDownloadUrl } from "./release.js";
 import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
 import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
+import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
@@ -52,7 +53,7 @@ const serviceTaskInputSchema = z.object({
     assigneeUserId: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9_-]+$/).nullable().default(null),
     serial: serialSchema.nullable().default(null),
     incidentId: z.string().uuid().nullable().default(null),
-    source: z.enum(["phone", "email", "in_person", "internal", "monitoring", "other"]).default("internal"),
+    source: z.enum(["phone", "email", "in_person", "internal", "monitoring", "excel", "other"]).default("internal"),
     contactName: z.string().trim().max(160).default(""),
     contactPhone: z.string().trim().max(80).default(""),
     contactEmail: z.union([z.string().trim().email().max(254), z.literal("")]).default(""),
@@ -974,6 +975,28 @@ export async function registerApi(app, db, jobs) {
         if (!requireRole(request, reply, ["admin", "technician"]))
             return;
         return { items: listServiceTasks(db) };
+    });
+    app.get("/api/service-tasks/excel/status", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        return { status: getServiceTaskExcelSyncStatus(db) };
+    });
+    app.post("/api/service-tasks/excel/sync", { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        try {
+            const status = await syncServiceTasksFromExcel(db);
+            audit(db, "service_tasks.excel_synced", user.id, null, { activeRows: status.activeRows });
+            return { status, items: listServiceTasks(db) };
+        }
+        catch (error) {
+            const known = error instanceof ServiceTaskExcelError ? error : null;
+            audit(db, "service_tasks.excel_sync_failed", user.id, null, { code: known?.code ?? "SYNC_FAILED" });
+            return reply.code(known?.code === "NOT_CONFIGURED" ? 409 : 502).send({
+                error: known?.message ?? "Synchronizace Excelu se nezdařila.", code: known?.code ?? "SYNC_FAILED",
+            });
+        }
     });
     app.post("/api/service-tasks", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

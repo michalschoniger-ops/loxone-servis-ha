@@ -11,6 +11,7 @@ import { checkHomeAssistantMonitors, persistHomeAssistantMonitorCheck, purgeHome
 import { portalSyncDue, syncPortal } from "./portal-sync.js";
 import { refreshIncidents } from "./incidents.js";
 import { processServiceTaskReminders } from "./service-tasks.js";
+import { serviceTasksExcelSyncDue, syncServiceTasksFromExcel } from "./service-tasks-excel.js";
 export const FIRMWARE_POLL_INTERVAL_MS = 2 * 60_000;
 export const OFFICIAL_RELEASE_REFRESH_INTERVAL_MS = 4 * 60 * 60_000;
 export const HOME_ASSISTANT_SERVICE_MONITOR_INTERVAL_MS = 30_000;
@@ -146,6 +147,7 @@ export class JobQueue {
     ticking = false;
     monitorChecking = false;
     oneWireSampling = false;
+    serviceTasksExcelSyncing = false;
     lastServiceCenterRefreshAt = 0;
     startedAt = Date.now();
     constructor(db) {
@@ -241,6 +243,7 @@ export class JobQueue {
             await this.maybeScheduleRetryChecks();
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeCheckHomeAssistantServices(forceFullCheck);
+            await this.maybeSyncServiceTasksExcel();
             if (Date.now() - this.lastServiceCenterRefreshAt >= 5 * 60_000) {
                 refreshIncidents(this.db);
                 await processServiceTaskReminders(this.db);
@@ -264,6 +267,20 @@ export class JobQueue {
         }
         finally {
             this.ticking = false;
+        }
+    }
+    async maybeSyncServiceTasksExcel() {
+        if (this.serviceTasksExcelSyncing || !serviceTasksExcelSyncDue(this.db))
+            return;
+        this.serviceTasksExcelSyncing = true;
+        try {
+            await syncServiceTasksFromExcel(this.db);
+        }
+        catch (error) {
+            this.recordBackgroundFailure("service_tasks.excel_sync_failed", error);
+        }
+        finally {
+            this.serviceTasksExcelSyncing = false;
         }
     }
     async maybeRefreshRelease() {

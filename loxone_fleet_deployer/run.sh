@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_SHA256="108823f71163c06dbe2363d2f5c4f1357e44806c7c3d76685336aef16ef9610e"
+PAYLOAD_SHA256="130f0fce9a20ccc88813a690b82edd33b7049b3bd6fa15db5b28ed0ba814b63e"
 ROLLBACK_PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
 EXPECTED_SLUG="loxone_fleet"
-EXPECTED_VERSION="3.0.2"
+EXPECTED_VERSION="3.0.3"
 ROLLBACK_VERSION="1.0.3"
 
 if [ "${EVORA_DEPLOY_TEST_MODE:-0}" = "1" ]; then
@@ -98,7 +98,7 @@ if [ "$OPERATION" = "rollback" ]; then
   ORIGINAL_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$ORIGINAL_DIR/config.yaml")"
   [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ] || fail "Rollback odmítnut: aktivní zdroj není ${EXPECTED_VERSION}."
   case "$ORIGINAL_VERSION" in
-    0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2|2.0.3|2.0.4|2.0.5|2.0.6|2.0.7|2.0.8|2.0.9|2.0.10|2.1.0|2.1.1|2.1.2|2.2.0|2.2.1|2.2.2|2.2.3|2.2.4|2.2.5|3.0.0|3.0.1|3.0.2) ;;
+    0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2|2.0.3|2.0.4|2.0.5|2.0.6|2.0.7|2.0.8|2.0.9|2.0.10|2.1.0|2.1.1|2.1.2|2.2.0|2.2.1|2.2.2|2.2.3|2.2.4|2.2.5|3.0.0|3.0.1|3.0.2|3.0.3) ;;
     *) fail "Rollback odmítnut: neočekávaná původní verze $ORIGINAL_VERSION." ;;
   esac
   TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -148,7 +148,7 @@ esac
 
 CURRENT_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$TARGET_CONFIG")"
 case "$CURRENT_VERSION" in
-  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2|2.0.3|2.0.4|2.0.5|2.0.6|2.0.7|2.0.8|2.0.9|2.0.10|2.1.0|2.1.1|2.1.2|2.2.0|2.2.1|2.2.2|2.2.3|2.2.4|2.2.5|3.0.0|3.0.1|3.0.2) ;;
+  0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2|2.0.3|2.0.4|2.0.5|2.0.6|2.0.7|2.0.8|2.0.9|2.0.10|2.1.0|2.1.1|2.1.2|2.2.0|2.2.1|2.2.2|2.2.3|2.2.4|2.2.5|3.0.0|3.0.1|3.0.2|3.0.3) ;;
   *) fail "Neočekávaná cílová verze: ${CURRENT_VERSION:-neznámá}. Nic nebylo změněno." ;;
 esac
 

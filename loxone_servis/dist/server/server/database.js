@@ -859,6 +859,21 @@ function applyMigrations(db) {
       FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE,
       FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS service_task_excel_links (
+      task_id TEXT PRIMARY KEY,
+      sheet_name TEXT NOT NULL,
+      row_number INTEGER NOT NULL,
+      source_fingerprint TEXT NOT NULL,
+      row_hash TEXT NOT NULL,
+      last_imported_at TEXT NOT NULL,
+      local_status_dirty INTEGER NOT NULL DEFAULT 0,
+      writeback_state TEXT NOT NULL DEFAULT 'read_only' CHECK(writeback_state IN ('read_only','pending','blocked')),
+      writeback_error TEXT,
+      last_writeback_at TEXT,
+      FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_task_excel_row ON service_task_excel_links(sheet_name,row_number);
+    CREATE INDEX IF NOT EXISTS idx_service_task_excel_fingerprint ON service_task_excel_links(source_fingerprint);
     CREATE TABLE IF NOT EXISTS connection_test_runs (
       id TEXT PRIMARY KEY,
       serial TEXT NOT NULL,
@@ -881,6 +896,7 @@ function applyMigrations(db) {
     migrateDistinctFolderColors(db);
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(17, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(18, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(19, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

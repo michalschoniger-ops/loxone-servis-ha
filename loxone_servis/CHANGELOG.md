@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.11
+
+- Přidává kompatibilitu se starším Milesight NVR, které po prvním anonymním požadavku nabídne pouze HTTP Basic. Hub neposílá přihlášení předem, údaje nevkládá do URL ani logu a cílovou adresu dál omezuje výhradně na privátní IPv4 síť.
+- Zachovává preferenci podporovaného Digest přihlášení, pokud jej zařízení nabídne, a zpřesňuje text formuláře: údaje jsou šifrované v Hubu, zatímco způsob LAN přihlášení určuje NVR.
+- Evora Smart Menu 3.0.5 opravuje neaktuální záhlaví. Po úspěšném načtení API se text „Hub nepřipojen“ okamžitě změní na skutečnou živou verzi Hubu; `Systémy → Kamery` zůstávají viditelné i před načtením prvního kanálu a nabídnou přímé nastavení NVR.
+
 ## 3.0.10
 
 - Opravuje připojení Milesight NVR: Hub už nevyrábí vlastní neplatný Digest nonce, ale nejprve načte skutečnou výzvu zařízení a podepíše přesnou cestu SDK včetně dotazu.

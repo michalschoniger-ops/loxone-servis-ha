@@ -60,6 +60,12 @@ export function parseMilesightDigestChallenge(header) {
         stale: parameters.get("stale")?.toLowerCase() === "true",
     };
 }
+export function offersMilesightBasicAuthentication(header) {
+    return Boolean(header && /(?:^|,\s*)Basic(?:\s|$)/i.test(header));
+}
+export function milesightBasicAuthorization(username, password) {
+    return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+}
 function asObject(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -183,19 +189,22 @@ async function milesightSdkRequest(access, action) {
         });
         if (response.status === 401) {
             let challenge = parseMilesightDigestChallenge(response.headers.get("www-authenticate"));
-            if (!challenge) {
-                throw new CameraIntegrationError("NVR nenabídlo podporované Digest přihlášení.", "CAMERA_AUTH_FAILED");
+            const basicOffered = offersMilesightBasicAuthentication(response.headers.get("www-authenticate"));
+            if (!challenge && !basicOffered) {
+                throw new CameraIntegrationError("NVR nenabídlo podporované přihlášení.", "CAMERA_AUTH_FAILED");
             }
             await response.body?.cancel();
             response = await fetch(target, {
                 method: "GET",
                 headers: {
                     Accept: "application/json",
-                    Authorization: milesightDigestAuthorization(access.username, access.password, "GET", uri, challenge),
+                    Authorization: challenge
+                        ? milesightDigestAuthorization(access.username, access.password, "GET", uri, challenge)
+                        : milesightBasicAuthorization(access.username, access.password),
                 },
                 signal: controller.signal,
             });
-            if (response.status === 401) {
+            if (challenge && response.status === 401) {
                 const refreshed = parseMilesightDigestChallenge(response.headers.get("www-authenticate"));
                 if (refreshed?.stale) {
                     challenge = refreshed;

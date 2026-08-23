@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.11.1
+
+- Nasazuje Evora Smart Hub 3.0.11 s podporou serverem nabídnutého Basic ověření staršího Milesight NVR až po anonymní výzvě 401; privátní síť, šifrované uložení a ochrana URL/logů zůstávají zachované.
+- Zachovává databázi, čtecí Excel/Graph nastavení a vratnou kopii zdroje 3.0.10; součástí Hubu je Evora Smart Menu 3.0.5 s živě aktualizovanou verzí Hubu a vždy viditelnou položkou Kamery.
+
 ## 3.0.10.1
 
 - Nasazuje Evora Smart Hub 3.0.10 s opraveným Milesight Digest přihlášením podle skutečné výzvy NVR a přesné SDK cesty včetně dotazu.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.7.1
+
+- Nasazuje Evora Smart Hub 3.0.7 s dokončeným kontrastním auditem tmavého režimu a automatickou kontrolou WCAG AA pro hlavní textové a stavové barvy.
+- Zachovává 27 importovaných Excel úkolů, databázi, šifrovaná připojení i vratnou kopii zdroje 3.0.6.
+- Evora Smart Menu a Windows klient zůstávají 3.0.1 a Config Launcher 3.0.0.2.
+
 ## 3.0.6.1
 
 - Nasazuje Evora Smart Hub 3.0.6 s úplným tmavým motivem a volbou Světlý, Tmavý nebo Automaticky v Nastavení.

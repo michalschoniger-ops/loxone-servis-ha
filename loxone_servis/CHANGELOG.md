@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.7
+
+- Dokončuje kontrastní audit tmavého režimu napříč formuláři, navigací, modaly, diagnostikou, tickety, úkoly, Intranetem, uživateli, zálohami a mobilní nabídkou. Bílé pomocné plochy a odstíny určené pro světlé pozadí dostaly vlastní tmavé povrchy a čitelné texty.
+- Zvyšuje kontrast pomocných textů a placeholderů, zachovává čitelné zakázané hodnoty i automaticky doplněná pole Safari/Chromia a sjednocuje hover, aktivní položky, scrollbar a výběr textu.
+- Zelené, červené, oranžové, modré a fialové datové stavy mají samostatné tmavé dvojice popředí a pozadí. Automatický test nově hlídá minimální WCAG AA kontrast klíčových tokenů a stavů.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; tento balíček mění pouze Hub.
+
 ## 3.0.6
 
 - Přidává v Nastavení volbu Světlý, Tmavý a Automaticky podle zařízení. Volba se ukládá v daném prohlížeči, automatický režim živě sleduje systém a motiv se nastaví ještě před vykreslením aplikace bez světlého probliknutí.

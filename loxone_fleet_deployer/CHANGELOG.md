@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1.1
+
+- Nasazuje Evora Smart Hub a Evora Smart Menu 3.0.1 s globálním hledáním v celé aplikaci, sjednoceným mobilním formulářem a uživatelskými kartami, nativním trackpadovým posuvem ticketů a významovými ikonami dialogů.
+- Přidává Windows klienta 3.0.1 s odděleným stálým heartbeat a podmíněným sběrem dat; obsahuje Config Launcher 3.0.0.2 s opraveným přechodem ze starší instalace bez runtime souboru.
+- Zachovává databázi, šifrovaná připojení a vratnou kopii předchozího lokálního zdroje.
+
 ## 3.0.0.5
 
 - Opravuje profilovou fotografii v desktopové patičce i mobilní nabídce: textová pravidla už nezasahují avatar a obal má pevnou shodnou šířku i výšku.

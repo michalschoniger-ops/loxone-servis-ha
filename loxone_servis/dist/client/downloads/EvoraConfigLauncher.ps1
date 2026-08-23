@@ -11,10 +11,13 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.1"
+$HelperVersion = "3.0.0.2"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
+$RuntimeStatePath = Join-Path $AppDirectory "runtime.json"
+$StopRequestPath = Join-Path $AppDirectory "stop.request"
+$RestartScriptPath = Join-Path $AppDirectory "Restart-EvoraConfigLauncher.ps1"
 $MutexName = "Local\EvoraSmartHubConfigLauncher"
 $script:LauncherPhase = "startup"
 $script:HubConnectionVerified = $false
@@ -39,6 +42,29 @@ function Write-SafeLog([string]$Message) {
     $tail = Get-Content -LiteralPath $LogPath -Tail 500
     Set-Content -LiteralPath $LogPath -Value $tail -Encoding UTF8
   }
+}
+
+function Write-LauncherRuntime([bool]$Connected = $false) {
+  try {
+    $process = Get-Process -Id $PID -ErrorAction Stop
+    $state = [ordered]@{
+      pid = $PID
+      processStartUtcTicks = $process.StartTime.ToUniversalTime().Ticks
+      scriptPath = [IO.Path]::GetFullPath($PSCommandPath)
+      helperVersion = $HelperVersion
+      startedAt = (Get-Date).ToUniversalTime().ToString("o")
+      connectedAt = if ($Connected) { (Get-Date).ToUniversalTime().ToString("o") } else { $null }
+    }
+    $temporaryPath = "$RuntimeStatePath.$PID.tmp"
+    Set-Content -LiteralPath $temporaryPath -Value (ConvertTo-Json $state -Compress) -Encoding UTF8
+    Move-Item -LiteralPath $temporaryPath -Destination $RuntimeStatePath -Force
+  } catch {
+    Write-SafeLog "Runtime health state could not be updated."
+  }
+}
+
+function Test-LauncherStopRequested {
+  return Test-Path -LiteralPath $StopRequestPath
 }
 
 function New-LauncherFailure([string]$Code, [string]$Message) {
@@ -216,7 +242,7 @@ function Wait-WithTrayEvents([int]$Milliseconds) {
   $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(0, $Milliseconds))
   do {
     if ($null -ne $script:TrayIcon) { [System.Windows.Forms.Application]::DoEvents() }
-    if ($script:TrayExitRequested) { return }
+    if ($script:TrayExitRequested -or (Test-LauncherStopRequested)) { return }
     Start-Sleep -Milliseconds 50
   } while ([DateTime]::UtcNow -lt $deadline)
 }
@@ -461,7 +487,11 @@ function Install-LauncherUpdate($Update, [string]$BaseUrl) {
     Copy-Item -LiteralPath $pendingPath -Destination $PSCommandPath -Force
     Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
     Write-SafeLog "Launcher update installed after exact SHA-256 verification."
-    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$PSCommandPath`"") -WindowStyle Hidden
+    if (Test-Path -LiteralPath $RestartScriptPath) {
+      Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$RestartScriptPath`"", "-WaitForPid", "$PID", "-LauncherPath", "`"$PSCommandPath`"") -WindowStyle Hidden
+    } else {
+      Write-SafeLog "Delayed restart helper is missing; the watchdog will restore the Launcher."
+    }
     return $true
   } catch {
     $script:AutomaticUpdateState = "warning"
@@ -902,12 +932,14 @@ $mutex = New-Object Threading.Mutex($true, $MutexName, [ref]$createdNew)
 if (-not $createdNew) { exit 0 }
 
 try {
+  Remove-Item -LiteralPath $StopRequestPath -Force -ErrorAction SilentlyContinue
+  Write-LauncherRuntime
   Write-SafeLog "Launcher started."
   Initialize-LauncherTray $configuredHubUrl
   $lastScan = [DateTime]::MinValue
   $executables = @()
   $diagnostics = $null
-  while (-not $script:TrayExitRequested) {
+  while (-not $script:TrayExitRequested -and -not (Test-LauncherStopRequested)) {
     try {
       if ($script:ForceLauncherScan -or (Get-Date) -gt $lastScan.AddMinutes(1)) {
         $script:ForceLauncherScan = $false
@@ -925,6 +957,7 @@ try {
       if (-not $script:HubConnectionVerified) {
         $script:HubConnectionVerified = $true
         $diagnostics = Get-LauncherDiagnostics $executables
+        Write-LauncherRuntime -Connected $true
       }
       if ($null -ne $response.update) {
         if (Install-LauncherUpdate $response.update $configuredHubUrl) { exit 0 }
@@ -965,6 +998,7 @@ try {
   }
 } finally {
   Dispose-LauncherTray
+  Remove-Item -LiteralPath $RuntimeStatePath -Force -ErrorAction SilentlyContinue
   if ($agentToken) { $agentToken = $null }
   $mutex.ReleaseMutex()
   $mutex.Dispose()

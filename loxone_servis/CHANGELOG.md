@@ -1,12 +1,20 @@
 # Changelog
 
+## 3.0.1
+
+- Globální hledání Hubu nyní prochází celou aplikaci, dostupné podsekce i datové záznamy (Miniservery, složky, úkoly, incidenty, tickety a uživatele) a výsledek otevře přímo; nejde už jen o filtr postranní nabídky.
+- Mobilní formulář absence, počítadlo, datumová pole, půlden a správa uživatelů používají sjednocené dotykové výšky, typografii a samostatný responzivní layout bez překryvů. Profilové fotografie a stavové tečky mají pevnou kruhovou geometrii.
+- Evora Smart Menu 3.0.1 používá významové ikony ve všech vlastních dialozích, nativní setrvačný posun ticketu dvěma prsty a rekurzivní hledání v celé nabídce včetně podsložek.
+- Windows Config Launcher 3.0.0.2 má bezpečné atomické přepárování, minutový uživatelský watchdog, ověřený heartbeat nové verze, úplný rollback při neúspěchu a bezpečné odebrání počítače z Hubu bez mazání lokálních Windows souborů.
+- Windows klient Evora Smart Menu 3.0.1 odděluje trvalý online heartbeat od sběru pracovních dat, stav vysvětluje přímo v `WORK status` a minutový watchdog jej po pádu obnoví bez samovolného zapnutí sběru. Instalátor Config Launcheru navíc bezpečně zvládá přechod ze starších verzí bez runtime souboru.
+
 ## 3.0.0
 
-- Evora Smart Hub a Evora Smart Menu jsou sjednocené do společného vydání 3.0.0. Hlavní i vnořená navigace zachovává jednotné rozměry, barevné ikony a globální hledání v celé nabídce.
+- Evora Smart Hub a Evora Smart Menu jsou sjednocené do společného vydání 3.0.0. Hlavní hledání Hubu prochází bez diakritiky celou aplikaci: obrazovky a podsekce, Miniservery, složky, úkoly, incidenty, tickety a uživatele podle oprávnění; nalezený datový záznam rovnou otevře.
 - Evora Smart Menu používá pro Evora Intranet stejnou zelenou značku `e` jako Hub. Detail ticketu ukazuje animovaný stav načítání, komunikaci dělí podle účastníků a přesný trackpadový posun zobrazuje plynule.
 - Docházkové relace přes půlnoc se slučují do jediného pracovního záznamu přiřazeného dni začátku. Součet, historie i aktivní stav tak neztrácejí Home office nebo práci ukončenou po půlnoci.
 - Sledování práce se automaticky řídí ověřeným aktivním stavem Evora Intranetu; při práci běží, při pauze se pozastaví a mimo docházku zůstává neaktivní.
-- Windows Config Launcher 3.0.0.1 běží v oznamovací oblasti Windows s vlastní značkou a stavovou tečkou, umí ruční kontrolu aktualizace, otevření diagnostiky, DNS/TLS/health preflight a bezpečné znovupárování bez předčasného zneplatnění funkčního tokenu. Hub může vybraný počítač odebrat bez mazání jeho lokálních Windows souborů.
+- Windows Config Launcher 3.0.0.2 běží v oznamovací oblasti Windows s vlastní značkou a stavovou tečkou, umí ruční kontrolu aktualizace, otevření diagnostiky, DNS/TLS/health preflight a bezpečné znovupárování bez předčasného zneplatnění funkčního tokenu. Přihlášenou relaci hlídá minutová uživatelská úloha a neúspěšná výměna automaticky obnoví předchozí funkční instalaci. Hub může vybraný počítač odebrat bez mazání jeho lokálních Windows souborů.
 - Správa uživatelů, složek, podpory a žádostí o absenci dostala kompaktní a responzivní geometrii bez přetékání textu; avatar zůstává skutečně kruhový.
 
 ## 2.2.5

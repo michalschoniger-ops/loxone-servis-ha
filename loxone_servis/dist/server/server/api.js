@@ -74,6 +74,17 @@ const intranetLeaveSchema = z.discriminatedUnion("action", [
         id: z.string().trim().min(1).max(128),
     }).strict(),
 ]);
+function normalizeAppSearch(value) {
+    return String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLocaleLowerCase("cs")
+        .trim();
+}
+function appSearchMatches(query, ...values) {
+    const searchable = normalizeAppSearch(values.join(" "));
+    return query.split(/\s+/).every((token) => searchable.includes(token));
+}
 function savedViewFilters(value) {
     try {
         const parsed = JSON.parse(value);
@@ -201,6 +212,89 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return fleetOverview(db);
+    });
+    app.get("/api/search", { config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const { q } = z.object({ q: z.string().trim().min(1).max(100) }).parse(request.query);
+        const query = normalizeAppSearch(q);
+        const items = [];
+        const add = (result, ...searchable) => {
+            if (appSearchMatches(query, result.title, result.detail, ...searchable))
+                items.push(result);
+        };
+        for (const raw of db.prepare("SELECT serial,type,project,notes,current_firmware AS currentFirmware,connection_state AS connectionState FROM miniservers ORDER BY project COLLATE NOCASE").all()) {
+            const row = raw;
+            add({
+                id: `miniserver:${String(row.serial)}`,
+                kind: "miniserver",
+                title: String(row.project || row.serial),
+                detail: `${String(row.type || "Miniserver")} · SN ${String(row.serial)} · ${String(row.connectionState || "unknown")}`,
+                page: "fleet",
+                serial: String(row.serial),
+            }, row.serial, row.type, row.project, row.notes, row.currentFirmware, row.connectionState);
+        }
+        for (const raw of db.prepare("SELECT id,name,description FROM project_folders ORDER BY sort_order,name COLLATE NOCASE").all()) {
+            const row = raw;
+            add({
+                id: `folder:${String(row.id)}`,
+                kind: "folder",
+                title: String(row.name),
+                detail: String(row.description || "Složka Miniserverů"),
+                page: "fleet",
+                folderId: String(row.id),
+            }, row.name, row.description);
+        }
+        if (user.role === "admin" || user.role === "technician") {
+            for (const raw of db.prepare("SELECT id,public_id AS publicId,title,description,status,contact_name AS contactName,serial FROM service_tasks ORDER BY updated_at DESC LIMIT 1000").all()) {
+                const row = raw;
+                add({
+                    id: `task:${String(row.id)}`,
+                    kind: "task",
+                    title: `${String(row.publicId)} · ${String(row.title)}`,
+                    detail: `${String(row.status)}${row.contactName ? ` · ${String(row.contactName)}` : ""}`,
+                    page: "service_tasks",
+                    targetId: String(row.id),
+                }, row.publicId, row.title, row.description, row.status, row.contactName, row.serial);
+            }
+            for (const raw of db.prepare("SELECT id,title,summary,severity,status,serial FROM incidents ORDER BY updated_at DESC LIMIT 1000").all()) {
+                const row = raw;
+                add({
+                    id: `incident:${String(row.id)}`,
+                    kind: "incident",
+                    title: String(row.title),
+                    detail: `${String(row.severity)} · ${String(row.status)}${row.serial ? ` · ${String(row.serial)}` : ""}`,
+                    page: "incidents",
+                    targetId: String(row.id),
+                }, row.title, row.summary, row.severity, row.status, row.serial);
+            }
+        }
+        if (user.role === "admin") {
+            for (const raw of db.prepare("SELECT id,ticket_number AS ticketNumber,subject,status,contact_name AS contactName FROM portal_ticket_cache ORDER BY sort_order,id LIMIT 1000").all()) {
+                const row = raw;
+                add({
+                    id: `ticket:${String(row.id)}`,
+                    kind: "ticket",
+                    title: `#${String(row.ticketNumber || row.id)} · ${String(row.subject || "Bez předmětu")}`,
+                    detail: `${String(row.status || "Bez stavu")}${row.contactName ? ` · ${String(row.contactName)}` : ""}`,
+                    page: "tickets",
+                    targetId: String(row.id),
+                }, row.ticketNumber, row.subject, row.status, row.contactName);
+            }
+            for (const raw of db.prepare("SELECT id,email,display_name AS displayName,role,active FROM users ORDER BY display_name COLLATE NOCASE,email").all()) {
+                const row = raw;
+                add({
+                    id: `user:${String(row.id)}`,
+                    kind: "user",
+                    title: String(row.displayName || row.email),
+                    detail: `${String(row.email)} · ${String(row.role)} · ${row.active === 1 ? "aktivní" : "neaktivní"}`,
+                    page: "users",
+                }, row.displayName, row.email, row.role, row.active === 1 ? "aktivní online" : "neaktivní offline");
+            }
+        }
+        reply.header("Cache-Control", "private, no-store, max-age=0");
+        return { items: items.slice(0, 50) };
     });
     app.get("/api/intranet", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireRole(request, reply, ["admin"]))

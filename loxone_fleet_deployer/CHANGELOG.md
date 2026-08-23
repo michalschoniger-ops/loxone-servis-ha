@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1.2
+
+- Dokončí bezpečnou výměnu zdroje i tehdy, když Supervisor během přesunu vloží vlastní soubor do izolované stagingové složky; zbytek ponechá pro diagnostiku a neoznačí úspěšně připravený zdroj jako chybu.
+- Nemění instalační payload Evora Smart Hubu 3.0.1 ani jeho kontrolní součet.
+
 ## 3.0.1.1
 
 - Nasazuje Evora Smart Hub a Evora Smart Menu 3.0.1 s globálním hledáním v celé aplikaci, sjednoceným mobilním formulářem a uživatelskými kartami, nativním trackpadovým posuvem ticketů a významovými ikonami dialogů.

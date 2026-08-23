@@ -188,7 +188,9 @@ if ! mv "$STAGED_DIR" "$TARGET_DIR"; then
   mv "$SOURCE_TO_RESTORE" "$TARGET_DIR"
   fail "Nový zdroj nešel přesunout; původní zdroj byl obnoven."
 fi
-rmdir "$STAGE_ROOT"
+if ! rmdir "$STAGE_ROOT"; then
+  log "UPOZORNĚNÍ: Supervisor během výměny použil dočasnou složku; nasazený zdroj je už bezpečně na místě a zbytek zůstává izolovaný v $STAGE_ROOT."
+fi
 
 cat > "$BACKUP_DIR/receipt.txt" <<EOF
 target=$TARGET_DIR

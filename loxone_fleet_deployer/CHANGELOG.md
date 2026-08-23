@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.5.1
+
+- Nasazuje Evora Smart Hub 3.0.5 s kompaktní správou uživatelů na desktopu i iPhonu, uzavřením mobilní šířky a zřetelnou mezerou před firmwarem.
+- Zachovává databázi, šifrovaná připojení, Excel konfiguraci a vratnou kopii zdroje 3.0.4.
+- Evora Smart Menu a Windows klient zůstávají 3.0.1 a Config Launcher 3.0.0.2.
+
 ## 3.0.4.1
 
 - Nasazuje Evora Smart Hub 3.0.4 s chráněnou úspornou diagnostikou a ručním spuštěním synchronizace servisních úkolů z Excelu.

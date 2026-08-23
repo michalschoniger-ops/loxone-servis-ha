@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.5
+
+- Zmenšuje desktopové pole jména na stejnou 36px výšku jako ostatní buňky a omezuje jeho šířku, aniž mění velikost textu.
+- Na iPhonu zmenšuje uživatelské karty, avatary a fotografické akce, zachovává bezpečný 16px font editovatelného pole a uzavírá tabulku do šířky viewportu bez vodorovného posunu.
+- Přidává zřetelnou stabilní mezeru mezi informační ikonou registrace a verzí firmwaru a v Hubu zobrazuje diagnostiku Windows Launcheru česky.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; tento balíček mění pouze Hub.
+
 ## 3.0.4
 
 - Přidává úsporný interní stav a ruční spuštění synchronizace servisních úkolů z Excelu, chráněné stejným silným tokenem jako šifrovaná záloha.

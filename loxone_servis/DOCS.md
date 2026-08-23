@@ -1,6 +1,6 @@
 # Instalace a aktualizace
 
-Hlavní navigace obsahuje pole **Hledat v celé aplikaci…**. Vyhledává bez ohledu na diakritiku ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.1 pro celé nativní macOS menu a všechny jeho vnořené položky.
+Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.1 pro celé nativní macOS menu a všechny jeho vnořené položky.
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.

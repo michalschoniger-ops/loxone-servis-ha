@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.2
+
+- Opravuje živým desktopovým screenshotem potvrzené přetékání a špatné zarovnání v tabulce uživatelů: řádky zůstávají kompaktní, ale jméno, e-mail, kruhový avatar, fotografické akce, role i stav mají čitelné jednotné rozměry.
+- Pole globálního hledání používá krátký nezkrácený text „Hledat všude…“; nadále prohledává celou aplikaci, podsložky i datové záznamy.
+- Diagnostika Windows Launcheru má čitelnou desktopovou typografii a všechny známé výsledky vysvětluje česky; technické ověřování a data heartbeat se nemění.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; jejich už ověřené balíčky se tímto čistě hubovým grafickým patchem nemění.
+
 ## 3.0.1
 
 - Globální hledání Hubu nyní prochází celou aplikaci, dostupné podsekce i datové záznamy (Miniservery, složky, úkoly, incidenty, tickety a uživatele) a výsledek otevře přímo; nejde už jen o filtr postranní nabídky.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.2.1
+
+- Nasazuje čistě hubový grafický patch Evora Smart Hubu 3.0.2: čitelné a zarovnané desktopové uživatele, nezkrácený text globálního hledání a větší českou diagnostiku Windows Launcheru.
+- Zachovává Evora Smart Menu a Windows klienta 3.0.1, Config Launcher 3.0.0.2, databázi, šifrovaná připojení i vratnou kopii zdroje 3.0.1.
+
 ## 3.0.1.2
 
 - Dokončí bezpečnou výměnu zdroje i tehdy, když Supervisor během přesunu vloží vlastní soubor do izolované stagingové složky; zbytek ponechá pro diagnostiku a neoznačí úspěšně připravený zdroj jako chybu.

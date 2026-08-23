@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0.3
+
+- Nasazuje aktuální ověřený Hub 3.0.0 s bezpečnými inline náhledy ticketových obrázků, čitelnými stavy a sjednoceným načítáním detailu.
+- Aktualizuje Evora Smart Menu 3.0.0: přímá hierarchie Systémů, významové barvy, dvouřádkový stav Intranetu a obrázek i stav konkrétního Miniserveru.
+- Zachovává úplnou vratnou kopii nahrazovaného zdroje; databázi ani šifrovaný obsah `/data` nemění.
+
 ## 3.0.0.2
 
 - Obnovuje runtime Hubu 3.0.0 z aktuálního ověřeného payloadu i tehdy, když má připravený lokální zdroj stejné číslo verze.

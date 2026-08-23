@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0.5
+
+- Opravuje profilovou fotografii v desktopové patičce i mobilní nabídce: textová pravidla už nezasahují avatar a obal má pevnou shodnou šířku i výšku.
+- Obrázek vyplňuje celý kruhový obal pomocí `object-fit: cover` bez tyrkysového podkladu okolo fotografie.
+- Zachovává vratnou kopii zdroje, databázi i šifrovaný obsah `/data`; opravený vzhled čeká po nasazení na cílenou živou kontrolu.
+
 ## 3.0.0.4
 
 - Nahrazuje výchozí ikonu složky ve všech nativních oknech Evora Smart Menu významovou ikonou dané akce nebo značkou Evora.

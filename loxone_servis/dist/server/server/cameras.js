@@ -1,12 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import WebSocket from "ws";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 const CAMERA_INTEGRATION_ID = "primary";
 const SNAPSHOT_CACHE_MS = 4_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
-const MAX_FRAME_BYTES = 12 * 1024 * 1024;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
 export class CameraIntegrationError extends Error {
     code;
@@ -245,9 +243,12 @@ export function parseMilesightCameraList(payload) {
         const id = firstInteger(item, ["chnid", "chnId", "channelId", "channel", "id"]) ?? index;
         const state = firstInteger(item, ["state"]);
         const connectState = firstInteger(item, ["connectState", "connect_state", "connected"]);
+        const name = firstString(item, ["name", "cameraName", "camera_name", "channelName", "chan_name"]) || `Kamera ${id + 1}`;
         return {
             id,
-            name: firstString(item, ["name", "cameraName", "camera_name", "channelName", "chan_name"]) || `Kamera ${id + 1}`,
+            name,
+            sourceName: name,
+            customName: false,
             online: connectState === 1 || state === 2 || item.online === true,
             model: firstString(item, ["model", "modelName", "model_name", "productModel"]) || null,
             firmware: firstString(item, ["firmware", "firmwareVersion", "fwversion", "softVersion"]) || null,
@@ -258,27 +259,32 @@ export function parseMilesightCameraList(payload) {
         .filter((camera) => Number.isInteger(camera.id) && camera.id >= 0 && camera.id <= 99 && camera.online)
         .sort((left, right) => left.id - right.id);
 }
-function deviceDetails(payload) {
-    const root = asObject(payload);
-    const nested = asObject(root.system ?? root.nvr ?? root.info ?? root.device);
-    const value = { ...root, ...nested };
-    return {
-        vendor: firstString(value, ["company", "vendor", "manufacturer"]) || "Milesight",
-        model: firstString(value, ["deviceName", "model", "modelName", "productModel"]),
-        firmware: firstString(value, ["firmware", "firmwareVersion", "softVersion", "softwareVersion"]),
-    };
-}
 export async function discoverMilesightNvr(input) {
     const access = normalizeCameraIntegrationInput(input);
-    const [system, cameras] = await Promise.all([
-        milesightSdkRequest(access, "get.system.nvr"),
-        milesightSdkRequest(access, "get.camera.ipclist"),
-    ]);
+    // Older Milesight firmware exposes the camera list but rejects the newer
+    // get.system.nvr action with HTTP 400. Device metadata is optional for the
+    // requested image-only integration, so discovery intentionally performs the
+    // single endpoint that the NVR web client itself uses.
+    const cameras = await milesightSdkRequest(access, "get.camera.ipclist");
     const channels = parseMilesightCameraList(cameras);
     if (!channels.length) {
         throw new CameraIntegrationError("NVR nevrátilo žádnou připojenou kameru.", "CAMERA_UNAVAILABLE");
     }
-    return { ...deviceDetails(system), channels };
+    return { vendor: "Milesight", model: "", firmware: "", channels };
+}
+function preserveCustomCameraNames(previous, discovered) {
+    const byId = new Map(previous.map((channel) => [channel.id, channel]));
+    return discovered.map((channel) => {
+        const existing = byId.get(channel.id);
+        if (!existing?.customName)
+            return channel;
+        return {
+            ...channel,
+            name: existing.name,
+            sourceName: channel.sourceName ?? channel.name,
+            customName: true,
+        };
+    });
 }
 function rowToOverview(row) {
     if (!row) {
@@ -336,6 +342,11 @@ function storedCameraAccess(row) {
 export async function saveCameraIntegration(db, input) {
     const access = normalizeCameraIntegrationInput(input);
     const discovery = await discoverMilesightNvr(access);
+    const previous = cameraRow(db);
+    const previousOverview = previous && previous.host === access.host ? rowToOverview(previous) : null;
+    const channels = previousOverview
+        ? preserveCustomCameraNames(previousOverview.channels, discovery.channels)
+        : discovery.channels;
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO camera_integrations(
        id,name,host,http_port,rtsp_port,username_encrypted,password_encrypted,vendor,model,firmware,
@@ -346,7 +357,7 @@ export async function saveCameraIntegration(db, input) {
        username_encrypted=excluded.username_encrypted,password_encrypted=excluded.password_encrypted,
        vendor=excluded.vendor,model=excluded.model,firmware=excluded.firmware,connection_state='online',
        channels_json=excluded.channels_json,last_checked_at=excluded.last_checked_at,
-       last_success_at=excluded.last_success_at,last_error=NULL,updated_at=excluded.updated_at`).run(CAMERA_INTEGRATION_ID, access.name, access.host, access.httpPort, access.rtspPort, encryptSecret(access.username, config.masterKey, `camera-nvr:${CAMERA_INTEGRATION_ID}:username`), encryptSecret(access.password, config.masterKey, `camera-nvr:${CAMERA_INTEGRATION_ID}:password`), discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(discovery.channels), now, now, null, cameraRow(db)?.created_at ?? now, now);
+       last_success_at=excluded.last_success_at,last_error=NULL,updated_at=excluded.updated_at`).run(CAMERA_INTEGRATION_ID, access.name, access.host, access.httpPort, access.rtspPort, encryptSecret(access.username, config.masterKey, `camera-nvr:${CAMERA_INTEGRATION_ID}:username`), encryptSecret(access.password, config.masterKey, `camera-nvr:${CAMERA_INTEGRATION_ID}:password`), discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(channels), now, now, null, cameraRow(db)?.created_at ?? now, now);
     clearSnapshotCache();
     return getCameraOverview(db);
 }
@@ -357,8 +368,9 @@ export async function refreshCameraIntegration(db) {
     const now = new Date().toISOString();
     try {
         const discovery = await discoverMilesightNvr(storedCameraAccess(row));
+        const channels = preserveCustomCameraNames(rowToOverview(row).channels, discovery.channels);
         db.prepare(`UPDATE camera_integrations SET vendor=?,model=?,firmware=?,connection_state='online',channels_json=?,
-       last_checked_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE id=?`).run(discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(discovery.channels), now, now, now, row.id);
+       last_checked_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE id=?`).run(discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(channels), now, now, now, row.id);
     }
     catch (error) {
         const state = error instanceof CameraIntegrationError && error.code === "CAMERA_AUTH_FAILED"
@@ -370,49 +382,68 @@ export async function refreshCameraIntegration(db) {
     }
     return getCameraOverview(db);
 }
+export function renameCameraChannel(db, channelId, requestedName) {
+    const row = cameraRow(db);
+    if (!row)
+        throw new CameraIntegrationError("NVR zatím není nastavené.", "CAMERA_CONFIG_INVALID");
+    const name = requestedName.trim();
+    if (!name || name.length > 80) {
+        throw new CameraIntegrationError("Název kamery musí mít 1 až 80 znaků.", "CAMERA_CONFIG_INVALID");
+    }
+    const overview = rowToOverview(row);
+    const index = overview.channels.findIndex((channel) => channel.id === channelId);
+    if (index < 0)
+        throw new CameraIntegrationError("Kamera nebyla nalezena.", "CAMERA_CONFIG_INVALID");
+    overview.channels[index] = {
+        ...overview.channels[index],
+        name,
+        sourceName: overview.channels[index].sourceName ?? overview.channels[index].name,
+        customName: true,
+    };
+    db.prepare("UPDATE camera_integrations SET channels_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(overview.channels), new Date().toISOString(), row.id);
+    return getCameraOverview(db);
+}
 export function deleteCameraIntegration(db) {
     const removed = Number(db.prepare("DELETE FROM camera_integrations WHERE id=?").run(CAMERA_INTEGRATION_ID).changes) > 0;
     if (removed)
         clearSnapshotCache();
     return removed;
 }
-export function parseMilesightVideoFrame(data) {
-    if (data.length < 88)
-        return null;
-    const streamType = data.readInt32LE(48);
-    const payloadBytes = data.readUInt32LE(52);
-    const codec = data.readInt32LE(56);
-    const frameType = data.readInt32LE(60);
-    if (streamType !== 1 || payloadBytes < 1 || payloadBytes > MAX_FRAME_BYTES || 88 + payloadBytes > data.length)
-        return null;
-    if (codec !== 0 && codec !== 3)
-        return null;
-    return {
-        codec: codec === 3 ? "hevc" : "h264",
-        keyframe: frameType === 0,
-        payload: data.subarray(88, 88 + payloadBytes),
-    };
-}
-function rawDataBuffer(data) {
-    if (Buffer.isBuffer(data))
-        return data;
-    if (Array.isArray(data))
-        return Buffer.concat(data);
-    return Buffer.from(data);
-}
-function ffmpegProcess(codec) {
-    return spawn("ffmpeg", [
-        "-hide_banner", "-loglevel", "error", "-threads", "1",
-        "-analyzeduration", "750000", "-probesize", "2097152",
-        "-f", codec, "-i", "pipe:0",
+export function cameraSnapshotFfmpegArguments() {
+    return [
+        "-hide_banner", "-loglevel", "quiet", "-threads", "1",
+        "-f", "concat", "-safe", "0",
+        "-protocol_whitelist", "file,pipe,tcp,udp,rtp,rtsp",
+        "-i", "pipe:0",
+        "-map", "0:v:0",
         "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "5",
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    ];
 }
-async function uncachedSnapshot(host, rtspPort, streamPath) {
+function encodeRtspCredential(value) {
+    return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+export function cameraSnapshotInputScript(input, streamPath) {
+    const access = normalizeCameraIntegrationInput(input);
+    if (!/^ch_[14]\d{2}$/.test(streamPath)) {
+        throw new CameraIntegrationError("Cesta obrazu kamery není platná.", "CAMERA_CONFIG_INVALID");
+    }
+    const username = encodeRtspCredential(access.username);
+    const password = encodeRtspCredential(access.password);
+    return [
+        "ffconcat version 1.0",
+        `file 'rtsp://${username}:${password}@${access.host}:${access.rtspPort}/${streamPath}'`,
+        "option rtsp_transport tcp",
+        "option timeout 8000000",
+        "",
+    ].join("\n");
+}
+async function uncachedSnapshot(access, streamPath) {
     return await new Promise((resolve, reject) => {
-        const websocket = new WebSocket(`ws://${host}:${rtspPort}/ms/webstream/${streamPath}`, { handshakeTimeout: 5_000 });
-        let decoder = null;
+        const decoder = spawn("ffmpeg", cameraSnapshotFfmpegArguments(), {
+            stdio: ["pipe", "pipe", "ignore"],
+        });
         let settled = false;
         let output = Buffer.alloc(0);
         const finish = (error, jpeg) => {
@@ -420,8 +451,7 @@ async function uncachedSnapshot(host, rtspPort, streamPath) {
                 return;
             settled = true;
             clearTimeout(timer);
-            websocket.terminate();
-            if (decoder && !decoder.killed)
+            if (!decoder.killed)
                 decoder.kill("SIGKILL");
             if (error)
                 reject(error);
@@ -431,47 +461,27 @@ async function uncachedSnapshot(host, rtspPort, streamPath) {
                 reject(new CameraIntegrationError("Náhled kamery se nepodařilo vytvořit.", "CAMERA_STREAM_FAILED"));
         };
         const timer = setTimeout(() => finish(new CameraIntegrationError("Kamera neodeslala náhled včas.", "CAMERA_STREAM_FAILED")), SNAPSHOT_TIMEOUT_MS);
-        websocket.on("open", () => websocket.send(`/ms/webstream/${streamPath}`));
-        websocket.on("error", () => finish(new CameraIntegrationError("Datový stream kamery není dostupný.", "CAMERA_STREAM_FAILED")));
-        websocket.on("close", () => {
+        decoder.once("error", () => finish(new CameraIntegrationError("Převod obrazu kamery není dostupný.", "CAMERA_STREAM_FAILED")));
+        decoder.stdin.on("error", () => undefined);
+        // stderr may contain the authenticated RTSP URL on failures, so the child
+        // process is created with stderr disabled instead of logging or retaining it.
+        decoder.stdout.on("data", (chunk) => {
             if (settled)
                 return;
-            if (decoder && !decoder.stdin.destroyed)
-                decoder.stdin.end();
-            else
-                finish(new CameraIntegrationError("Datový stream kamery byl ukončen.", "CAMERA_STREAM_FAILED"));
-        });
-        websocket.on("message", (raw) => {
-            const frame = parseMilesightVideoFrame(rawDataBuffer(raw));
-            if (!frame)
+            output = Buffer.concat([output, chunk]);
+            if (output.length > MAX_JPEG_BYTES) {
+                finish(new CameraIntegrationError("Náhled kamery je příliš velký.", "CAMERA_STREAM_FAILED"));
                 return;
-            if (!decoder) {
-                if (!frame.keyframe)
-                    return;
-                decoder = ffmpegProcess(frame.codec);
-                decoder.once("error", () => finish(new CameraIntegrationError("Převod obrazu kamery není dostupný.", "CAMERA_STREAM_FAILED")));
-                decoder.stdin.on("error", () => undefined);
-                decoder.stderr.on("data", () => undefined);
-                decoder.stdout.on("data", (chunk) => {
-                    if (settled)
-                        return;
-                    output = Buffer.concat([output, chunk]);
-                    if (output.length > MAX_JPEG_BYTES) {
-                        finish(new CameraIntegrationError("Náhled kamery je příliš velký.", "CAMERA_STREAM_FAILED"));
-                        return;
-                    }
-                    const end = output.indexOf(Buffer.from([0xff, 0xd9]));
-                    if (end >= 0)
-                        finish(undefined, output.subarray(0, end + 2));
-                });
-                decoder.once("exit", () => {
-                    if (!settled)
-                        finish(new CameraIntegrationError("Převod obrazu kamery selhal.", "CAMERA_STREAM_FAILED"));
-                });
             }
-            if (decoder && !decoder.stdin.destroyed)
-                decoder.stdin.write(frame.payload);
+            const end = output.indexOf(Buffer.from([0xff, 0xd9]));
+            if (end >= 0)
+                finish(undefined, output.subarray(0, end + 2));
         });
+        decoder.once("exit", () => {
+            if (!settled)
+                finish(new CameraIntegrationError("Datový stream kamery není dostupný.", "CAMERA_STREAM_FAILED"));
+        });
+        decoder.stdin.end(cameraSnapshotInputScript(access, streamPath));
     });
 }
 const snapshotCache = new Map();
@@ -512,7 +522,7 @@ export async function getCameraSnapshot(db, channelId) {
     const existing = snapshotInFlight.get(channelId);
     if (existing)
         return existing;
-    const pending = runSnapshotQueued(() => uncachedSnapshot(row.host, row.rtsp_port, channel.streamPath))
+    const pending = runSnapshotQueued(() => uncachedSnapshot(storedCameraAccess(row), channel.streamPath))
         .then((jpeg) => {
         snapshotCache.set(channelId, { createdAt: Date.now(), jpeg });
         return jpeg;

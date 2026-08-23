@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.12
+
+- Opravuje HTTP 400 na starším Milesight NVR. Hub už nespojuje podporovaný `get.camera.ipclist` s nepodporovaným systémovým příkazem; načítá pouze seznam, který používá i webové rozhraní tohoto firmwaru.
+- Náhled obrazu používá zdokumentované RTSP kanály `ch_1xx` přes TCP. Přihlašovací RTSP adresa se předává FFmpegu pouze jednorázovým stdin, nikdy v argumentech procesu, prohlížeči ani logu.
+- Správce a technik mohou každou kameru přejmenovat přímo v kartě. Vlastní název zůstane zachovaný i po obnovení seznamu z NVR.
+- Kamery mají v Hubu samostatnou fialovou navigační barvu odlišnou od oranžových incidentů. Evora Smart Menu 3.0.6 používá pro kategorii Kamer stejnou fialovou sémantiku.
+
 ## 3.0.11
 
 - Přidává kompatibilitu se starším Milesight NVR, které po prvním anonymním požadavku nabídne pouze HTTP Basic. Hub neposílá přihlášení předem, údaje nevkládá do URL ani logu a cílovou adresu dál omezuje výhradně na privátní IPv4 síť.

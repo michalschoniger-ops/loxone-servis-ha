@@ -24,7 +24,7 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { CameraIntegrationError, deleteCameraIntegration, getCameraOverview, getCameraSnapshot, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
+import { CameraIntegrationError, deleteCameraIntegration, getCameraOverview, getCameraSnapshot, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -1314,6 +1314,24 @@ export async function registerApi(app, db, jobs) {
             const message = error instanceof CameraIntegrationError ? error.message : "Náhled kamery není dostupný.";
             const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404 : 502;
             return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+        }
+    });
+    app.patch("/api/cameras/:channelId", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const input = z.object({ name: z.string().trim().min(1).max(80) }).strict().parse(request.body);
+        try {
+            const overview = renameCameraChannel(db, channelId, input.name);
+            audit(db, "cameras.renamed", user.id, null, { channelId });
+            return { item: overview };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                return reply.code(400).send({ error: error.message, code: error.code });
+            }
+            throw error;
         }
     });
     app.delete("/api/cameras/config", async (request, reply) => {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.12.1
+
+- Nasazuje Evora Smart Hub 3.0.12 s opravou HTTP 400 při načtení seznamu ze staršího Milesight NVR, zabezpečenými RTSP náhledy a přejmenováním kamer, které přežije obnovení seznamu.
+- Odděluje kamery fialovou barvou od oranžových incidentů v Hubu i Evora Smart Menu 3.0.6 a zachovává databázi, čtecí Excel/Graph nastavení, šifrovaná připojení i vratnou kopii zdroje 3.0.11.
+
 ## 3.0.11.1
 
 - Nasazuje Evora Smart Hub 3.0.11 s podporou serverem nabídnutého Basic ověření staršího Milesight NVR až po anonymní výzvě 401; privátní síť, šifrované uložení a ochrana URL/logů zůstávají zachované.

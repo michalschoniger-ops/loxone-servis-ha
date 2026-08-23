@@ -4,6 +4,7 @@ Jednorázový instalační pomocník pro řízené nasazení lokálního Evora S
 
 - Vyhledá právě jeden lokální add-on se slugem `loxone_fleet`.
 - Ověří kontrolní součet, slug, verzi a úplnost payloadu.
+- Bezpečně obnoví i již připravený zdroj se stejnou verzí 3.0.0, aby šlo nasadit opravený runtime bez falešného zvýšení verze Hubu.
 - Původní zdroj přesune do vratné složky pod `/addons/.evora-smart-hub-rollback`.
 - Operace `rollback` obnoví přesně poslední zdroj zaznamenaný helperem a vadný zdroj ponechá pro diagnostiku.
 - Datový adresář aplikace ani databázi nemění.

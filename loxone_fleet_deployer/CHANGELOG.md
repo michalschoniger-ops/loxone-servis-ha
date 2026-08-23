@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0.2
+
+- Obnovuje runtime Hubu 3.0.0 z aktuálního ověřeného payloadu i tehdy, když má připravený lokální zdroj stejné číslo verze.
+- Obsahuje Windows Config Launcher 3.0.0.1 s DNS/TLS/health preflightem, bezpečným předáním párování po prvním heartbeat a odebráním přístupu počítače bez mazání lokálních Windows souborů.
+- Před výměnou zachová úplnou vratnou kopii právě nahrazovaného zdroje 3.0.0; databázi ani šifrovaný obsah `/data` nemění.
+
 ## 3.0.0.1
 
 - Nasazuje Evora Smart Hub 3.0.0 a Evora Smart Menu 3.0.0 s jednotnou navigací, značkou Intranetu, plynulým ticketovým náhledem a opravenou docházkou přes půlnoc.

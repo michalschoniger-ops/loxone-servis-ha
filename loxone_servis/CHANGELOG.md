@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.10
+
+- Opravuje připojení Milesight NVR: Hub už nevyrábí vlastní neplatný Digest nonce, ale nejprve načte skutečnou výzvu zařízení a podepíše přesnou cestu SDK včetně dotazu.
+- Digest přihlášení podporuje `MD5`, `MD5-sess`, `qop=auth`, volitelný `opaque` a jeden bezpečný nový pokus při zastaralém nonce. Uživatelské jméno ani heslo se neposílají v URL a heslo se nadále ukládá pouze šifrovaně.
+- Evora Smart Menu 3.0.4 zachovává `Systémy → Kamery` se zabezpečeným náhledem konkrétního kanálu a v záhlaví nově rozlišuje vlastní verzi od živě načtené verze Hubu. Excel zůstává pouze pro čtení směrem do Hubu.
+
 ## 3.0.9
 
 - Opravuje párování dlouhých Excel požadavků: podobnost se počítá z celého pole „Požadavek“ uloženého v popisu, nikoli ze zkráceného 240znakového titulku. I změna na konci dlouhého textu tak aktualizuje stejné ID úkolu.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.10.1
+
+- Nasazuje Evora Smart Hub 3.0.10 s opraveným Milesight Digest přihlášením podle skutečné výzvy NVR a přesné SDK cesty včetně dotazu.
+- Zachovává databázi, čtecí Excel/Graph nastavení, šifrovaná připojení a vratnou kopii zdroje 3.0.9; součástí Hubu je instalační balíček Evora Smart Menu 3.0.4 s kamerami a samostatným označením verze Menu i Hubu.
+
 ## 3.0.9.1
 
 - Nasazuje Evora Smart Hub 3.0.9 s párováním dlouhých Excel požadavků podle plného textu a přísně omezeným sloučením čerstvého systémového duplikátu bez uživatelského obsahu.

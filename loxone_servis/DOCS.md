@@ -1,6 +1,6 @@
 # Instalace a aktualizace
 
-Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.3 pro celé nativní macOS menu a všechny jeho vnořené položky.
+Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.4 pro celé nativní macOS menu a všechny jeho vnořené položky.
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.
@@ -53,7 +53,7 @@ Sekce **Servisní úkoly** je oddělená od externích ticketů Partner Portálu
 
 Na HA Práce se v chráněných volbách `service_tasks_excel_share_url`, `service_tasks_excel_graph_tenant_id` a `service_tasks_excel_graph_client_id` nastaví sdílený sešit a tenantově omezená veřejná aplikace Microsoft Entra. Aplikace nepoužívá klientské tajemství; správce ji v obrazovce Úkoly připojí device-code přihlášením s delegovanými právy `Files.ReadWrite` a `offline_access`. Hub neukládá Office heslo a dlouhodobý obnovovací token drží pouze šifrovaně pomocí hlavního klíče.
 
-Registrace Entra musí být pouze pro účty daného organizačního tenantu, bez klientského tajemství a s povoleným přepínačem **Allow public client flows**. Endpoint Microsoft Graph `/shares` vyžaduje pro rozlišení položky ze sdíleného odkazu delegované `Files.ReadWrite`; širší `Files.ReadWrite.All` ani aplikační oprávnění se nepoužívají. Hub tuto relaci v 3.0.9 používá jen pro `GET` stažení sešitu. Do voleb Hubu se přenesou pouze Directory (tenant) ID a Application (client) ID. Pokud organizace zakazuje uživatelský souhlas, schválí stejné delegované oprávnění její správce.
+Registrace Entra musí být pouze pro účty daného organizačního tenantu, bez klientského tajemství a s povoleným přepínačem **Allow public client flows**. Endpoint Microsoft Graph `/shares` vyžaduje pro rozlišení položky ze sdíleného odkazu delegované `Files.ReadWrite`; širší `Files.ReadWrite.All` ani aplikační oprávnění se nepoužívají. Hub tuto relaci v 3.0.10 používá jen pro `GET` stažení sešitu. Do voleb Hubu se přenesou pouze Directory (tenant) ID a Application (client) ID. Pokud organizace zakazuje uživatelský souhlas, schválí stejné delegované oprávnění její správce.
 
 Po připojení Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Nezměněný přesunutý řádek páruje podle stabilního otisku místa a požadavku; drobnou úpravu stejného řádku páruje omezenou podobností a aktualizuje původní úkol. Nový úkol vznikne až tehdy, když žádná jednoznačná vazba neexistuje. Zápis Hub → Excel je nyní vypnutý: dokončení se uchová pouze v Hubu a žádný Graph `PATCH` se nespouští. Samotná přihlášená relace prohlížeče není trvalá serverová relace. Chráněný interní import původního XLSX zůstává bezpečnou cestou pro prvotní naplnění bez Microsoft hesla.
 

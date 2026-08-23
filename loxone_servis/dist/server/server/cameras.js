@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import WebSocket from "ws";
 import { config } from "./config.js";
@@ -17,6 +17,48 @@ export class CameraIntegrationError extends Error {
 }
 function md5(value) {
     return createHash("md5").update(value, "utf8").digest("hex");
+}
+function unescapeDigestValue(value) {
+    return value.replace(/\\(.)/g, "$1");
+}
+function quoteDigestValue(value) {
+    return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+export function parseMilesightDigestChallenge(header) {
+    if (!header)
+        return null;
+    const scheme = /(?:^|,\s*)Digest\s+/i.exec(header);
+    if (!scheme)
+        return null;
+    const parameters = new Map();
+    const source = header.slice(scheme.index + scheme[0].length);
+    const pattern = /(?:^|,)\s*([a-z][a-z0-9_-]*)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^,\s]+))/gi;
+    for (const match of source.matchAll(pattern)) {
+        parameters.set(match[1].toLowerCase(), unescapeDigestValue(match[2] ?? match[3] ?? ""));
+    }
+    const realm = parameters.get("realm")?.trim() ?? "";
+    const nonce = parameters.get("nonce")?.trim() ?? "";
+    if (!realm || !nonce)
+        return null;
+    const algorithmValue = (parameters.get("algorithm") ?? "MD5").trim().toLowerCase();
+    const algorithm = algorithmValue === "md5" ? "MD5" : algorithmValue === "md5-sess" ? "MD5-sess" : null;
+    if (!algorithm)
+        return null;
+    const offeredQop = (parameters.get("qop") ?? "")
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+    const qop = offeredQop.length === 0 ? null : offeredQop.includes("auth") ? "auth" : undefined;
+    if (qop === undefined)
+        return null;
+    return {
+        realm,
+        nonce,
+        opaque: parameters.get("opaque") ?? null,
+        algorithm,
+        qop,
+        stale: parameters.get("stale")?.toLowerCase() === "true",
+    };
 }
 function asObject(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -95,36 +137,82 @@ export function normalizeCameraIntegrationInput(input) {
         password: input.password,
     };
 }
-export function milesightDigestAuthorization(username, password, method, uri, timestamp = Date.now()) {
-    const realm = "MSHN";
-    const nonce = md5(`time-stamp :${timestamp}`);
-    const nc = "00000001";
-    const qop = "auth";
-    const cnonce = md5(`cnonce:${timestamp}`);
-    const ha1 = md5(`${username}:${realm}:${password}`);
+export function milesightDigestAuthorization(username, password, method, uri, challenge, cnonce = randomBytes(16).toString("hex"), nonceCount = 1) {
+    const nc = nonceCount.toString(16).padStart(8, "0");
+    const initialHa1 = md5(`${username}:${challenge.realm}:${password}`);
+    const ha1 = challenge.algorithm === "MD5-sess"
+        ? md5(`${initialHa1}:${challenge.nonce}:${cnonce}`)
+        : initialHa1;
     const ha2 = md5(`${method}:${uri}`);
-    const response = md5(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`);
-    return `Digest username="${username.replaceAll('"', "")}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}", qop=${qop}, nc=${nc}, cnonce=${cnonce}`;
+    const response = challenge.qop === "auth"
+        ? md5(`${ha1}:${challenge.nonce}:${nc}:${cnonce}:auth:${ha2}`)
+        : md5(`${ha1}:${challenge.nonce}:${ha2}`);
+    const parameters = [
+        `username=${quoteDigestValue(username)}`,
+        `realm=${quoteDigestValue(challenge.realm)}`,
+        `nonce=${quoteDigestValue(challenge.nonce)}`,
+        `uri=${quoteDigestValue(uri)}`,
+        `response=${quoteDigestValue(response)}`,
+        `algorithm=${challenge.algorithm}`,
+    ];
+    if (challenge.opaque)
+        parameters.push(`opaque=${quoteDigestValue(challenge.opaque)}`);
+    if (challenge.qop === "auth") {
+        parameters.push("qop=auth", `nc=${nc}`, `cnonce=${quoteDigestValue(cnonce)}`);
+    }
+    return `Digest ${parameters.join(", ")}`;
+}
+function cameraRequestError(response) {
+    if (response.status === 401 || response.status === 403) {
+        return new CameraIntegrationError("NVR odmítlo přihlášení.", "CAMERA_AUTH_FAILED");
+    }
+    return new CameraIntegrationError(`NVR odpovědělo chybou HTTP ${response.status}.`, "CAMERA_UNAVAILABLE");
 }
 async function milesightSdkRequest(access, action) {
-    const uri = "/sdk.cgi";
+    const target = new URL(`http://${access.host}:${access.httpPort}/sdk.cgi`);
+    target.searchParams.set("action", action);
+    target.searchParams.set("format", "json");
+    const uri = `${target.pathname}${target.search}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8_000);
     try {
-        const response = await fetch(`http://${access.host}:${access.httpPort}${uri}?action=${encodeURIComponent(action)}&format=json`, {
+        let response = await fetch(target, {
             method: "GET",
-            headers: {
-                Accept: "application/json",
-                Authorization: milesightDigestAuthorization(access.username, access.password, "GET", uri),
-            },
+            headers: { Accept: "application/json" },
             signal: controller.signal,
         });
-        if (response.status === 401 || response.status === 403) {
-            throw new CameraIntegrationError("NVR odmítlo přihlášení.", "CAMERA_AUTH_FAILED");
+        if (response.status === 401) {
+            let challenge = parseMilesightDigestChallenge(response.headers.get("www-authenticate"));
+            if (!challenge) {
+                throw new CameraIntegrationError("NVR nenabídlo podporované Digest přihlášení.", "CAMERA_AUTH_FAILED");
+            }
+            await response.body?.cancel();
+            response = await fetch(target, {
+                method: "GET",
+                headers: {
+                    Accept: "application/json",
+                    Authorization: milesightDigestAuthorization(access.username, access.password, "GET", uri, challenge),
+                },
+                signal: controller.signal,
+            });
+            if (response.status === 401) {
+                const refreshed = parseMilesightDigestChallenge(response.headers.get("www-authenticate"));
+                if (refreshed?.stale) {
+                    challenge = refreshed;
+                    await response.body?.cancel();
+                    response = await fetch(target, {
+                        method: "GET",
+                        headers: {
+                            Accept: "application/json",
+                            Authorization: milesightDigestAuthorization(access.username, access.password, "GET", uri, challenge),
+                        },
+                        signal: controller.signal,
+                    });
+                }
+            }
         }
-        if (!response.ok) {
-            throw new CameraIntegrationError(`NVR odpovědělo chybou HTTP ${response.status}.`, "CAMERA_UNAVAILABLE");
-        }
+        if (!response.ok)
+            throw cameraRequestError(response);
         const text = await response.text();
         try {
             return JSON.parse(text);

@@ -645,6 +645,7 @@ export async function registerApi(app, db, jobs) {
         });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         return {
+            appVersion: config.appVersion,
             user: { email: identity.email },
             launcherAgent: agent,
             cameras: getCameraOverview(db).channels,

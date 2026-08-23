@@ -278,6 +278,27 @@ function persistRows(db, parsed, workbookHash) {
 export function importServiceTasksFromWorkbook(db, workbook) {
     return persistRows(db, parseServiceTaskWorkbook(workbook), createHash("sha256").update(workbook).digest("hex"));
 }
+function recordSuccessfulImport(db, outcome) {
+    const now = new Date().toISOString();
+    setSetting(db, "service_tasks_excel_last_success_at", now);
+    setSetting(db, "service_tasks_excel_last_error", "");
+    setSetting(db, "service_tasks_excel_imported_count", String(outcome.activeRows));
+    setSetting(db, "service_tasks_excel_active_rows", String(outcome.activeRows));
+    setSetting(db, "service_tasks_excel_last_result", JSON.stringify(outcome));
+}
+export function importUploadedServiceTaskWorkbook(db, workbook) {
+    setSetting(db, "service_tasks_excel_last_attempt_at", new Date().toISOString());
+    try {
+        const outcome = importServiceTasksFromWorkbook(db, workbook);
+        recordSuccessfulImport(db, outcome);
+        return getServiceTaskExcelSyncStatus(db);
+    }
+    catch (error) {
+        const message = error instanceof ServiceTaskExcelError ? error.message : "Excel se nepodařilo bezpečně zpracovat.";
+        setSetting(db, "service_tasks_excel_last_error", message);
+        throw error instanceof ServiceTaskExcelError ? error : new ServiceTaskExcelError(message, "IMPORT_FAILED");
+    }
+}
 async function downloadWorkbook() {
     if (!config.serviceTasksExcelShareUrl)
         throw new ServiceTaskExcelError("Zdrojový Excel zatím není v nastavení Hubu připojen.", "NOT_CONFIGURED");
@@ -320,12 +341,13 @@ export function serviceTasksExcelSyncDue(db, now = Date.now()) {
     return now - parsed >= interval;
 }
 export function getServiceTaskExcelSyncStatus(db) {
-    const configured = Boolean(config.serviceTasksExcelShareUrl);
     const lastAttemptAt = getSetting(db, "service_tasks_excel_last_attempt_at");
     const lastSuccessAt = getSetting(db, "service_tasks_excel_last_success_at");
+    const remoteConfigured = Boolean(config.serviceTasksExcelShareUrl);
+    const configured = remoteConfigured || Boolean(lastSuccessAt);
     const lastError = getSetting(db, "service_tasks_excel_last_error") || null;
     const interval = lastError ? ERROR_RETRY_MS : SYNC_INTERVAL_MS;
-    const nextSyncAt = configured && lastAttemptAt && Number.isFinite(Date.parse(lastAttemptAt))
+    const nextSyncAt = remoteConfigured && lastAttemptAt && Number.isFinite(Date.parse(lastAttemptAt))
         ? new Date(Date.parse(lastAttemptAt) + interval).toISOString() : null;
     return {
         configured,
@@ -361,12 +383,7 @@ export async function syncServiceTasksFromExcel(db) {
     try {
         const workbook = await downloadWorkbook();
         const outcome = importServiceTasksFromWorkbook(db, workbook);
-        const now = new Date().toISOString();
-        setSetting(db, "service_tasks_excel_last_success_at", now);
-        setSetting(db, "service_tasks_excel_last_error", "");
-        setSetting(db, "service_tasks_excel_imported_count", String(outcome.activeRows));
-        setSetting(db, "service_tasks_excel_active_rows", String(outcome.activeRows));
-        setSetting(db, "service_tasks_excel_last_result", JSON.stringify(outcome));
+        recordSuccessfulImport(db, outcome);
         return getServiceTaskExcelSyncStatus(db);
     }
     catch (error) {

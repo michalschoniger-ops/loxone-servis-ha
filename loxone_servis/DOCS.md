@@ -51,7 +51,7 @@ V detailu Gateway nebo samostatného Miniserveru lze uložit zákazníka, kontak
 
 Sekce **Servisní úkoly** je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
 
-Na HA Práce lze v chráněné volbě `service_tasks_excel_share_url` nastavit sdílený sešit. Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Stabilní vazba na řádek a otisk obsahu brání duplicitám a obrazovka ukazuje poslední úspěch, chybu i počet řádků. Veřejný sdílený odkaz podporuje pouze čtení; lokální změna stavu se proto uloží v Hubu a označí jako čekající zápis, ale nevydává se za změnu původního Excelu.
+Na HA Práce lze v chráněné volbě `service_tasks_excel_share_url` nastavit sdílený sešit. Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Stabilní vazba na řádek a otisk obsahu brání duplicitám a obrazovka ukazuje poslední úspěch, chybu i počet řádků. Pokud organizační SharePoint vyžaduje Microsoft 365 relaci, lze pro prvotní naplnění použít chráněný interní import původního XLSX; ten používá silný administrační token a nepřenáší Office heslo. Samotný přihlášený prohlížeč není trvalá serverová relace. Dokud není dokončen podporovaný Microsoft Graph/OAuth zápis, lokální změna stavu se uloží v Hubu a označí jako čekající zápis, ale nevydává se za změnu původního Excelu.
 
 ## Evora Smart Menu na macOS
 

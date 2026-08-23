@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.6
+
+- Přidává v Nastavení volbu Světlý, Tmavý a Automaticky podle zařízení. Volba se ukládá v daném prohlížeči, automatický režim živě sleduje systém a motiv se nastaví ještě před vykreslením aplikace bez světlého probliknutí.
+- Tmavý režim mění celý povrchový systém Hubu: navigaci, panely, karty, tabulky, formuláře, modaly, detailní zásuvky, tickety, úkoly, Intranet, diagnostiku i mobilní nabídku. Stavové barvy zůstávají významově odlišené.
+- Desktopová správa uživatelů drží jméno, e-mail, poznámku hlavního správce, fotografické akce, roli, 2FA, poslední přihlášení a stav v jednom kompaktním řádku; samostatné dotykové rozložení telefonu zůstává zachované.
+- Přidává chráněný import původního XLSX pro bezpečné prvotní naplnění Úkolů v situaci, kdy organizační SharePoint vyžaduje Microsoft 365 přihlášení. Import používá stávající šifrovaný administrační token, kontroluje formát i limit 25 MB a nepřenáší Office heslo.
+- Evora Smart Menu a Windows klient zůstávají ve verzi 3.0.1, Config Launcher ve verzi 3.0.0.2; tento balíček mění pouze Hub.
+
 ## 3.0.5
 
 - Zmenšuje desktopové pole jména na stejnou 36px výšku jako ostatní buňky a omezuje jeho šířku, aniž mění velikost textu.

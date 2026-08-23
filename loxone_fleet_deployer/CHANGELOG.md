@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.6.1
+
+- Nasazuje Evora Smart Hub 3.0.6 s úplným tmavým motivem a volbou Světlý, Tmavý nebo Automaticky v Nastavení.
+- Udržuje desktopovou správu uživatelů v jednom kompaktním řádku a přidává chráněný prvotní import původního XLSX bez přenosu Office hesla.
+- Zachovává databázi, šifrovaná připojení a vratnou kopii zdroje 3.0.5; Evora Smart Menu a Windows klient zůstávají 3.0.1 a Config Launcher 3.0.0.2.
+
 ## 3.0.5.1
 
 - Nasazuje Evora Smart Hub 3.0.5 s kompaktní správou uživatelů na desktopu i iPhonu, uzavřením mobilní šířky a zřetelnou mezerou před firmwarem.

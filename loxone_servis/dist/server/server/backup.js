@@ -3,7 +3,8 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { config, optionsPath } from "./config.js";
 import { encryptBackupPayload } from "./backup-format.js";
-import { getServiceTaskExcelDiagnostic, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
+import { getServiceTaskExcelDiagnostic, importUploadedServiceTaskWorkbook, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
+const EXCEL_WORKBOOK_LIMIT = 25 * 1024 * 1024;
 function quoteSqlitePath(path) {
     return `'${path.replaceAll("'", "''")}'`;
 }
@@ -22,6 +23,7 @@ function backupRequestAuthorized(authorization) {
     return tokenMatches(value.startsWith("Bearer ") ? value.slice(7) : "");
 }
 export async function registerEncryptedBackup(app, db) {
+    app.addContentTypeParser("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { parseAs: "buffer", bodyLimit: EXCEL_WORKBOOK_LIMIT }, (_request, body, done) => done(null, body));
     app.get("/api/system/encrypted-backup", {
         config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
     }, async (request, reply) => {
@@ -93,6 +95,33 @@ export async function registerEncryptedBackup(app, db) {
             return reply.code(known?.code === "NOT_CONFIGURED" ? 409 : 502).send({
                 error: known?.message ?? "Synchronizace Excelu se nezdařila.",
                 code: known?.code ?? "SYNC_FAILED",
+            });
+        }
+    });
+    app.post("/api/system/service-tasks-excel/import", {
+        config: { rateLimit: { max: 3, timeWindow: "1 minute" } },
+        bodyLimit: EXCEL_WORKBOOK_LIMIT,
+    }, async (request, reply) => {
+        if (!config.backupEnabled) {
+            return reply.code(503).send({ error: "Interní import není nakonfigurovaný.", code: "IMPORT_DISABLED" });
+        }
+        if (!backupRequestAuthorized(request.headers.authorization)) {
+            reply.header("WWW-Authenticate", "Bearer");
+            return reply.code(401).send({ error: "Neplatné oprávnění pro import.", code: "UNAUTHORIZED" });
+        }
+        if (!Buffer.isBuffer(request.body)) {
+            return reply.code(415).send({ error: "Import vyžaduje původní soubor XLSX.", code: "WORKBOOK_CONTENT_TYPE_REQUIRED" });
+        }
+        try {
+            importUploadedServiceTaskWorkbook(db, request.body);
+            reply.header("Cache-Control", "no-store, max-age=0");
+            return getServiceTaskExcelDiagnostic(db);
+        }
+        catch (error) {
+            const known = error instanceof ServiceTaskExcelError ? error : null;
+            return reply.code(422).send({
+                error: known?.message ?? "Import Excelu se nezdařil.",
+                code: known?.code ?? "IMPORT_FAILED",
             });
         }
     });

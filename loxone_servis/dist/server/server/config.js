@@ -15,7 +15,18 @@ const optionsSchema = z.object({
     backup_encryption_key: z.string().optional(),
     backup_pull_token: z.string().optional(),
     service_tasks_excel_share_url: z.string().optional(),
+    service_tasks_excel_graph_tenant_id: z.string().optional(),
+    service_tasks_excel_graph_client_id: z.string().optional(),
 });
+function optionalUuid(value, name) {
+    const normalized = value?.trim() ?? "";
+    if (!normalized)
+        return "";
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(normalized) || /^0{8}(?:-0{4}){3}-0{12}$/.test(normalized)) {
+        throw new Error(`${name} musí být platný identifikátor GUID.`);
+    }
+    return normalized.toLowerCase();
+}
 function readOptions(path) {
     try {
         return optionsSchema.parse(JSON.parse(readFileSync(path, "utf8")));
@@ -68,6 +79,11 @@ mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
 const canonicalBaseUrl = optionalHttpsUrl(process.env.CANONICAL_BASE_URL ?? options.canonical_base_url, "CANONICAL_BASE_URL");
 const publicBaseUrl = optionalHttpsUrl(process.env.PUBLIC_BASE_URL ?? options.public_base_url, "PUBLIC_BASE_URL");
 const serviceTasksExcelShareUrl = normalizeServiceTasksExcelShareUrl(process.env.SERVICE_TASKS_EXCEL_SHARE_URL ?? options.service_tasks_excel_share_url);
+const serviceTasksExcelGraphTenantId = optionalUuid(process.env.SERVICE_TASKS_EXCEL_GRAPH_TENANT_ID ?? options.service_tasks_excel_graph_tenant_id, "SERVICE_TASKS_EXCEL_GRAPH_TENANT_ID");
+const serviceTasksExcelGraphClientId = optionalUuid(process.env.SERVICE_TASKS_EXCEL_GRAPH_CLIENT_ID ?? options.service_tasks_excel_graph_client_id, "SERVICE_TASKS_EXCEL_GRAPH_CLIENT_ID");
+if (Boolean(serviceTasksExcelGraphTenantId) !== Boolean(serviceTasksExcelGraphClientId)) {
+    throw new Error("Microsoft Graph vyžaduje současně tenant ID i client ID.");
+}
 const masterKeyBase64 = process.env.CREDENTIALS_MASTER_KEY ?? options.credentials_master_key ?? "";
 const masterKey = masterKeyBase64 ? Buffer.from(masterKeyBase64, "base64") : Buffer.alloc(0);
 if (!canonicalBaseUrl && masterKey.length !== 32) {
@@ -104,7 +120,7 @@ export const config = {
     checkConcurrency: Math.max(1, Math.min(10, Number(process.env.CHECK_CONCURRENCY ?? 2))),
     fullCheckIntervalMinutes: Math.max(30, Number(process.env.FULL_CHECK_INTERVAL_MINUTES ?? 120)),
     requestTimeoutMs: Math.max(3_000, Number(process.env.LOXONE_REQUEST_TIMEOUT_MS ?? 18_000)),
-    appVersion: process.env.APP_VERSION ?? "3.0.7",
+    appVersion: process.env.APP_VERSION ?? "3.0.8",
     appUuid: process.env.LOXONE_APP_UUID ?? "1bfb0d5e-3d6e-4e77-9ed4-fc2b2f0682ba",
     appInfo: process.env.LOXONE_APP_INFO ?? "Evora Smart Hub",
     schedulerEnabled: (process.env.SCHEDULER_ENABLED ?? "true").toLowerCase() === "true",
@@ -116,4 +132,6 @@ export const config = {
     backupPullToken,
     backupEnabled: !canonicalBaseUrl && backupEncryptionKey.length === 32 && backupPullToken.length >= 32,
     serviceTasksExcelShareUrl,
+    serviceTasksExcelGraphTenantId,
+    serviceTasksExcelGraphClientId,
 };

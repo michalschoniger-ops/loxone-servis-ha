@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.8.1
+
+- Nasazuje Evora Smart Hub 3.0.8 se zabezpečenými náhledy Milesight kamer, čtecí Graph synchronizací Excelu bez duplicit a Evora Smart Menu 3.0.3 s diagnostikou Miniserverů.
+- Zachovává databázi, importované Excel úkoly, šifrovaná připojení a vratnou kopii zdroje 3.0.7.
+
 ## 3.0.7.1
 
 - Nasazuje Evora Smart Hub 3.0.7 s dokončeným kontrastním auditem tmavého režimu a automatickou kontrolou WCAG AA pro hlavní textové a stavové barvy.

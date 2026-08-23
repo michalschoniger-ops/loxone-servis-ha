@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.8
+
+- Přidává tenantově omezené Microsoft Graph device-code připojení pro organizační SharePoint bez klientského tajemství nebo uloženého Office hesla. Obnovovací token je šifrovaný a hodinový import začne až po úspěšném připojení správce.
+- Excel běží pouze směrem do Hubu. Přesunutý řádek se nejprve páruje stabilním otiskem a drobná změna místa nebo požadavku omezenou podobností, takže upraví stejné ID úkolu místo vytvoření duplikátu. Runtime neodesílá Graph `PATCH`; dokončení zůstává pouze v Hubu.
+- Přidává zabezpečené připojení Milesight NVR v privátní síti HA Práce. Přístupy jsou šifrované AES-256-GCM a nikdy se nevkládají do URL, klientského JavaScriptu ani argumentů procesu.
+- Nová stránka Kamery je společně dostupná v desktopové i mobilní navigaci Hubu, automaticky načítá online kanály z NVR a nabízí úsporné náhledy i rychlejší detail vybrané kamery.
+- Evora Smart Menu 3.0.3 zobrazuje v `Systémy → Kamery` zabezpečený velký náhled konkrétní kamery a v detailu Miniserveru ověřený poměr prvků online/celkem, počet offline prvků, Health stav, stáří kontroly a odezvu. Globální hledání slučuje rychlé vstupy a během psaní odkládá síťové překreslení, aby se AppKit nezablokoval.
+
 ## 3.0.7
 
 - Dokončuje kontrastní audit tmavého režimu napříč formuláři, navigací, modaly, diagnostikou, tickety, úkoly, Intranetem, uživateli, zálohami a mobilní nabídkou. Bílé pomocné plochy a odstíny určené pro světlé pozadí dostaly vlastní tmavé povrchy a čitelné texty.

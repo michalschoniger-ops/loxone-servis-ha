@@ -21,8 +21,10 @@ import { officialConfigDownloadUrl } from "./release.js";
 import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
 import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
 import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
+import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
+import { CameraIntegrationError, deleteCameraIntegration, getCameraOverview, getCameraSnapshot, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -624,6 +626,15 @@ export async function registerApi(app, db, jobs) {
                 folderColor: server.folderId ? (folderColors.get(server.folderId) ?? "#58D73A") : "#8A948C",
                 connectionState: server.connectionState,
                 currentFirmware: server.currentFirmware,
+                elementsOnline: server.elementsOnline,
+                elementsTotal: server.elementsTotal,
+                offlineDevices: server.elementsTotal === null ? null : server.offlineDevices,
+                lastCheckedAt: server.lastCheckedAt,
+                lastLatencyMs: server.lastLatencyMs,
+                consecutiveFailures: server.consecutiveFailures,
+                healthVerdict: server.healthVerdict,
+                healthRefreshedAt: server.healthRefreshedAt,
+                dataState: server.dataState,
                 hasCredentials: server.hasCredentials,
                 loxoneAppAvailable: server.hasCredentials,
                 loxoneConfigAvailable: Boolean(agent?.available && !agent.updateRequired && server.currentFirmware && server.hasCredentials),
@@ -636,8 +647,54 @@ export async function registerApi(app, db, jobs) {
         return {
             user: { email: identity.email },
             launcherAgent: agent,
+            cameras: getCameraOverview(db).channels,
             items,
         };
+    });
+    app.get("/api/integrations/worklog/v1/cameras/:channelId/snapshot", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        try {
+            const jpeg = await getCameraSnapshot(db, channelId);
+            return reply.header("Cache-Control", "private, no-store, max-age=0").type("image/jpeg").send(jpeg);
+        }
+        catch (error) {
+            const message = error instanceof CameraIntegrationError ? error.message : "Náhled kamery není dostupný.";
+            const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404 : 502;
+            return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+        }
+    });
+    app.put("/api/integrations/worklog/v1/cameras/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const input = z.object({
+            name: z.string().trim().min(1).max(100).optional(),
+            host: z.string().trim().min(7).max(15),
+            httpPort: z.number().int().min(1).max(65_535).optional(),
+            rtspPort: z.number().int().min(1).max(65_535).optional(),
+            username: z.string().trim().min(1).max(64),
+            password: z.string().min(1).max(256),
+        }).strict().parse(request.body);
+        try {
+            const overview = await saveCameraIntegration(db, input);
+            audit(db, "worklog.cameras_configured", identity.ownerUserId, null, {
+                integrationId: identity.tokenId,
+                host: overview.host,
+                model: overview.model,
+                channels: overview.channels.length,
+            });
+            return { item: overview };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 400 : error.code === "CAMERA_AUTH_FAILED" ? 401 : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
     });
     app.post("/api/integrations/worklog/v1/miniservers/:serial/actions", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -977,9 +1034,46 @@ export async function registerApi(app, db, jobs) {
         return { items: listServiceTasks(db) };
     });
     app.get("/api/service-tasks/excel/status", async (request, reply) => {
-        if (!requireRole(request, reply, ["admin", "technician"]))
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
             return;
-        return { status: getServiceTaskExcelSyncStatus(db) };
+        return { status: getServiceTaskExcelSyncStatus(db, { includeGraphVerification: user.role === "admin" }) };
+    });
+    app.post("/api/service-tasks/excel/graph/connect", { config: { rateLimit: { max: 3, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        try {
+            const graph = await startServiceTaskExcelGraphConnection(db);
+            audit(db, "service_tasks.excel_graph_connection_started", user.id, null, {});
+            return { graph };
+        }
+        catch (error) {
+            const known = error instanceof ServiceTaskExcelGraphError ? error : null;
+            return reply.code(known?.code.endsWith("NOT_CONFIGURED") ? 409 : 502).send({
+                error: known?.message ?? "Připojení Microsoft 365 se nepodařilo zahájit.",
+                code: known?.code ?? "GRAPH_CONNECTION_FAILED",
+            });
+        }
+    });
+    app.post("/api/service-tasks/excel/graph/poll", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const before = getServiceTaskExcelSyncStatus(db).graph.state;
+        const graph = await pollServiceTaskExcelGraphConnection(db);
+        if (before !== "connected" && graph.state === "connected") {
+            audit(db, "service_tasks.excel_graph_connected", user.id, null, {});
+        }
+        return { graph };
+    });
+    app.delete("/api/service-tasks/excel/graph", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const graph = disconnectServiceTaskExcelGraph(db);
+        audit(db, "service_tasks.excel_graph_disconnected", user.id, null, {});
+        return { graph };
     });
     app.post("/api/service-tasks/excel/sync", { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } }, async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -993,7 +1087,9 @@ export async function registerApi(app, db, jobs) {
         catch (error) {
             const known = error instanceof ServiceTaskExcelError ? error : null;
             audit(db, "service_tasks.excel_sync_failed", user.id, null, { code: known?.code ?? "SYNC_FAILED" });
-            return reply.code(known?.code === "NOT_CONFIGURED" ? 409 : 502).send({
+            const status = known?.code === "NOT_CONFIGURED" || known?.code === "GRAPH_AUTH_REQUIRED" ? 409
+                : known?.code === "GRAPH_PERMISSION_DENIED" ? 403 : 502;
+            return reply.code(status).send({
                 error: known?.message ?? "Synchronizace Excelu se nezdařila.", code: known?.code ?? "SYNC_FAILED",
             });
         }
@@ -1026,8 +1122,13 @@ export async function registerApi(app, db, jobs) {
         const task = updateServiceTask(db, id, user.id, input);
         if (!task)
             return reply.code(404).send({ error: "Servisní úkol nebyl nalezen.", code: "NOT_FOUND" });
-        audit(db, "service_task.updated", user.id, task.serial, { taskId: id, fields: Object.keys(input) });
-        return { task };
+        const updated = getServiceTask(db, id) ?? task;
+        audit(db, "service_task.updated", user.id, updated.serial, {
+            taskId: id,
+            fields: Object.keys(input),
+            excelWritebackState: updated.externalSync?.state ?? null,
+        });
+        return { task: updated };
     });
     app.post("/api/service-tasks/:id/comments", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -1147,6 +1248,81 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listHomeAssistantInstances(db) };
+    });
+    app.get("/api/cameras", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return getCameraOverview(db);
+    });
+    app.put("/api/cameras/config", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z.object({
+            name: z.string().trim().min(1).max(100).optional(),
+            host: z.string().trim().min(7).max(15),
+            httpPort: z.number().int().min(1).max(65_535).optional(),
+            rtspPort: z.number().int().min(1).max(65_535).optional(),
+            username: z.string().trim().min(1).max(64),
+            password: z.string().min(1).max(256),
+        }).strict().parse(request.body);
+        try {
+            const overview = await saveCameraIntegration(db, input);
+            audit(db, "cameras.configured", user.id, null, {
+                host: overview.host,
+                model: overview.model,
+                channels: overview.channels.length,
+            });
+            return { item: overview };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 400 : error.code === "CAMERA_AUTH_FAILED" ? 401 : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
+    });
+    app.post("/api/cameras/refresh", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        try {
+            const overview = await refreshCameraIntegration(db);
+            audit(db, "cameras.refreshed", user.id, null, { channels: overview.channels.length });
+            return { item: overview };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 409 : error.code === "CAMERA_AUTH_FAILED" ? 401 : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
+    });
+    app.get("/api/cameras/:channelId/snapshot", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        try {
+            const jpeg = await getCameraSnapshot(db, channelId);
+            return reply.header("Cache-Control", "private, no-store, max-age=0").type("image/jpeg").send(jpeg);
+        }
+        catch (error) {
+            const message = error instanceof CameraIntegrationError ? error.message : "Náhled kamery není dostupný.";
+            const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404 : 502;
+            return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+        }
+    });
+    app.delete("/api/cameras/config", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        if (!deleteCameraIntegration(db))
+            return reply.code(404).send({ error: "NVR nebylo nastavené.", code: "NOT_FOUND" });
+        audit(db, "cameras.removed", user.id, null, {});
+        return { ok: true };
     });
     app.post("/api/home-assistant", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

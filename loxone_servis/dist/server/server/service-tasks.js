@@ -54,7 +54,9 @@ function mapTask(db, row, detail) {
         events: detail ? events(db, row.id) : [], createdAt: row.created_at, updatedAt: row.updated_at,
         externalSync: row.excel_sheet_name && row.excel_row_number && row.excel_writeback_state && row.excel_last_imported_at ? {
             source: "excel", sheetName: row.excel_sheet_name, rowNumber: Number(row.excel_row_number), state: row.excel_writeback_state,
-            message: row.excel_writeback_error || "Úkol je načten ze sdíleného Excelu; zdrojový odkaz je pouze pro čtení.",
+            message: row.excel_writeback_error || (row.excel_writeback_state === "synced"
+                ? `Dokončení bylo zapsáno do původního Excelu a ověřeno${row.excel_last_writeback_at ? ` · ${row.excel_last_writeback_at}` : ""}.`
+                : "Úkol je načtený ze sdíleného Excelu; změny v Hubu se nyní do Excelu nezapisují."),
             lastImportedAt: row.excel_last_imported_at,
         } : null,
     };
@@ -64,7 +66,7 @@ const taskSelect = `SELECT t.*,m.project,
   COALESCE(NULLIF(creator.display_name,''),creator.email,'') AS created_by_name,
   excel.sheet_name AS excel_sheet_name,excel.row_number AS excel_row_number,
   excel.writeback_state AS excel_writeback_state,excel.writeback_error AS excel_writeback_error,
-  excel.last_imported_at AS excel_last_imported_at
+  excel.last_imported_at AS excel_last_imported_at,excel.last_writeback_at AS excel_last_writeback_at
   FROM service_tasks t
   LEFT JOIN miniservers m ON m.serial=t.serial
   LEFT JOIN users assignee ON assignee.id=t.assignee_user_id
@@ -132,7 +134,7 @@ export function updateServiceTask(db, id, actorUserId, input) {
         }
         if (input.status !== undefined) {
             fields.push("completed_at=?");
-            values.push(input.status === "done" ? now : null);
+            values.push(input.status === "done" ? current.completedAt ?? now : null);
         }
         if ("reminderAt" in input) {
             fields.push("reminder_sent_at=?");
@@ -145,7 +147,7 @@ export function updateServiceTask(db, id, actorUserId, input) {
             setTaskTags(db, id, input.tags, now);
         event(db, id, "updated", input.status && input.status !== current.status ? `Stav změněn na ${input.status}.` : "Servisní úkol byl upraven.", actorUserId, input);
     });
-    if (input.status !== undefined && current.externalSync)
+    if (input.status === "done" && current.status !== "done" && current.externalSync)
         markExcelTaskForWriteback(db, id);
     return getServiceTask(db, id);
 }

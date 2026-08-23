@@ -1,6 +1,6 @@
 # Instalace a aktualizace
 
-Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.1 pro celé nativní macOS menu a všechny jeho vnořené položky.
+Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Stejné globální hledání nabízí Evora Smart Menu 3.0.3 pro celé nativní macOS menu a všechny jeho vnořené položky.
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.
@@ -51,13 +51,17 @@ V detailu Gateway nebo samostatného Miniserveru lze uložit zákazníka, kontak
 
 Sekce **Servisní úkoly** je oddělená od externích ticketů Partner Portálu. Správce a technik mohou zapsat hlášení z telefonu, e-mailu nebo osobní návštěvy, nastavit prioritu, odpovědnou osobu, termín a připomenutí, připojit incident nebo Miniserver, přidat komentáře a nahrát fotografii či PDF do 8 MB. Přílohy se ukládají šifrovaně a server kromě deklarovaného MIME kontroluje také jejich skutečnou signaturu.
 
-Na HA Práce lze v chráněné volbě `service_tasks_excel_share_url` nastavit sdílený sešit. Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Stabilní vazba na řádek a otisk obsahu brání duplicitám a obrazovka ukazuje poslední úspěch, chybu i počet řádků. Pokud organizační SharePoint vyžaduje Microsoft 365 relaci, lze pro prvotní naplnění použít chráněný interní import původního XLSX; ten používá silný administrační token a nepřenáší Office heslo. Samotný přihlášený prohlížeč není trvalá serverová relace. Dokud není dokončen podporovaný Microsoft Graph/OAuth zápis, lokální změna stavu se uloží v Hubu a označí jako čekající zápis, ale nevydává se za změnu původního Excelu.
+Na HA Práce se v chráněných volbách `service_tasks_excel_share_url`, `service_tasks_excel_graph_tenant_id` a `service_tasks_excel_graph_client_id` nastaví sdílený sešit a tenantově omezená veřejná aplikace Microsoft Entra. Aplikace nepoužívá klientské tajemství; správce ji v obrazovce Úkoly připojí device-code přihlášením s delegovanými právy `Files.ReadWrite` a `offline_access`. Hub neukládá Office heslo a dlouhodobý obnovovací token drží pouze šifrovaně pomocí hlavního klíče.
+
+Registrace Entra musí být pouze pro účty daného organizačního tenantu, bez klientského tajemství a s povoleným přepínačem **Allow public client flows**. Endpoint Microsoft Graph `/shares` vyžaduje pro rozlišení položky ze sdíleného odkazu delegované `Files.ReadWrite`; širší `Files.ReadWrite.All` ani aplikační oprávnění se nepoužívají. Hub tuto relaci v 3.0.8 používá jen pro `GET` stažení sešitu. Do voleb Hubu se přenesou pouze Directory (tenant) ID a Application (client) ID. Pokud organizace zakazuje uživatelský souhlas, schválí stejné delegované oprávnění její správce.
+
+Po připojení Hub jednou za hodinu a také po ručním kliknutí načte aktivní řádky listu `PROGRAMOVÁNÍ - DOKONČOVÁNÍ` pouze do oddílu `HOTOVO`. Nezměněný přesunutý řádek páruje podle stabilního otisku místa a požadavku; drobnou úpravu stejného řádku páruje omezenou podobností a aktualizuje původní úkol. Nový úkol vznikne až tehdy, když žádná jednoznačná vazba neexistuje. Zápis Hub → Excel je nyní vypnutý: dokončení se uchová pouze v Hubu a žádný Graph `PATCH` se nespouští. Samotná přihlášená relace prohlížeče není trvalá serverová relace. Chráněný interní import původního XLSX zůstává bezpečnou cestou pro prvotní naplnění bez Microsoft hesla.
 
 ## Evora Smart Menu na macOS
 
 Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čtení její panel neuvidí a jejich případný starší token server odmítne. Správce v **Nástroje a zabezpečení → Evora Smart Menu · Evora Smart Hub** stáhne integrační balíček a vytvoří osobní token. Nešifrovaná adresa Hubu se uloží do uživatelských předvoleb macOS, ale token pouze do Klíčenky. Hub uchovává jen SHA-256 hash a krátkou nápovědu tokenu; token lze kdykoli odvolat.
 
-Evora Smart Menu načítá pouze názvy, složky, SN, stav a firmware. Hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou menu ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a menu průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
+Evora Smart Menu načítá názvy, složky, SN, stav, firmware, ověřený poměr prvků online/celkem, počet offline prvků, Health verdict, čas poslední kontroly a odezvu. Neznámé hodnoty výslovně označí jako neověřené; hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou menu ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a menu průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
 
 ## Evora Intranet a docházka
 

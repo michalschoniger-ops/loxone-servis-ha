@@ -87,6 +87,66 @@ function migrateDistinctFolderColors(db) {
         throw error;
     }
 }
+/** @internal Exported for a focused migration regression test. */
+export function migrateServiceTaskExcelWritebackStates(db) {
+    const applied = db.prepare("SELECT 1 AS ok FROM schema_migrations WHERE version=21").get();
+    if (applied?.ok === 1)
+        return;
+    const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='service_task_excel_links'").get();
+    const now = new Date().toISOString();
+    if (!schema?.sql || schema.sql.includes("'synced'")) {
+        db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(21, now);
+        return;
+    }
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+        db.exec(`
+      BEGIN IMMEDIATE;
+      ALTER TABLE service_task_excel_links RENAME TO service_task_excel_links_v19;
+      DROP INDEX IF EXISTS idx_service_task_excel_row;
+      DROP INDEX IF EXISTS idx_service_task_excel_fingerprint;
+      CREATE TABLE service_task_excel_links (
+        task_id TEXT PRIMARY KEY,
+        sheet_name TEXT NOT NULL,
+        row_number INTEGER NOT NULL,
+        source_fingerprint TEXT NOT NULL,
+        row_hash TEXT NOT NULL,
+        last_imported_at TEXT NOT NULL,
+        local_status_dirty INTEGER NOT NULL DEFAULT 0,
+        writeback_state TEXT NOT NULL DEFAULT 'current' CHECK(writeback_state IN ('current','pending','blocked','synced')),
+        writeback_error TEXT,
+        last_writeback_at TEXT,
+        FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE
+      );
+      INSERT INTO service_task_excel_links(
+        task_id,sheet_name,row_number,source_fingerprint,row_hash,last_imported_at,
+        local_status_dirty,writeback_state,writeback_error,last_writeback_at
+      )
+      SELECT task_id,sheet_name,row_number,source_fingerprint,row_hash,last_imported_at,
+        local_status_dirty,CASE WHEN writeback_state='read_only' THEN 'current' ELSE writeback_state END,
+        writeback_error,last_writeback_at
+      FROM service_task_excel_links_v19;
+      DROP TABLE service_task_excel_links_v19;
+      CREATE INDEX idx_service_task_excel_row ON service_task_excel_links(sheet_name,row_number);
+      CREATE INDEX idx_service_task_excel_fingerprint ON service_task_excel_links(source_fingerprint);
+      COMMIT;
+    `);
+        db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(21, now);
+    }
+    catch (error) {
+        try {
+            db.exec("ROLLBACK");
+        }
+        catch { /* transakce už mohla skončit */ }
+        throw error;
+    }
+    finally {
+        db.exec("PRAGMA foreign_keys = ON");
+    }
+    const violation = db.prepare("PRAGMA foreign_key_check").get();
+    if (violation)
+        throw new Error("Migrace Excel writebacku porušila vazby databáze.");
+}
 function migrateUserRoles(db) {
     const schema = db
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
@@ -580,6 +640,25 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_home_assistant_monitor_events_time
       ON home_assistant_monitor_events(monitor_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS camera_integrations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      host TEXT NOT NULL,
+      http_port INTEGER NOT NULL DEFAULT 80,
+      rtsp_port INTEGER NOT NULL DEFAULT 554,
+      username_encrypted TEXT NOT NULL,
+      password_encrypted TEXT NOT NULL,
+      vendor TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      firmware TEXT NOT NULL DEFAULT '',
+      connection_state TEXT NOT NULL DEFAULT 'unknown' CHECK(connection_state IN ('unknown','online','unavailable','auth_error')),
+      channels_json TEXT NOT NULL DEFAULT '[]',
+      last_checked_at TEXT,
+      last_success_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
     addColumn(db, "project_folders", "color TEXT NOT NULL DEFAULT '#58D73A'");
     addColumn(db, "home_assistant_instances", "updates_json TEXT NOT NULL DEFAULT '[]'");
@@ -867,7 +946,7 @@ function applyMigrations(db) {
       row_hash TEXT NOT NULL,
       last_imported_at TEXT NOT NULL,
       local_status_dirty INTEGER NOT NULL DEFAULT 0,
-      writeback_state TEXT NOT NULL DEFAULT 'read_only' CHECK(writeback_state IN ('read_only','pending','blocked')),
+      writeback_state TEXT NOT NULL DEFAULT 'current' CHECK(writeback_state IN ('current','pending','blocked','synced')),
       writeback_error TEXT,
       last_writeback_at TEXT,
       FOREIGN KEY(task_id) REFERENCES service_tasks(id) ON DELETE CASCADE
@@ -897,6 +976,8 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(17, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(18, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(19, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(20, new Date().toISOString());
+    migrateServiceTaskExcelWritebackStates(db);
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

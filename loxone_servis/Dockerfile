@@ -6,10 +6,10 @@ ENV NODE_ENV=production \
     DATA_DIRECTORY=/data \
     TRUST_PROXY=true \
     SECURE_COOKIES=auto \
-    APP_VERSION=3.0.7
+    APP_VERSION=3.0.8
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tini \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

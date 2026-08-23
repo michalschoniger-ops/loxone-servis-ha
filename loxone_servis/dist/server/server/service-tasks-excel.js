@@ -3,12 +3,13 @@ import { XMLParser } from "fast-xml-parser";
 import { config } from "./config.js";
 import { getSetting, setSetting, transaction } from "./database.js";
 import { readZipEntry } from "./loxone/exports.js";
+import { downloadServiceTaskWorkbookViaGraph, getServiceTaskExcelGraphStatus, serviceTaskExcelGraphReady, ServiceTaskExcelGraphError, } from "./service-tasks-excel-graph.js";
 const TARGET_SHEET = "PROGRAMOVÁNÍ - DOKONČOVÁNÍ";
 const SYNC_INTERVAL_MS = 60 * 60_000;
 const ERROR_RETRY_MS = 5 * 60_000;
 const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;
 const MAX_XML_BYTES = 32 * 1024 * 1024;
-const READ_ONLY_MESSAGE = "Sdílený odkaz dovoluje import, ale ne zápis do původního Excelu.";
+const READ_ONLY_MESSAGE = "Excel se synchronizuje pouze směrem do Hubu; zápis zpět je nyní vypnutý.";
 const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@",
@@ -52,6 +53,33 @@ function normalized(value) {
 }
 function hash(value) {
     return createHash("sha256").update(value, "utf8").digest("hex");
+}
+function textSimilarity(leftValue, rightValue) {
+    const left = normalized(leftValue).slice(0, 500);
+    const right = normalized(rightValue).slice(0, 500);
+    if (left === right)
+        return 1;
+    if (!left || !right)
+        return 0;
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+        const current = [leftIndex];
+        for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+            current[rightIndex] = Math.min(current[rightIndex - 1] + 1, previous[rightIndex] + 1, previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1));
+        }
+        previous = current;
+    }
+    return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+function requestFromExistingTask(link) {
+    const prefix = `${link.contact_name}:`;
+    return link.title.startsWith(prefix) ? link.title.slice(prefix.length).trim() : link.title;
+}
+function taskIdentitySimilarity(link, task) {
+    const place = textSimilarity(link.contact_name, task.identityPlace);
+    const request = textSimilarity(requestFromExistingTask(link), task.identityRequest);
+    const combined = textSimilarity(`${link.contact_name}\n${requestFromExistingTask(link)}`, `${task.identityPlace}\n${task.identityRequest}`);
+    return Math.max(combined, place * 0.35 + request * 0.65);
 }
 function entry(workbook, name) {
     const result = readZipEntry(workbook, name, MAX_XML_BYTES);
@@ -131,7 +159,9 @@ export function parseServiceTaskWorkbook(workbook) {
     if (!expected.every((value, index) => normalized(String(header[index] ?? "")) === value)) {
         throw new ServiceTaskExcelError("List má jiné sloupce než očekávané úkoly.", "SHEET_SCHEMA_MISMATCH");
     }
-    const finishIndex = rows.findIndex((row) => row.rowNumber > 1 && row.values.some((value) => normalized(value) === "hotovo"));
+    const finishIndex = rows.findIndex((row) => row.rowNumber > 1
+        && normalized(row.values[0]) === "hotovo"
+        && row.values.slice(1).every((value) => !value.trim()));
     const active = (finishIndex >= 0 ? rows.slice(0, finishIndex) : rows)
         .filter((row) => row.rowNumber > 1 && row.values[3].trim());
     return { sheetName, rows: active };
@@ -149,6 +179,8 @@ function excelDate(value) {
 }
 function taskStatus(values) {
     const state = normalized([values[4], values[6], values[7]].join(" "));
+    if (/\b(hotovo|dokonceno|uzavreno|splneno)\b/.test(state))
+        return "done";
     if (/\b(ceka|cekame|objednano|pozastaven|az bude|po dodani)\b/.test(state))
         return "waiting";
     if (/\b(resi se|rozprac|probiha|pracuji|domluveno)\b/.test(state))
@@ -205,6 +237,8 @@ function taskFromRow(db, row) {
         dueAt: excelDate(due),
         sourceFingerprint: hash(`${normalized(cleanPlace)}\n${normalized(cleanRequest)}`),
         rowHash: hash([created, due, place, request, completion, assignee, noteOne, noteTwo].map(normalized).join("\n")),
+        identityPlace: cleanPlace,
+        identityRequest: cleanRequest,
     };
 }
 function systemUserId(db) {
@@ -230,15 +264,47 @@ function createImportedTask(db, ownerId, task, now) {
 function persistRows(db, parsed, workbookHash) {
     const now = new Date().toISOString();
     const ownerId = systemUserId(db);
+    const prepared = parsed.rows.map((row) => ({ row, task: taskFromRow(db, row) }));
+    const existingLinks = db.prepare(`SELECT links.task_id,links.row_number,links.source_fingerprint,links.row_hash,links.local_status_dirty,
+            tasks.contact_name,tasks.title
+     FROM service_task_excel_links links JOIN service_tasks tasks ON tasks.id=links.task_id
+     WHERE links.sheet_name=?`).all(parsed.sheetName);
+    const plannedMatches = new Map();
+    const reservedTaskIds = new Set();
+    for (const item of prepared) {
+        const match = existingLinks
+            .filter((link) => link.source_fingerprint === item.task.sourceFingerprint && !reservedTaskIds.has(link.task_id))
+            .sort((left, right) => Math.abs(left.row_number - item.row.rowNumber) - Math.abs(right.row_number - item.row.rowNumber))[0];
+        if (!match)
+            continue;
+        plannedMatches.set(item.row.rowNumber, match);
+        reservedTaskIds.add(match.task_id);
+    }
+    const fuzzyCandidates = prepared
+        .filter((item) => !plannedMatches.has(item.row.rowNumber))
+        .flatMap((item) => existingLinks
+        .filter((link) => !reservedTaskIds.has(link.task_id))
+        .map((link) => ({
+        item,
+        link,
+        distance: Math.abs(link.row_number - item.row.rowNumber),
+        score: taskIdentitySimilarity(link, item.task),
+    })))
+        .filter((candidate) => candidate.score >= 0.7 && (candidate.distance <= 5 || candidate.score >= 0.9))
+        .sort((left, right) => right.score - left.score || left.distance - right.distance || left.item.row.rowNumber - right.item.row.rowNumber);
+    for (const candidate of fuzzyCandidates) {
+        if (plannedMatches.has(candidate.item.row.rowNumber) || reservedTaskIds.has(candidate.link.task_id))
+            continue;
+        plannedMatches.set(candidate.item.row.rowNumber, candidate.link);
+        reservedTaskIds.add(candidate.link.task_id);
+    }
     const seen = new Set();
     let created = 0;
     let updated = 0;
     let completed = 0;
     transaction(db, () => {
-        for (const row of parsed.rows) {
-            const task = taskFromRow(db, row);
-            let link = db.prepare("SELECT task_id,local_status_dirty,row_hash FROM service_task_excel_links WHERE sheet_name=? AND row_number=?").get(parsed.sheetName, row.rowNumber);
-            link ??= db.prepare("SELECT task_id,local_status_dirty,row_hash FROM service_task_excel_links WHERE sheet_name=? AND source_fingerprint=? ORDER BY last_imported_at DESC LIMIT 1").get(parsed.sheetName, task.sourceFingerprint);
+        for (const { row, task } of prepared) {
+            const link = plannedMatches.get(row.rowNumber);
             let taskId;
             if (!link) {
                 taskId = createImportedTask(db, ownerId, task, now);
@@ -255,10 +321,10 @@ function persistRows(db, parsed, workbookHash) {
             }
             seen.add(taskId);
             db.prepare(`INSERT INTO service_task_excel_links(task_id,sheet_name,row_number,source_fingerprint,row_hash,last_imported_at,writeback_state,writeback_error)
-         VALUES(?,?,?,?,?,?,'read_only',NULL)
+         VALUES(?,?,?,?,?,?,'current',NULL)
          ON CONFLICT(task_id) DO UPDATE SET sheet_name=excluded.sheet_name,row_number=excluded.row_number,
            source_fingerprint=excluded.source_fingerprint,row_hash=excluded.row_hash,last_imported_at=excluded.last_imported_at,
-           writeback_state=CASE WHEN service_task_excel_links.local_status_dirty=1 THEN service_task_excel_links.writeback_state ELSE 'read_only' END,
+           writeback_state=CASE WHEN service_task_excel_links.local_status_dirty=1 THEN service_task_excel_links.writeback_state ELSE 'current' END,
            writeback_error=CASE WHEN service_task_excel_links.local_status_dirty=1 THEN service_task_excel_links.writeback_error ELSE NULL END`).run(taskId, parsed.sheetName, row.rowNumber, task.sourceFingerprint, task.rowHash, now);
         }
         const existing = db.prepare("SELECT task_id,local_status_dirty FROM service_task_excel_links WHERE sheet_name=?").all(parsed.sheetName);
@@ -299,9 +365,23 @@ export function importUploadedServiceTaskWorkbook(db, workbook) {
         throw error instanceof ServiceTaskExcelError ? error : new ServiceTaskExcelError(message, "IMPORT_FAILED");
     }
 }
-async function downloadWorkbook() {
+async function downloadWorkbook(db) {
     if (!config.serviceTasksExcelShareUrl)
         throw new ServiceTaskExcelError("Zdrojový Excel zatím není v nastavení Hubu připojen.", "NOT_CONFIGURED");
+    const graph = getServiceTaskExcelGraphStatus(db);
+    if (graph.configured) {
+        if (!serviceTaskExcelGraphReady(db)) {
+            throw new ServiceTaskExcelError("Automatická synchronizace čeká na připojení Microsoft 365.", "GRAPH_AUTH_REQUIRED");
+        }
+        try {
+            return await downloadServiceTaskWorkbookViaGraph(db);
+        }
+        catch (error) {
+            if (error instanceof ServiceTaskExcelGraphError)
+                throw new ServiceTaskExcelError(error.message, error.code);
+            throw new ServiceTaskExcelError("Microsoft Graph nedokázal načíst zdrojový Excel.", "GRAPH_SYNC_FAILED");
+        }
+    }
     let response;
     try {
         response = await fetch(config.serviceTasksExcelShareUrl, {
@@ -331,6 +411,8 @@ function storedNumber(db, key) {
 export function serviceTasksExcelSyncDue(db, now = Date.now()) {
     if (!config.serviceTasksExcelShareUrl)
         return false;
+    if (getServiceTaskExcelGraphStatus(db).configured && !serviceTaskExcelGraphReady(db))
+        return false;
     const lastAttemptAt = getSetting(db, "service_tasks_excel_last_attempt_at");
     if (!lastAttemptAt)
         return true;
@@ -340,15 +422,19 @@ export function serviceTasksExcelSyncDue(db, now = Date.now()) {
     const interval = getSetting(db, "service_tasks_excel_last_error") ? ERROR_RETRY_MS : SYNC_INTERVAL_MS;
     return now - parsed >= interval;
 }
-export function getServiceTaskExcelSyncStatus(db) {
+export function getServiceTaskExcelSyncStatus(db, options = {}) {
     const lastAttemptAt = getSetting(db, "service_tasks_excel_last_attempt_at");
     const lastSuccessAt = getSetting(db, "service_tasks_excel_last_success_at");
     const remoteConfigured = Boolean(config.serviceTasksExcelShareUrl);
+    const graphStatus = getServiceTaskExcelGraphStatus(db);
+    const graph = options.includeGraphVerification ? graphStatus : { ...graphStatus, verification: null };
+    const remoteReady = remoteConfigured && (!graph.configured || serviceTaskExcelGraphReady(db));
     const configured = remoteConfigured || Boolean(lastSuccessAt);
     const lastError = getSetting(db, "service_tasks_excel_last_error") || null;
     const interval = lastError ? ERROR_RETRY_MS : SYNC_INTERVAL_MS;
-    const nextSyncAt = remoteConfigured && lastAttemptAt && Number.isFinite(Date.parse(lastAttemptAt))
+    const nextSyncAt = remoteReady && lastAttemptAt && Number.isFinite(Date.parse(lastAttemptAt))
         ? new Date(Date.parse(lastAttemptAt) + interval).toISOString() : null;
+    const pendingWriteback = countRows(db, "SELECT COUNT(*) AS value FROM service_task_excel_links WHERE local_status_dirty=1");
     return {
         configured,
         state: !configured ? "not_configured" : lastError ? "error" : "current",
@@ -358,9 +444,20 @@ export function getServiceTaskExcelSyncStatus(db) {
         nextSyncAt,
         importedCount: storedNumber(db, "service_tasks_excel_imported_count"),
         activeRows: storedNumber(db, "service_tasks_excel_active_rows"),
+        remoteReady,
+        pendingWriteback,
         writeback: "read_only",
-        writebackMessage: READ_ONLY_MESSAGE,
+        writebackMessage: pendingWriteback > 0
+            ? `${pendingWriteback} dokončení zůstává uložených v Hubu; zápis do Excelu je nyní vypnutý.`
+            : graph.configured && !remoteReady
+                ? "Microsoft 365 zatím není připojené; hodinové čtení čeká na autorizaci. Zápis do Excelu je vypnutý."
+                : READ_ONLY_MESSAGE,
+        graph,
     };
+}
+function countRows(db, sql) {
+    const row = db.prepare(sql).get();
+    return Number(row?.value ?? 0);
 }
 export function getServiceTaskExcelDiagnostic(db) {
     const count = (sql) => {
@@ -381,7 +478,7 @@ export function getServiceTaskExcelDiagnostic(db) {
 export async function syncServiceTasksFromExcel(db) {
     setSetting(db, "service_tasks_excel_last_attempt_at", new Date().toISOString());
     try {
-        const workbook = await downloadWorkbook();
+        const workbook = await downloadWorkbook(db);
         const outcome = importServiceTasksFromWorkbook(db, workbook);
         recordSuccessfulImport(db, outcome);
         return getServiceTaskExcelSyncStatus(db);
@@ -393,5 +490,5 @@ export async function syncServiceTasksFromExcel(db) {
     }
 }
 export function markExcelTaskForWriteback(db, taskId) {
-    db.prepare(`UPDATE service_task_excel_links SET local_status_dirty=1,writeback_state='pending',writeback_error=? WHERE task_id=?`).run("Změna je uložena v Hubu, ale původní sdílený odkaz nemá oprávnění k zápisu do Excelu.", taskId);
+    db.prepare(`UPDATE service_task_excel_links SET local_status_dirty=1,writeback_state='pending',writeback_error=? WHERE task_id=?`).run("Dokončení je uložené pouze v Hubu; zápis do původního Excelu je nyní vypnutý.", taskId);
 }

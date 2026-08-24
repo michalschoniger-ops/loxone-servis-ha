@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.22
+
+- HLS relace se během delší mezery mezi klíčovými snímky udržuje skutečným stažením posledního video segmentu. Opravuje to pětisekundové vypršení relace interní brány, které na živém NVR po několika segmentech ukončovalo šest z deseti kanálů.
+- Před předáním relace klientovi Hub ověří inicializaci a dva různé video segmenty po dobu až 20 sekund. Průběžné playlisty stejným mechanismem bezpečně obnovují relaci bez MJPEG, překódování nebo zveřejnění RTSP přístupu.
+- Nativní HLS Safari a iPhonu smí vyjednat H.264 i HEVC; Hls.js v ostatních prohlížečích dostává pouze H.264. Kamera s HEVC náhledem tak může na podporovaném zařízení hrát bez zbytečného převodu, zatímco nepodporovaný prohlížeč dostane kompatibilní proud.
+
 ## 3.0.21
 
 - WebRTC média používají nový vyhrazený TCP/UDP port 28555, který se shoduje uvnitř kontejneru, v Supervisor mapování i v ICE kandidátech. Odstraňuje se konflikt s již obsazeným portem 18555 na HA Práce.

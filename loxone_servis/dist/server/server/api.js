@@ -204,6 +204,7 @@ function sendIntranetError(reply, error) {
 }
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
+    hevc: z.enum(["0", "1"]).default("0"),
 }).strict();
 const cameraWebRtcSchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
@@ -1426,8 +1427,8 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
-        const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
+        const { quality, hevc } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraHlsMaster(reply, db, channelId, quality, hevc === "1" ? "h264,h265" : "h264");
     });
     app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))

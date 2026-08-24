@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.21.1
+
+- Nasazuje Evora Smart Hub 3.0.21 s pravdivou detekcí dekódovaných WebRTC/HLS snímků, serverovým ověřením postupujících HLS segmentů, automatickým H.264 fallbackem a bez aktivního MJPEG přenosu.
+- Součástí je Evora Smart Menu 3.0.12 s 30minutovým odpočtem přestávky v panelu i horní liště; helper zachovává databázi, názvy kamer, šifrovaná připojení a vratný zdroj Hubu 3.0.20.
+
 ## 3.0.20.1
 
 - Nasazuje Evora Smart Hub 3.0.20 s převodem interního Milesight RTSP na WebRTC a zabezpečené HLS, checksumem ověřenou video bránou a Evora Smart Menu 3.0.11 s nativním AVPlayer HLS přehráváním.

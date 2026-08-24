@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.21
+
+- WebRTC média používají nový vyhrazený TCP/UDP port 28555, který se shoduje uvnitř kontejneru, v Supervisor mapování i v ICE kandidátech. Odstraňuje se konflikt s již obsazeným portem 18555 na HA Práce.
+- HLS záloha před předáním klientovi ověří inicializaci a tři po sobě postupující video segmenty. Nefunkční druhý stream uvolní a bezpečně zkusí hlavní H.264 stream; prohlížeč tak nedostane relaci, která se po dvou segmentech zastaví.
+- Dlaždice označí stream jako živý až po dvou skutečně dekódovaných video snímcích. Osmisekundové zamrznutí spustí bezpečný přechod z WebRTC na HLS nebo nový pokus; dočasná chyba už nezůstane trvale ve spinneru ani ve falešném stavu „živě“.
+- Aktivní multipart/MJPEG endpointy Hubu a Menu byly odstraněny. Volitelná správcovská funkce nastavení třetího MJPEG profilu kamery zůstává oddělená a není používána pro přehrávání obrazu.
+- Evora Smart Menu 3.0.12 při stavu přestávky odpočítává 30 minut po sekundách, zobrazuje zbývající `MM:SS` přímo v řádku Intranetu a v horní liště používá výrazné `☕ MM:SS`.
+
 ## 3.0.20
 
 - Firemní Milesight RTSP už není pro Hub překódován na sled samostatných JPEGů. Interní, checksumem ověřená video brána přebaluje kompatibilní H.264/H.265 beze změny obrazu; Hub používá WebRTC a při nedostupném přímém mediálním spojení automaticky přejde na zabezpečené HLS přes stejnou HTTPS adresu.

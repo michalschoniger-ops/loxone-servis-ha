@@ -4,9 +4,13 @@ import { isIP } from "node:net";
 import { config } from "./config.js";
 import { cameraGatewaySources, CameraIntegrationError, } from "./cameras.js";
 const GO2RTC_API = "http://127.0.0.1:1984";
-const GO2RTC_WEBRTC_PORT = 18_555;
+const GO2RTC_WEBRTC_PORT = 28_555;
 const GATEWAY_READY_TIMEOUT_MS = 6_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 12_000;
+const HLS_PREFLIGHT_TIMEOUT_MS = 7_000;
+const HLS_PREFLIGHT_POLL_MS = 250;
+const HLS_MIN_INIT_BYTES = 100;
+const HLS_MIN_SEGMENT_BYTES = 500;
 const MAX_SDP_BYTES = 512 * 1024;
 const MAX_HLS_MANIFEST_BYTES = 64 * 1024;
 const MAX_HLS_INIT_BYTES = 4 * 1024 * 1024;
@@ -53,7 +57,7 @@ async function readLimited(response, maximumBytes) {
 }
 function parseHlsRelativeUrl(line, expectedResource) {
     const parsed = new URL(line, "http://evora.invalid/api/");
-    if (!parsed.pathname.endsWith(`/${expectedResource}`)) {
+    if (parsed.origin !== "http://evora.invalid" || !parsed.pathname.endsWith(`/${expectedResource}`)) {
         throw new CameraIntegrationError("Video brána vrátila neplatný HLS manifest.", "CAMERA_STREAM_FAILED");
     }
     const id = parsed.searchParams.get("id") ?? "";
@@ -79,6 +83,13 @@ export function rewriteCameraHlsMasterPlaylist(input) {
         throw new CameraIntegrationError("Video brána nevrátila HLS playlist.", "CAMERA_STREAM_FAILED");
     }
     return `${output.join("\n")}\n`;
+}
+export function cameraHlsSessionId(input) {
+    const playlistLine = input.trim().split(/\r?\n/).find((line) => line && !line.startsWith("#"));
+    if (!playlistLine) {
+        throw new CameraIntegrationError("Video brána nevrátila HLS relaci.", "CAMERA_STREAM_FAILED");
+    }
+    return parseHlsRelativeUrl(playlistLine, "playlist.m3u8").searchParams.get("id") ?? "";
 }
 export function rewriteCameraHlsMediaPlaylist(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
@@ -222,6 +233,63 @@ class CameraVideoGateway {
             throw new CameraIntegrationError("NVR stream nelze připojit k video bráně.", "CAMERA_STREAM_FAILED");
         }
     }
+    async unregisterStream(name) {
+        const query = new URLSearchParams({ src: name });
+        const response = await this.request(`/api/streams?${query.toString()}`, { method: "DELETE" }, 3_000);
+        await response.body?.cancel();
+        if (!response.ok && response.status !== 404) {
+            throw new CameraIntegrationError("Video brána neuvolnila nefunkční stream.", "CAMERA_STREAM_FAILED");
+        }
+    }
+    async preflightHlsSession(sessionId) {
+        const deadline = Date.now() + HLS_PREFLIGHT_TIMEOUT_MS;
+        let initVerified = false;
+        let baselineSequence = null;
+        let progressions = 0;
+        let lastSequence = null;
+        while (Date.now() < deadline) {
+            const playlistQuery = new URLSearchParams({ id: sessionId });
+            const playlistResponse = await this.request(`/api/hls/playlist.m3u8?${playlistQuery.toString()}`, { method: "GET" }, 3_000);
+            const playlistBody = await readLimited(playlistResponse, MAX_HLS_MANIFEST_BYTES);
+            if (!playlistResponse.ok)
+                break;
+            const playlist = rewriteCameraHlsMediaPlaylist(playlistBody.toString("utf8"), sessionId);
+            if (!initVerified) {
+                const initLine = playlist.match(/#EXT-X-MAP:URI="([^"]+)"/)?.[1];
+                if (!initLine)
+                    break;
+                const initUrl = parseHlsRelativeUrl(initLine, "init.mp4");
+                const initResponse = await this.request(`/api/hls/init.mp4?${initUrl.searchParams.toString()}`, { method: "GET" }, 3_000);
+                const initBody = await readLimited(initResponse, MAX_HLS_INIT_BYTES);
+                if (!initResponse.ok || initBody.length < HLS_MIN_INIT_BYTES)
+                    break;
+                initVerified = true;
+            }
+            const segmentLine = playlist.split(/\r?\n/)
+                .filter((line) => /^(?:segment\.(?:m4s|ts))\?/.test(line))
+                .at(-1);
+            if (segmentLine) {
+                const resource = segmentLine.startsWith("segment.ts") ? "segment.ts" : "segment.m4s";
+                const segmentUrl = parseHlsRelativeUrl(segmentLine, resource);
+                const sequence = segmentUrl.searchParams.get("n") ?? "";
+                if (sequence && sequence !== lastSequence) {
+                    const segmentResponse = await this.request(`/api/hls/${resource}?${segmentUrl.searchParams.toString()}`, { method: "GET" }, 3_000);
+                    const segmentBody = await readLimited(segmentResponse, MAX_HLS_SEGMENT_BYTES);
+                    if (!segmentResponse.ok || segmentBody.length < HLS_MIN_SEGMENT_BYTES)
+                        break;
+                    if (baselineSequence === null)
+                        baselineSequence = sequence;
+                    else
+                        progressions += 1;
+                    lastSequence = sequence;
+                    if (initVerified && progressions >= 2)
+                        return;
+                }
+            }
+            await new Promise((resolve) => setTimeout(resolve, HLS_PREFLIGHT_POLL_MS));
+        }
+        throw new CameraIntegrationError("HLS stream nevytváří souvislé video segmenty.", "CAMERA_STREAM_FAILED");
+    }
     async exchangeWebRtc(db, channelId, quality, offer) {
         if (!offer.startsWith("v=0") || Buffer.byteLength(offer, "utf8") > MAX_SDP_BYTES) {
             throw new CameraIntegrationError("WebRTC nabídka není platná.", "CAMERA_CONFIG_INVALID");
@@ -250,13 +318,13 @@ class CameraVideoGateway {
         }
         throw new CameraIntegrationError("Kamera nenabídla WebRTC kompatibilní video.", "CAMERA_STREAM_FAILED");
     }
-    async hlsMaster(db, channelId, quality) {
+    async hlsMaster(db, channelId, quality, codecs = "h264,h265") {
         const sources = cameraGatewaySources(db, channelId, quality);
         for (const [candidateIndex, source] of sources.entries()) {
             try {
                 const name = streamName(channelId, quality, candidateIndex);
                 await this.registerStream(name, source.url);
-                const query = new URLSearchParams({ src: name, video: "h264,h265" });
+                const query = new URLSearchParams({ src: name, video: codecs });
                 const response = await this.request(`/api/stream.m3u8?${query.toString()}`, {
                     method: "GET",
                     headers: { "User-Agent": `Evora-Smart-Hub/${config.appVersion}` },
@@ -264,14 +332,18 @@ class CameraVideoGateway {
                 const body = await readLimited(response, MAX_HLS_MANIFEST_BYTES);
                 if (!response.ok)
                     continue;
+                const master = rewriteCameraHlsMasterPlaylist(body.toString("utf8"));
+                await this.preflightHlsSession(cameraHlsSessionId(master));
                 return {
-                    body: Buffer.from(rewriteCameraHlsMasterPlaylist(body.toString("utf8")), "utf8"),
+                    body: Buffer.from(master, "utf8"),
                     contentType: "application/vnd.apple.mpegurl",
                 };
             }
             catch (error) {
                 if (error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID")
                     throw error;
+                const name = streamName(channelId, quality, candidateIndex);
+                await this.unregisterStream(name).catch(() => undefined);
             }
         }
         throw new CameraIntegrationError("Kamera nenabídla kompatibilní HLS video.", "CAMERA_STREAM_FAILED");

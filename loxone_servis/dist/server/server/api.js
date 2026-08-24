@@ -24,7 +24,7 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getCameraOverview, getPreferredCameraLiveStream, getCameraSnapshot, optimizeCameraThirdMjpegStream, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
+import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
@@ -236,28 +236,6 @@ const cameraHttpNotificationTargetSchema = z.object({
     password: z.string().max(256).optional(),
     clearPassword: z.boolean().optional(),
 }).strict();
-async function sendCameraLiveStream(reply, db, channelId, quality) {
-    try {
-        const result = await getPreferredCameraLiveStream(db, channelId, quality);
-        const stream = result.stream;
-        reply.raw.once("close", () => stream.destroy());
-        return reply
-            .header("Cache-Control", "private, no-store, no-transform, max-age=0")
-            .header("Pragma", "no-cache")
-            .header("X-Accel-Buffering", "no")
-            .header("X-Content-Type-Options", "nosniff")
-            .header("X-Evora-Stream-Source", result.source)
-            .type(result.contentType)
-            .send(stream);
-    }
-    catch (error) {
-        const message = error instanceof CameraIntegrationError ? error.message : "Živý obraz kamery není dostupný.";
-        const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404
-            : error instanceof CameraIntegrationError && error.code === "CAMERA_STREAM_LIMIT" ? 503
-                : 502;
-        return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
-    }
-}
 async function sendCameraWebRtc(reply, db, channelId, quality, offer) {
     try {
         const result = await cameraVideoGateway.exchangeWebRtc(db, channelId, quality, offer);
@@ -272,9 +250,9 @@ async function sendCameraWebRtc(reply, db, channelId, quality, offer) {
         return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
     }
 }
-async function sendCameraHlsMaster(reply, db, channelId, quality) {
+async function sendCameraHlsMaster(reply, db, channelId, quality, codecs) {
     try {
-        const result = await cameraVideoGateway.hlsMaster(db, channelId, quality);
+        const result = await cameraVideoGateway.hlsMaster(db, channelId, quality, codecs);
         return reply
             .header("Cache-Control", "private, no-store, no-transform, max-age=0")
             .header("Pragma", "no-cache")
@@ -770,23 +748,15 @@ export async function registerApi(app, db, jobs) {
             return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
         }
     });
-    app.get("/api/integrations/worklog/v1/cameras/:channelId/live", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
-        if (!identity)
-            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
-        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
-        const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraLiveStream(reply, db, channelId, quality);
-    });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/index.m3u8", { config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality);
+        return sendCameraHlsMaster(reply, db, channelId, quality, "h264,h265");
     });
-    app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 1_200, timeWindow: "1 minute" } } }, async (request, reply) => {
+    app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
@@ -1445,13 +1415,6 @@ export async function registerApi(app, db, jobs) {
             return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
         }
     });
-    app.get("/api/cameras/:channelId/live", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
-        if (!requireUser(request, reply))
-            return;
-        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
-        const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraLiveStream(reply, db, channelId, quality);
-    });
     app.post("/api/cameras/:channelId/webrtc", { config: { rateLimit: { max: 45, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))
             return;
@@ -1464,9 +1427,9 @@ export async function registerApi(app, db, jobs) {
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality);
+        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
     });
-    app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 1_200, timeWindow: "1 minute" } } }, async (request, reply) => {
+    app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))
             return;
         z.coerce.number().int().min(0).max(99).parse(request.params.channelId);

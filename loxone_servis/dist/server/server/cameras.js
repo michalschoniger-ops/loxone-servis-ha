@@ -1,25 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { PassThrough, Readable } from "node:stream";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 const CAMERA_INTEGRATION_ID = "primary";
 const SNAPSHOT_CACHE_MS = 4_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
-const LIVE_FRAME_TIMEOUT_MS = 15_000;
-const LIVE_PREVIEW_PROBE_TIMEOUT_MS = 5_000;
-const LIVE_SUBSCRIBER_BACKPRESSURE_TIMEOUT_MS = 5_000;
-const MAX_LIVE_PRODUCERS = 12;
-const LIVE_BOUNDARY = "evora-camera-frame";
-const LIVE_WARMUP_MIN_FRAMES = {
-    preview: 6,
-    main: 8,
-};
-const LIVE_MIN_JPEG_BYTES = {
-    preview: 4_096,
-    main: 8_192,
-};
 export class CameraIntegrationError extends Error {
     code;
     constructor(message, code) {
@@ -888,45 +874,20 @@ export function cameraSnapshotFfmpegArguments() {
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
     ];
 }
-const CAMERA_LIVE_STREAM_PROFILES = {
-    preview: { fps: 8, maxWidth: 640, jpegQuality: 8, threads: 2 },
-    main: { fps: 10, maxWidth: 1_280, jpegQuality: 7, threads: 2 },
-};
 export function cameraLiveStreamPath(channelId, quality) {
     if (!Number.isInteger(channelId) || channelId < 0 || channelId > 99) {
         throw new CameraIntegrationError("Kamera nebyla nalezena.", "CAMERA_CONFIG_INVALID");
     }
     return `ch_${quality === "preview" ? "4" : "1"}${String(channelId).padStart(2, "0")}`;
 }
-export function cameraLiveFfmpegArguments(quality) {
-    const profile = CAMERA_LIVE_STREAM_PROFILES[quality];
-    return [
-        "-hide_banner", "-loglevel", "quiet", "-threads", String(profile.threads),
-        "-fflags", "+discardcorrupt", "-analyzeduration", "1000000", "-probesize", "2097152",
-        "-f", "concat", "-safe", "0",
-        "-protocol_whitelist", "file,pipe,tcp,udp,rtp,rtsp",
-        "-i", "pipe:0",
-        "-map", "0:v:0", "-an", "-sn", "-dn",
-        "-vf", `fps=${profile.fps},scale='min(${profile.maxWidth},iw)':-2`,
-        "-q:v", String(profile.jpegQuality),
-        "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
-    ];
-}
 export function cameraLiveStreamCandidates(channelId, quality) {
     const preferred = cameraLiveStreamPath(channelId, quality);
     return quality === "preview" ? [preferred, cameraLiveStreamPath(channelId, "main")] : [preferred];
-}
-export function cameraLiveInitialCandidateIndex(quality, previewPreference) {
-    return quality === "preview" && previewPreference === "main" ? 1 : 0;
 }
 export function cameraLiveStreamSource(quality, streamCandidateIndex) {
     if (quality === "main")
         return "main";
     return streamCandidateIndex === 0 ? "substream" : "main-fallback";
-}
-export function cameraLiveFrameHeader(quality, streamCandidateIndex, jpegLength) {
-    const source = cameraLiveStreamSource(quality, streamCandidateIndex);
-    return Buffer.from(`--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegLength}\r\nX-Evora-Stream-Source: ${source}\r\n\r\n`, "ascii");
 }
 function encodeRtspCredential(value) {
     return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -1016,7 +977,6 @@ async function uncachedSnapshot(access, streamPath) {
 const snapshotCache = new Map();
 const snapshotInFlight = new Map();
 const snapshotQueue = [];
-const cameraPreviewStreamPreferences = new Map();
 let activeSnapshots = 0;
 function runSnapshotQueued(operation) {
     return new Promise((resolve, reject) => {
@@ -1037,8 +997,6 @@ function runSnapshotQueued(operation) {
 }
 function clearSnapshotCache() {
     snapshotCache.clear();
-    cameraPreviewStreamPreferences.clear();
-    stopAllCameraLiveProducers();
 }
 export async function getCameraSnapshot(db, channelId) {
     const row = cameraRow(db);
@@ -1062,264 +1020,4 @@ export async function getCameraSnapshot(db, channelId) {
         .finally(() => snapshotInFlight.delete(channelId));
     snapshotInFlight.set(channelId, pending);
     return pending;
-}
-const cameraLiveProducers = new Map();
-function stopCameraLiveProducer(producer) {
-    if (producer.stopped)
-        return;
-    producer.stopped = true;
-    if (producer.frameTimer)
-        clearTimeout(producer.frameTimer);
-    cameraLiveProducers.delete(producer.key);
-    if (producer.decoder && !producer.decoder.killed)
-        producer.decoder.kill("SIGKILL");
-    for (const subscriber of producer.subscribers) {
-        if (subscriber.drainTimer)
-            clearTimeout(subscriber.drainTimer);
-        subscriber.stream.end();
-    }
-    producer.subscribers.clear();
-}
-function stopAllCameraLiveProducers() {
-    for (const producer of cameraLiveProducers.values())
-        stopCameraLiveProducer(producer);
-}
-function armCameraLiveFrameTimeout(producer, decoder) {
-    if (producer.frameTimer)
-        clearTimeout(producer.frameTimer);
-    const timeoutMs = producer.quality === "preview"
-        && producer.streamCandidateIndex === 0
-        && !producer.receivedFrame
-        ? LIVE_PREVIEW_PROBE_TIMEOUT_MS
-        : LIVE_FRAME_TIMEOUT_MS;
-    producer.frameTimer = setTimeout(() => {
-        handleCameraLiveDecoderFailure(producer, decoder);
-    }, timeoutMs);
-}
-function removeCameraLiveSubscriber(producer, subscriber) {
-    if (subscriber.drainTimer)
-        clearTimeout(subscriber.drainTimer);
-    subscriber.drainTimer = undefined;
-    producer.subscribers.delete(subscriber);
-    if (producer.subscribers.size === 0)
-        stopCameraLiveProducer(producer);
-}
-function publishCameraLiveFrame(producer, jpeg) {
-    const header = cameraLiveFrameHeader(producer.quality, producer.streamCandidateIndex, jpeg.length);
-    const part = Buffer.concat([header, jpeg, Buffer.from("\r\n", "ascii")]);
-    for (const subscriber of producer.subscribers) {
-        if (subscriber.blocked || subscriber.stream.destroyed)
-            continue;
-        if (!subscriber.stream.write(part)) {
-            subscriber.blocked = true;
-            subscriber.drainTimer = setTimeout(() => {
-                subscriber.stream.destroy();
-                removeCameraLiveSubscriber(producer, subscriber);
-            }, LIVE_SUBSCRIBER_BACKPRESSURE_TIMEOUT_MS);
-            subscriber.stream.once("drain", () => {
-                if (subscriber.drainTimer)
-                    clearTimeout(subscriber.drainTimer);
-                subscriber.drainTimer = undefined;
-                subscriber.blocked = false;
-            });
-        }
-    }
-}
-export function cameraLiveFrameIsUsable(quality, jpegLength, warmupFrames, warmupValidFrames) {
-    if (jpegLength < LIVE_MIN_JPEG_BYTES[quality])
-        return false;
-    if (warmupFrames < LIVE_WARMUP_MIN_FRAMES[quality])
-        return false;
-    return warmupValidFrames >= 2;
-}
-export function extractCameraJpegFrames(input) {
-    const frames = [];
-    let remainder = input;
-    while (remainder.length > 0) {
-        const start = remainder.indexOf(Buffer.from([0xff, 0xd8]));
-        if (start < 0) {
-            return { frames, remainder: remainder.subarray(Math.max(0, remainder.length - 1)) };
-        }
-        if (start > 0)
-            remainder = remainder.subarray(start);
-        const end = remainder.indexOf(Buffer.from([0xff, 0xd9]), 2);
-        if (end < 0)
-            return { frames, remainder };
-        frames.push(remainder.subarray(0, end + 2));
-        remainder = remainder.subarray(end + 2);
-    }
-    return { frames, remainder };
-}
-function consumeCameraLiveBytes(producer, chunk) {
-    const parsed = extractCameraJpegFrames(Buffer.concat([producer.buffer, chunk]));
-    producer.buffer = parsed.remainder;
-    if (producer.buffer.length > MAX_JPEG_BYTES) {
-        stopCameraLiveProducer(producer);
-        return;
-    }
-    for (const jpeg of parsed.frames) {
-        const decoder = producer.decoder;
-        if (!decoder)
-            return;
-        producer.warmupFrames += 1;
-        if (jpeg.length < LIVE_MIN_JPEG_BYTES[producer.quality]) {
-            producer.warmupValidFrames = 0;
-            continue;
-        }
-        producer.warmupValidFrames += 1;
-        if (!producer.receivedFrame && !cameraLiveFrameIsUsable(producer.quality, jpeg.length, producer.warmupFrames, producer.warmupValidFrames))
-            continue;
-        const firstFrame = !producer.receivedFrame;
-        producer.receivedFrame = true;
-        if (firstFrame && producer.quality === "preview") {
-            cameraPreviewStreamPreferences.set(producer.channelId, producer.streamCandidateIndex === 0 ? "substream" : "main");
-        }
-        armCameraLiveFrameTimeout(producer, decoder);
-        publishCameraLiveFrame(producer, jpeg);
-    }
-}
-function handleCameraLiveDecoderFailure(producer, decoder) {
-    if (producer.stopped || producer.decoder !== decoder)
-        return;
-    if (producer.streamCandidateIndex + 1 < producer.streamCandidates.length) {
-        producer.streamCandidateIndex += 1;
-        if (!decoder.killed)
-            decoder.kill("SIGKILL");
-        startCameraLiveDecoder(producer);
-        return;
-    }
-    stopCameraLiveProducer(producer);
-}
-function startCameraLiveDecoder(producer) {
-    const streamPath = producer.streamCandidates[producer.streamCandidateIndex];
-    const decoder = spawn("ffmpeg", cameraLiveFfmpegArguments(producer.quality), {
-        stdio: ["pipe", "pipe", "ignore"],
-    });
-    producer.decoder = decoder;
-    producer.buffer = Buffer.alloc(0);
-    producer.warmupFrames = 0;
-    producer.warmupValidFrames = 0;
-    producer.receivedFrame = false;
-    armCameraLiveFrameTimeout(producer, decoder);
-    decoder.once("error", () => handleCameraLiveDecoderFailure(producer, decoder));
-    decoder.once("exit", () => handleCameraLiveDecoderFailure(producer, decoder));
-    decoder.stdin?.on("error", () => undefined);
-    // stderr is intentionally disabled because FFmpeg could repeat the
-    // authenticated RTSP input in a diagnostic message.
-    decoder.stdout?.on("data", (chunk) => consumeCameraLiveBytes(producer, chunk));
-    decoder.stdin?.end(cameraSnapshotInputScript(producer.access, streamPath));
-}
-function startCameraLiveProducer(access, channelId, quality) {
-    if (cameraLiveProducers.size >= MAX_LIVE_PRODUCERS) {
-        throw new CameraIntegrationError("Je otevřeno příliš mnoho živých kamer.", "CAMERA_STREAM_LIMIT");
-    }
-    const key = `${channelId}:${quality}`;
-    const producer = {
-        key,
-        channelId,
-        decoder: null,
-        subscribers: new Set(),
-        buffer: Buffer.alloc(0),
-        access,
-        quality,
-        streamCandidates: cameraLiveStreamCandidates(channelId, quality),
-        streamCandidateIndex: cameraLiveInitialCandidateIndex(quality, cameraPreviewStreamPreferences.get(channelId)),
-        warmupFrames: 0,
-        warmupValidFrames: 0,
-        receivedFrame: false,
-        stopped: false,
-    };
-    cameraLiveProducers.set(key, producer);
-    startCameraLiveDecoder(producer);
-    return producer;
-}
-export function getCameraLiveStream(db, channelId, quality) {
-    const row = cameraRow(db);
-    if (!row)
-        throw new CameraIntegrationError("NVR zatím není nastavené.", "CAMERA_CONFIG_INVALID");
-    const channel = rowToOverview(row).channels.find((item) => item.id === channelId && item.online);
-    if (!channel)
-        throw new CameraIntegrationError("Kamera nebyla nalezena nebo není připojená.", "CAMERA_CONFIG_INVALID");
-    const key = `${channelId}:${quality}`;
-    const producer = cameraLiveProducers.get(key)
-        ?? startCameraLiveProducer(storedCameraAccess(row), channelId, quality);
-    const subscriber = {
-        stream: new PassThrough({ highWaterMark: 64 * 1024 }),
-        blocked: false,
-    };
-    producer.subscribers.add(subscriber);
-    const remove = () => {
-        removeCameraLiveSubscriber(producer, subscriber);
-    };
-    subscriber.stream.once("close", remove);
-    subscriber.stream.once("error", remove);
-    return subscriber.stream;
-}
-let activeCameraThirdStreams = 0;
-async function getCameraThirdMjpegStream(db, channelId) {
-    const access = cameraChannelAccess(db, channelId);
-    const third = access.channel.thirdStream;
-    if (!third?.supported || !third.enabled || third.codec !== "mjpeg") {
-        throw new CameraIntegrationError("Třetí MJPEG stream kamery zatím není ověřený a zapnutý.", "CAMERA_CAPABILITY_UNSUPPORTED");
-    }
-    if (activeCameraThirdStreams >= MAX_LIVE_PRODUCERS) {
-        throw new CameraIntegrationError("Je otevřeno příliš mnoho přímých živých kamer.", "CAMERA_STREAM_LIMIT");
-    }
-    const target = new URL(`http://${access.row.host}:${access.port}/ipcam/httpstream.cgi`);
-    target.searchParams.set("streamtype", "third");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
-    let response;
-    try {
-        response = await milesightAuthenticatedFetch(target, access.credentials, "Kamera", controller.signal, "multipart/x-mixed-replace, image/jpeg;q=0.8, */*;q=0.1");
-    }
-    catch (error) {
-        clearTimeout(timer);
-        controller.abort();
-        if (error instanceof CameraIntegrationError)
-            throw error;
-        throw new CameraIntegrationError("Třetí živý stream kamery není přes NVR dostupný.", "CAMERA_STREAM_FAILED");
-    }
-    clearTimeout(timer);
-    const contentType = response.headers.get("content-type")?.trim() ?? "";
-    if (!/^multipart\/x-mixed-replace(?:\s*;[^\r\n]+)?$/i.test(contentType) || !response.body) {
-        await response.body?.cancel();
-        controller.abort();
-        throw new CameraIntegrationError("Kamera nevrátila souvislý MJPEG stream.", "CAMERA_STREAM_FAILED");
-    }
-    activeCameraThirdStreams += 1;
-    const stream = Readable.fromWeb(response.body);
-    let released = false;
-    const release = () => {
-        if (released)
-            return;
-        released = true;
-        activeCameraThirdStreams = Math.max(0, activeCameraThirdStreams - 1);
-        controller.abort();
-    };
-    stream.once("close", release);
-    stream.once("end", release);
-    stream.once("error", release);
-    return { stream, contentType, source: "third-mjpeg" };
-}
-export async function getPreferredCameraLiveStream(db, channelId, quality) {
-    if (quality === "preview") {
-        try {
-            return await getCameraThirdMjpegStream(db, channelId);
-        }
-        catch (error) {
-            if (error instanceof CameraIntegrationError && error.code === "CAMERA_STREAM_LIMIT")
-                throw error;
-            // Neověřený nebo nedostupný třetí stream nesmí rozbít dosavadní
-            // dlouhou relaci přes hlavní/druhý stream NVR.
-        }
-    }
-    return {
-        stream: getCameraLiveStream(db, channelId, quality),
-        contentType: cameraLiveContentType(),
-        source: "nvr-transcoded",
-    };
-}
-export function cameraLiveContentType() {
-    return `multipart/x-mixed-replace; boundary=${LIVE_BOUNDARY}`;
 }

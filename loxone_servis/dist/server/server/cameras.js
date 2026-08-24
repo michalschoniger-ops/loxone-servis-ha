@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 const CAMERA_INTEGRATION_ID = "primary";
+export const PUBLISHED_CAMERA_CHANNEL_ID = 7;
 const SNAPSHOT_CACHE_MS = 4_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
@@ -366,6 +367,20 @@ function cameraRow(db) {
 }
 export function getCameraOverview(db) {
     return rowToOverview(cameraRow(db));
+}
+/**
+ * Temporary, non-destructive publication scope requested for Hub and Menu.
+ * The complete NVR inventory remains stored so all channels can be restored
+ * later without rediscovery, lost aliases or configuration changes.
+ */
+export function publishCameraOverview(overview) {
+    return {
+        ...overview,
+        channels: overview.channels.filter((channel) => channel.id === PUBLISHED_CAMERA_CHANNEL_ID),
+    };
+}
+export function getPublishedCameraOverview(db) {
+    return publishCameraOverview(getCameraOverview(db));
 }
 function storedCameraAccess(row) {
     return {

@@ -24,7 +24,7 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
+import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getPublishedCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
@@ -730,7 +730,7 @@ export async function registerApi(app, db, jobs) {
             appVersion: config.appVersion,
             user: { email: identity.email },
             launcherAgent: agent,
-            cameras: getCameraOverview(db).channels,
+            cameras: getPublishedCameraOverview(db).channels,
             items,
         };
     });
@@ -787,7 +787,7 @@ export async function registerApi(app, db, jobs) {
                 model: overview.model,
                 channels: overview.channels.length,
             });
-            return { item: overview };
+            return { item: publishCameraOverview(overview) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1354,7 +1354,7 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return getCameraOverview(db);
+        return getPublishedCameraOverview(db);
     });
     app.put("/api/cameras/config", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -1375,7 +1375,7 @@ export async function registerApi(app, db, jobs) {
                 model: overview.model,
                 channels: overview.channels.length,
             });
-            return { item: overview };
+            return { item: publishCameraOverview(overview) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1392,7 +1392,7 @@ export async function registerApi(app, db, jobs) {
         try {
             const overview = await refreshCameraIntegration(db);
             audit(db, "cameras.refreshed", user.id, null, { channels: overview.channels.length });
-            return { item: overview };
+            return { item: publishCameraOverview(overview) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1470,7 +1470,7 @@ export async function registerApi(app, db, jobs) {
                 height: capabilities.thirdStream.current?.height,
                 frameRate: capabilities.thirdStream.current?.frameRate,
             });
-            return { item: capabilities, overview: getCameraOverview(db) };
+            return { item: capabilities, overview: getPublishedCameraOverview(db) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1542,7 +1542,7 @@ export async function registerApi(app, db, jobs) {
         try {
             const overview = renameCameraChannel(db, channelId, input.name);
             audit(db, "cameras.renamed", user.id, null, { channelId });
-            return { item: overview };
+            return { item: publishCameraOverview(overview) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.25
+
+- Hub i Evora Smart Menu dočasně zobrazují pouze kameru „Parkoviště - Recepce - 2“ (stabilní kanál 7), aby se neotvíralo deset současných problematických relací.
+- Omezení je čistě publikační a nedestruktivní: všech deset kanálů, jejich zjištěný stav, vlastní názvy a konfigurace zůstávají v šifrovaně uložené NVR integraci. Obnovení celého seznamu proto později nebude vyžadovat nové připojení NVR.
+- Konfigurace a obnova NVR nadále auditují skutečný počet nalezených kanálů, ale klientskému Hubu a Menu vracejí pouze zvolenou kameru. Aktivní obraz zůstává HLS/WebRTC bez MJPEG.
+
 ## 3.0.24
 
 - Interní video brána používá checksumem připnutý zdroj go2rtc 1.9.14 s jedinou auditovatelnou změnou: pevná životnost HLS relace po stažení segmentu je 30 sekund místo pěti. Velký segment přenášený přes šifrovanou Home Assistant proxy tak už nemá ukončit zdravý RTSP proud dřív, než si prohlížeč vyžádá další část videa.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.19.1
+
+- Nasazuje Evora Smart Hub 3.0.19 s obnovenou veřejnou Home Assistant proxy pro Hub i Evora Smart Menu a s pořadím LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení.
+- Zachovává ověřené Milesight streamy, čtecí Excel/Graph synchronizaci, databázi, vlastní názvy kamer, DPAPI párování a šifrovaná připojení; vratným zdrojem je Hub 3.0.18.
+
 ## 3.0.18.1
 
 - Nasazuje Evora Smart Hub 3.0.18 s řízeným rozestupem startu deseti Milesight náhledů, aby se NVR nepřetížilo současnou inicializací všech RTSP relací.

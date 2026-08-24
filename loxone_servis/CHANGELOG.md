@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.19
+
+- Postranní nabídka Hubu řadí hlavní systémy podle provozní priority: LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení. Stejné pořadí používá desktop i mobilní vysouvací nabídka.
+- Veřejná Home Assistant proxy 0.1.1 ponechává obsluhu `OPTIONS` na HTTP vrstvě Home Assistantu, takže se komponenta při startu znovu správně načte a veřejná adresa funguje také pro Evora Smart Menu.
+- Při zavření dlouhého kamerového náhledu proxy vždy ukončí odpovídající upstream relaci. Opuštěný MJPEG stream tak nemůže vyčerpat sdílená spojení a zablokovat další požadavky Hubu nebo Menu.
+
 ## 3.0.18
 
 - Přehled Milesight spouští náhledové relace jednotlivých kamer s řízeným rozestupem 700 ms. NVR tak po otevření stránky nedostane deset současných RTSP/FFmpeg inicializací; čekající dlaždice ukazuje pravdivý stav „Čeká na uvolnění NVR“ a vlastní watchdog začne až po skutečném startu přenosu.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.23.1
+
+- Nasazuje Evora Smart Hub 3.0.23 s přímým HLS startem náhledové mřížky, 450ms rozestupem, okamžitým HLS masterem a bez interního odebírání klientských segmentů.
+- Zachovává databázi, vlastní názvy kamer, čtecí Excel/Graph synchronizaci, šifrovaná připojení i vratný zdroj Hubu 3.0.22; aktivní přehrávání stále nepoužívá MJPEG.
+
 ## 3.0.22.1
 
 - Nasazuje Evora Smart Hub 3.0.22 s udržováním HLS relace skutečnými video segmenty během delších mezer mezi klíčovými snímky a s vyjednáním HEVC pouze pro nativní HLS Safari/iPhonu.

@@ -7,11 +7,6 @@ const GO2RTC_API = "http://127.0.0.1:1984";
 const GO2RTC_WEBRTC_PORT = 28_555;
 const GATEWAY_READY_TIMEOUT_MS = 6_000;
 const GATEWAY_REQUEST_TIMEOUT_MS = 12_000;
-const HLS_PREFLIGHT_TIMEOUT_MS = 20_000;
-const HLS_PREFLIGHT_POLL_MS = 250;
-const HLS_SESSION_REFRESH_MS = 2_500;
-const HLS_MIN_INIT_BYTES = 100;
-const HLS_MIN_SEGMENT_BYTES = 500;
 const MAX_SDP_BYTES = 512 * 1024;
 const MAX_HLS_MANIFEST_BYTES = 64 * 1024;
 const MAX_HLS_INIT_BYTES = 4 * 1024 * 1024;
@@ -153,7 +148,6 @@ async function automaticWebRtcCandidates() {
 class CameraVideoGateway {
     child = null;
     starting = null;
-    hlsSegmentRefreshAt = new Map();
     async gatewayResponds() {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 750);
@@ -243,82 +237,6 @@ class CameraVideoGateway {
             throw new CameraIntegrationError("Video brána neuvolnila nefunkční stream.", "CAMERA_STREAM_FAILED");
         }
     }
-    noteHlsSegmentRefresh(sessionId) {
-        const now = Date.now();
-        this.hlsSegmentRefreshAt.set(sessionId, now);
-        if (this.hlsSegmentRefreshAt.size <= 128)
-            return;
-        for (const [id, refreshedAt] of this.hlsSegmentRefreshAt) {
-            if (now - refreshedAt > 60_000)
-                this.hlsSegmentRefreshAt.delete(id);
-        }
-    }
-    hlsSegmentNeedsRefresh(sessionId) {
-        return Date.now() - (this.hlsSegmentRefreshAt.get(sessionId) ?? 0) >= HLS_SESSION_REFRESH_MS;
-    }
-    async refreshHlsSegment(segmentLine, sessionId) {
-        const resource = segmentLine.startsWith("segment.ts") ? "segment.ts" : "segment.m4s";
-        const segmentUrl = parseHlsRelativeUrl(segmentLine, resource);
-        if (segmentUrl.searchParams.get("id") !== sessionId) {
-            throw new CameraIntegrationError("HLS segment nepatří k očekávané relaci.", "CAMERA_STREAM_FAILED");
-        }
-        const segmentResponse = await this.request(`/api/hls/${resource}?${segmentUrl.searchParams.toString()}`, { method: "GET" }, 3_000);
-        const segmentBody = await readLimited(segmentResponse, MAX_HLS_SEGMENT_BYTES);
-        if (!segmentResponse.ok || segmentBody.length < HLS_MIN_SEGMENT_BYTES)
-            return false;
-        this.noteHlsSegmentRefresh(sessionId);
-        return true;
-    }
-    async preflightHlsSession(sessionId) {
-        const deadline = Date.now() + HLS_PREFLIGHT_TIMEOUT_MS;
-        let initVerified = false;
-        let baselineSequence = null;
-        let progressions = 0;
-        let lastSequence = null;
-        while (Date.now() < deadline) {
-            const playlistQuery = new URLSearchParams({ id: sessionId });
-            const playlistResponse = await this.request(`/api/hls/playlist.m3u8?${playlistQuery.toString()}`, { method: "GET" }, 3_000);
-            const playlistBody = await readLimited(playlistResponse, MAX_HLS_MANIFEST_BYTES);
-            if (!playlistResponse.ok)
-                break;
-            const playlist = rewriteCameraHlsMediaPlaylist(playlistBody.toString("utf8"), sessionId);
-            if (!initVerified) {
-                const initLine = playlist.match(/#EXT-X-MAP:URI="([^"]+)"/)?.[1];
-                if (!initLine)
-                    break;
-                const initUrl = parseHlsRelativeUrl(initLine, "init.mp4");
-                const initResponse = await this.request(`/api/hls/init.mp4?${initUrl.searchParams.toString()}`, { method: "GET" }, 3_000);
-                const initBody = await readLimited(initResponse, MAX_HLS_INIT_BYTES);
-                if (!initResponse.ok || initBody.length < HLS_MIN_INIT_BYTES)
-                    break;
-                initVerified = true;
-            }
-            const segmentLine = playlist.split(/\r?\n/)
-                .filter((line) => /^(?:segment\.(?:m4s|ts))\?/.test(line))
-                .at(-1);
-            if (segmentLine) {
-                const resource = segmentLine.startsWith("segment.ts") ? "segment.ts" : "segment.m4s";
-                const segmentUrl = parseHlsRelativeUrl(segmentLine, resource);
-                const sequence = segmentUrl.searchParams.get("n") ?? "";
-                const sequenceChanged = Boolean(sequence && sequence !== lastSequence);
-                if (sequenceChanged || this.hlsSegmentNeedsRefresh(sessionId)) {
-                    if (!await this.refreshHlsSegment(segmentLine, sessionId))
-                        break;
-                    if (sequenceChanged) {
-                        if (baselineSequence === null)
-                            baselineSequence = sequence;
-                        else
-                            progressions += 1;
-                        lastSequence = sequence;
-                    }
-                    if (initVerified && progressions >= 1)
-                        return;
-                }
-            }
-            await new Promise((resolve) => setTimeout(resolve, HLS_PREFLIGHT_POLL_MS));
-        }
-        throw new CameraIntegrationError("HLS stream nevytváří souvislé video segmenty.", "CAMERA_STREAM_FAILED");
-    }
     async exchangeWebRtc(db, channelId, quality, offer) {
         if (!offer.startsWith("v=0") || Buffer.byteLength(offer, "utf8") > MAX_SDP_BYTES) {
             throw new CameraIntegrationError("WebRTC nabídka není platná.", "CAMERA_CONFIG_INVALID");
@@ -362,7 +280,7 @@ class CameraVideoGateway {
                 if (!response.ok)
                     continue;
                 const master = rewriteCameraHlsMasterPlaylist(body.toString("utf8"));
-                await this.preflightHlsSession(cameraHlsSessionId(master));
+                cameraHlsSessionId(master);
                 return {
                     body: Buffer.from(master, "utf8"),
                     contentType: "application/vnd.apple.mpegurl",
@@ -398,22 +316,11 @@ class CameraVideoGateway {
             throw new CameraIntegrationError("HLS relace vypršela nebo segment není dostupný.", "CAMERA_STREAM_FAILED");
         }
         if (resource === "playlist.m3u8") {
-            const playlist = rewriteCameraHlsMediaPlaylist(body.toString("utf8"), sessionId);
-            const segmentLine = playlist.split(/\r?\n/)
-                .filter((line) => /^(?:segment\.(?:m4s|ts))\?/.test(line))
-                .at(-1);
-            if (segmentLine && this.hlsSegmentNeedsRefresh(sessionId)) {
-                if (!await this.refreshHlsSegment(segmentLine, sessionId)) {
-                    throw new CameraIntegrationError("HLS relaci se nepodařilo udržet aktivní.", "CAMERA_STREAM_FAILED");
-                }
-            }
             return {
-                body: Buffer.from(playlist, "utf8"),
+                body: Buffer.from(rewriteCameraHlsMediaPlaylist(body.toString("utf8"), sessionId), "utf8"),
                 contentType: "application/vnd.apple.mpegurl",
             };
         }
-        if (resource === "segment.m4s" || resource === "segment.ts")
-            this.noteHlsSegmentRefresh(sessionId);
         return {
             body,
             contentType: resource === "init.mp4" ? "video/mp4"
@@ -422,7 +329,6 @@ class CameraVideoGateway {
         };
     }
     stop() {
-        this.hlsSegmentRefreshAt.clear();
         const child = this.child;
         this.child = null;
         if (!child || child.killed || child.exitCode !== null)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.23
+
+- Náhledová mřížka otevírá úsporné HLS video přímo, bez desetisekundového čekání na WebRTC a bez blokujícího serverového preflightu. Deset dlaždic se spouští s 450ms rozestupem místo 1,2 sekundy; detail jedné kamery nadále preferuje nízkolatenční WebRTC.
+- Server už při načtení playlistu sám nestahuje a nezahazuje poslední video segment. Každý segment tak spotřebuje pouze skutečný přehrávač a relace se po krátkém zobrazení obrazu sama nerozpojí.
+- Pravdivý stav zůstává zachovaný: označení „živě“ se zobrazí až po dvou skutečně dekódovaných snímcích a zamrzlý obraz po osmi sekundách přejde do omezeného automatického obnovení.
+
 ## 3.0.22
 
 - HLS relace se během delší mezery mezi klíčovými snímky udržuje skutečným stažením posledního video segmentu. Opravuje to pětisekundové vypršení relace interní brány, které na živém NVR po několika segmentech ukončovalo šest z deseti kanálů.

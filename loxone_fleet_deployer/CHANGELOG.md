@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.22.1
+
+- Nasazuje Evora Smart Hub 3.0.22 s udržováním HLS relace skutečnými video segmenty během delších mezer mezi klíčovými snímky a s vyjednáním HEVC pouze pro nativní HLS Safari/iPhonu.
+- Zachovává databázi, vlastní názvy kamer, čtecí Excel/Graph synchronizaci, šifrovaná připojení i vratný zdroj Hubu 3.0.21; přehrávání nepoužívá MJPEG a P2P transport dalších NVR se tímto nevydává za hotový.
+
 ## 3.0.21.3
 
 - Aktualizuje klientský bundle 3.0.21 tak, aby moderní prohlížeč označil kameru jako živou až po dvou skutečně dekódovaných snímcích z `requestVideoFrameCallback`; samotný posun časové osy už černý nebo zamrzlý obraz nepotvrdí.

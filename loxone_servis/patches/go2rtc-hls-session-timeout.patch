@@ -1,0 +1,5 @@
+--- a/internal/hls/hls.go
++++ b/internal/hls/hls.go
+@@ -34 +34 @@
+-const keepalive = 5 * time.Second
++const keepalive = 30 * time.Second

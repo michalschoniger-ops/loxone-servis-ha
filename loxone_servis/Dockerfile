@@ -1,8 +1,31 @@
-FROM node:22-bookworm-slim
+FROM golang:1.24-bookworm AS go2rtc-build
 
-ARG BUILD_VERSION=3.0.23
-ARG BUILD_ARCH
 ARG GO2RTC_VERSION=1.9.14
+ARG GO2RTC_SOURCE_SHA256=e3d59e553dfd0085889a2956281cfc0fd78bb7b4d6269d1c90c217d2ffcf2c7b
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl patch \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/go2rtc
+RUN set -eu; \
+    curl --fail --silent --show-error --location \
+      "https://github.com/AlexxIT/go2rtc/archive/refs/tags/v${GO2RTC_VERSION}.tar.gz" \
+      --output /tmp/go2rtc.tar.gz; \
+    echo "${GO2RTC_SOURCE_SHA256}  /tmp/go2rtc.tar.gz" | sha256sum --check --status; \
+    tar --extract --gzip --strip-components=1 --file /tmp/go2rtc.tar.gz; \
+    rm /tmp/go2rtc.tar.gz
+
+COPY patches/go2rtc-hls-session-timeout.patch /tmp/go2rtc-hls-session-timeout.patch
+RUN set -eu; \
+    patch --batch --forward -p1 < /tmp/go2rtc-hls-session-timeout.patch; \
+    test "$(grep -c 'const keepalive = 30 \* time.Second' internal/hls/hls.go)" -eq 1; \
+    CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o /out/go2rtc .
+
+FROM node:22-bookworm-slim AS runtime
+
+ARG BUILD_VERSION=3.0.24
+ARG BUILD_ARCH
 ENV NODE_ENV=production \
     PORT=8099 \
     HOST=0.0.0.0 \
@@ -15,21 +38,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Browsers cannot consume RTSP directly. The pinned, checksum-verified go2rtc
-# binary remuxes H.264/H.265 without JPEG transcoding; its management API and
-# RTSP listener remain loopback-only at runtime.
-RUN set -eu; \
-    evora_arch="$(dpkg --print-architecture)"; \
-    case "$evora_arch" in \
-      amd64) evora_asset="go2rtc_linux_amd64"; evora_sha="32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6" ;; \
-      arm64) evora_asset="go2rtc_linux_arm64"; evora_sha="359fabade8a7a51e81a55fe6df6b0ef81764a5e1d63179577534eaaa71904b50" ;; \
-      *) echo "Nepodporovaná architektura video brány: $evora_arch" >&2; exit 1 ;; \
-    esac; \
-    curl --fail --silent --show-error --location \
-      "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/${evora_asset}" \
-      --output /usr/local/bin/go2rtc; \
-    echo "${evora_sha}  /usr/local/bin/go2rtc" | sha256sum --check --status; \
-    chmod 0755 /usr/local/bin/go2rtc
+# Browsers cannot consume RTSP directly. This checksum-pinned go2rtc build
+# remuxes H.264/H.265 without JPEG transcoding. The only local patch extends
+# its fixed five-second HLS session deadline so a slow encrypted proxy transfer
+# cannot tear down an otherwise healthy camera. Management and RTSP listeners
+# remain loopback-only at runtime.
+COPY --from=go2rtc-build /out/go2rtc /usr/local/bin/go2rtc
 
 WORKDIR /app
 COPY package.json package-lock.json ./

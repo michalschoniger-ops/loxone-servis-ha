@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.24
+
+- Interní video brána používá checksumem připnutý zdroj go2rtc 1.9.14 s jedinou auditovatelnou změnou: pevná životnost HLS relace po stažení segmentu je 30 sekund místo pěti. Velký segment přenášený přes šifrovanou Home Assistant proxy tak už nemá ukončit zdravý RTSP proud dřív, než si prohlížeč vyžádá další část videa.
+- Proud zůstává datově úsporné H.264/H.265 video přebalené bez změny kvality; aktivní přehrávání nepoužívá MJPEG ani sekvenci snapshotů. Neviditelná nebo zavřená relace se po 30 sekundách stále automaticky uvolní.
+- Předchozí verze 3.0.23 je podle cíleného živého testu výslovně nehotová: všech deset master playlistů sice vzniklo, ale šest kanálů skončilo po dvou až třech segmentech a i ostatní později ztratily relaci s HTTP 502.
+
 ## 3.0.23
 
 - Náhledová mřížka otevírá úsporné HLS video přímo, bez desetisekundového čekání na WebRTC a bez blokujícího serverového preflightu. Deset dlaždic se spouští s 450ms rozestupem místo 1,2 sekundy; detail jedné kamery nadále preferuje nízkolatenční WebRTC.

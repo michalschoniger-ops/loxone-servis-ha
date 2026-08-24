@@ -4,6 +4,11 @@
 
 Source: https://github.com/AlexxIT/go2rtc
 
+Evora build note: the source archive is checksum-pinned and carries the local
+patch `patches/go2rtc-hls-session-timeout.patch`, which changes only the HLS
+session keepalive from 5 seconds to 30 seconds. The complete corresponding
+source and patch remain available in the public build recipe.
+
 MIT License
 
 Copyright (c) 2022 Alexey Khit

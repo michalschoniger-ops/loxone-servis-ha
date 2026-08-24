@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.24.1
+
+- Nasazuje Evora Smart Hub 3.0.24 s checksumem připnutým go2rtc 1.9.14 a jedinou auditovatelnou úpravou pevné HLS životnosti z pěti na 30 sekund. Pomalý přenos segmentu přes Home Assistant proxy tak nemá ukončit zdravý RTSP proud.
+- Zachovává databázi, názvy kamer, čtecí Excel/Graph synchronizaci, šifrovaná připojení i vratný zdroj Hubu 3.0.23. Aktivní přehrávání zůstává H.264/H.265 bez MJPEG a P2P dalších NVR se tímto nevydává za hotový.
+
 ## 3.0.23.1
 
 - Nasazuje Evora Smart Hub 3.0.23 s přímým HLS startem náhledové mřížky, 450ms rozestupem, okamžitým HLS masterem a bez interního odebírání klientských segmentů.

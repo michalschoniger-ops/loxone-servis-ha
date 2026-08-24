@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.16.2
+
+- Opravuje instalační payload 3.0.16 na runtime-only Dockerfile, který používá již ověřený produkční `dist` a nevyžaduje zdrojové `src` uvnitř veřejného HA katalogu.
+- Při opravné výměně stejné verze zachová ukazatel rollbacku na původní 3.0.15; neúspěšný mezilehlý zdroj odloží odděleně a databázi ani `/data` nemění.
+
 ## 3.0.16.1
 
 - Nasazuje Evora Smart Hub 3.0.16 s online i offline kanály, originální značkou Milesight a bezpečným přístupem ke schopnostem kamer přes NVR Channel Access.

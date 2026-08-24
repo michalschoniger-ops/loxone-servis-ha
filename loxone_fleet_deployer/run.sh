@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_SHA256="dffb801834a26839f722d55fae7f6ddf43dff3bbbbaa6bcb75f3c3e14c5eb050"
+PAYLOAD_SHA256="3173f990bf3c048957bc9c4429d2ab9a42a0f8a2fd09665e82ebea844587ac09"
 ROLLBACK_PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
 EXPECTED_SLUG="loxone_fleet"
 EXPECTED_VERSION="3.0.16"
@@ -157,6 +157,25 @@ STAGE_ROOT="$ADDONS_ROOT/.evora-deploy-stage-$TIMESTAMP"
 ROLLBACK_STAGE_ROOT="$ADDONS_ROOT/.evora-rollback-stage-$TIMESTAMP"
 BACKUP_ROOT="$ADDONS_ROOT/.evora-smart-hub-rollback"
 BACKUP_DIR="$BACKUP_ROOT/${TARGET_NAME}-${CURRENT_VERSION}-${TIMESTAMP}"
+REPAIR_MODE=0
+ROLLBACK_SOURCE="$BACKUP_DIR/original"
+
+if [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ]; then
+  [ -f "$DATA_ROOT/last-target-name" ] || fail "Opravné nasazení nemá identifikátor původního cíle."
+  [ -f "$DATA_ROOT/last-backup-dir" ] || fail "Opravné nasazení nemá cestu původního rollbacku."
+  PRIOR_TARGET_NAME="$(sed -n '1p' "$DATA_ROOT/last-target-name")"
+  PRIOR_BACKUP_DIR="$(sed -n '1p' "$DATA_ROOT/last-backup-dir")"
+  [ "$PRIOR_TARGET_NAME" = "$TARGET_NAME" ] || fail "Opravné nasazení má jiný původní cíl."
+  case "$PRIOR_BACKUP_DIR" in
+    "$BACKUP_ROOT/${TARGET_NAME}"-*) ;;
+    *) fail "Opravné nasazení má neplatnou cestu původního rollbacku." ;;
+  esac
+  [ -d "$PRIOR_BACKUP_DIR/original" ] || fail "Opravné nasazení nenašlo původní rollback."
+  [ ! -L "$PRIOR_BACKUP_DIR/original" ] || fail "Původní rollback je symbolický odkaz."
+  ROLLBACK_SOURCE="$PRIOR_BACKUP_DIR/original"
+  BACKUP_DIR="$BACKUP_ROOT/${TARGET_NAME}-${CURRENT_VERSION}-repair-${TIMESTAMP}"
+  REPAIR_MODE=1
+fi
 
 [ ! -e "$STAGE_ROOT" ] || fail "Dočasná složka už existuje."
 [ ! -e "$BACKUP_DIR" ] || fail "Záložní složka už existuje."
@@ -176,7 +195,10 @@ STAGED_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2;
 [ "$STAGED_VERSION" = "$EXPECTED_VERSION" ] || fail "Payload má neočekávanou verzi."
 
 log "Připravuji vratnou výměnu ${TARGET_NAME}: ${CURRENT_VERSION} -> ${EXPECTED_VERSION}."
-if [ "$CURRENT_VERSION" = "$ROLLBACK_VERSION" ]; then
+if [ "$REPAIR_MODE" -eq 1 ]; then
+  mv "$TARGET_DIR" "$BACKUP_DIR/displaced-source"
+  SOURCE_TO_RESTORE="$BACKUP_DIR/displaced-source"
+elif [ "$CURRENT_VERSION" = "$ROLLBACK_VERSION" ]; then
   prepare_verified_rollback "$BACKUP_DIR/original" "$ROLLBACK_STAGE_ROOT"
   mv "$TARGET_DIR" "$BACKUP_DIR/displaced-source"
   SOURCE_TO_RESTORE="$BACKUP_DIR/displaced-source"
@@ -198,11 +220,13 @@ previous_version=$CURRENT_VERSION
 prepared_version=$EXPECTED_VERSION
 payload_sha256=$PAYLOAD_SHA256
 prepared_at_utc=$TIMESTAMP
-rollback_source=$BACKUP_DIR/original
+rollback_source=$ROLLBACK_SOURCE
 EOF
 
 log "HOTOVO: zdroj ${EXPECTED_VERSION} je připraven k Supervisor rebuild."
-log "Původní zdroj zůstal v: $BACKUP_DIR/original"
-printf '%s\n' "$TARGET_NAME" > "$DATA_ROOT/last-target-name"
-printf '%s\n' "$BACKUP_DIR" > "$DATA_ROOT/last-backup-dir"
+log "Původní zdroj zůstal v: $ROLLBACK_SOURCE"
+if [ "$REPAIR_MODE" -eq 0 ]; then
+  printf '%s\n' "$TARGET_NAME" > "$DATA_ROOT/last-target-name"
+  printf '%s\n' "$BACKUP_DIR" > "$DATA_ROOT/last-backup-dir"
+fi
 printf '%s\n' "deploy" > "$DATA_ROOT/last-result"

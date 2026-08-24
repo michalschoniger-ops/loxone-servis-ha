@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.15
+
+- Každý kamerový náhled nejprve po dobu nejvýše pěti sekund prověří skutečný druhý stream a potom bez přerušení klienta použije zmenšený hlavní stream. Každý multipart rámec nese bezpečný údaj `substream` nebo `main-fallback`, takže živá kontrola může prokázat skutečný zdroj po jednotlivých kamerách bez zveřejnění RTSP adresy či přístupu.
+- Pomalý nebo odpojený odběratel se po pěti sekundách trvalého backpressure odstraní a uvolní sdílený FFmpeg proces. Staré relace tak nezaplní limit a nezpůsobí dalším kamerám HTTP 503.
+- Windows Config Launcher 3.0.0.3 nahrazuje přímý minutový start `powershell.exe` bezokenní VBS obálkou přes `wscript.exe`; automatická aktualizace opraví existující watchdog i autostart bez nového párování.
+- Evora Smart Menu 3.0.9 a Hub označují výstup jako úsporný náhled, nikoli neověřený druhý stream.
+
 ## 3.0.14
 
 - Živý test 3.0.13 odhalil, že cílový starší Milesight NVR nenabízí očekávanou cestu druhého streamu `ch_4xx`. Úsporný stream nyní tuto cestu bezpečně zkusí a bez přerušení klienta automaticky přejde na zmenšený hlavní `ch_1xx`; nikde nezveřejní RTSP adresu ani přístup.

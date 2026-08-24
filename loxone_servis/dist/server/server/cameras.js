@@ -8,6 +8,8 @@ const SNAPSHOT_CACHE_MS = 4_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
 const LIVE_FRAME_TIMEOUT_MS = 15_000;
+const LIVE_PREVIEW_PROBE_TIMEOUT_MS = 5_000;
+const LIVE_SUBSCRIBER_BACKPRESSURE_TIMEOUT_MS = 5_000;
 const MAX_LIVE_PRODUCERS = 12;
 const LIVE_BOUNDARY = "evora-camera-frame";
 export class CameraIntegrationError extends Error {
@@ -454,6 +456,15 @@ export function cameraLiveStreamCandidates(channelId, quality) {
     const preferred = cameraLiveStreamPath(channelId, quality);
     return quality === "preview" ? [preferred, cameraLiveStreamPath(channelId, "main")] : [preferred];
 }
+export function cameraLiveStreamSource(quality, streamCandidateIndex) {
+    if (quality === "main")
+        return "main";
+    return streamCandidateIndex === 0 ? "substream" : "main-fallback";
+}
+export function cameraLiveFrameHeader(quality, streamCandidateIndex, jpegLength) {
+    const source = cameraLiveStreamSource(quality, streamCandidateIndex);
+    return Buffer.from(`--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegLength}\r\nX-Evora-Stream-Source: ${source}\r\n\r\n`, "ascii");
+}
 function encodeRtspCredential(value) {
     return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 }
@@ -576,6 +587,8 @@ function stopCameraLiveProducer(producer) {
     if (producer.decoder && !producer.decoder.killed)
         producer.decoder.kill("SIGKILL");
     for (const subscriber of producer.subscribers) {
+        if (subscriber.drainTimer)
+            clearTimeout(subscriber.drainTimer);
         subscriber.stream.end();
     }
     producer.subscribers.clear();
@@ -587,19 +600,41 @@ function stopAllCameraLiveProducers() {
 function armCameraLiveFrameTimeout(producer, decoder) {
     if (producer.frameTimer)
         clearTimeout(producer.frameTimer);
+    const timeoutMs = producer.quality === "preview"
+        && producer.streamCandidateIndex === 0
+        && !producer.receivedFrame
+        ? LIVE_PREVIEW_PROBE_TIMEOUT_MS
+        : LIVE_FRAME_TIMEOUT_MS;
     producer.frameTimer = setTimeout(() => {
         handleCameraLiveDecoderFailure(producer, decoder);
-    }, LIVE_FRAME_TIMEOUT_MS);
+    }, timeoutMs);
+}
+function removeCameraLiveSubscriber(producer, subscriber) {
+    if (subscriber.drainTimer)
+        clearTimeout(subscriber.drainTimer);
+    subscriber.drainTimer = undefined;
+    producer.subscribers.delete(subscriber);
+    if (producer.subscribers.size === 0)
+        stopCameraLiveProducer(producer);
 }
 function publishCameraLiveFrame(producer, jpeg) {
-    const header = Buffer.from(`--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`, "ascii");
+    const header = cameraLiveFrameHeader(producer.quality, producer.streamCandidateIndex, jpeg.length);
     const part = Buffer.concat([header, jpeg, Buffer.from("\r\n", "ascii")]);
     for (const subscriber of producer.subscribers) {
         if (subscriber.blocked || subscriber.stream.destroyed)
             continue;
         if (!subscriber.stream.write(part)) {
             subscriber.blocked = true;
-            subscriber.stream.once("drain", () => { subscriber.blocked = false; });
+            subscriber.drainTimer = setTimeout(() => {
+                subscriber.stream.destroy();
+                removeCameraLiveSubscriber(producer, subscriber);
+            }, LIVE_SUBSCRIBER_BACKPRESSURE_TIMEOUT_MS);
+            subscriber.stream.once("drain", () => {
+                if (subscriber.drainTimer)
+                    clearTimeout(subscriber.drainTimer);
+                subscriber.drainTimer = undefined;
+                subscriber.blocked = false;
+            });
         }
     }
 }
@@ -640,7 +675,7 @@ function consumeCameraLiveBytes(producer, chunk) {
 function handleCameraLiveDecoderFailure(producer, decoder) {
     if (producer.stopped || producer.decoder !== decoder)
         return;
-    if (!producer.receivedFrame && producer.streamCandidateIndex + 1 < producer.streamCandidates.length) {
+    if (producer.streamCandidateIndex + 1 < producer.streamCandidates.length) {
         producer.streamCandidateIndex += 1;
         if (!decoder.killed)
             decoder.kill("SIGKILL");
@@ -698,14 +733,12 @@ export function getCameraLiveStream(db, channelId, quality) {
     const producer = cameraLiveProducers.get(key)
         ?? startCameraLiveProducer(storedCameraAccess(row), channelId, quality);
     const subscriber = {
-        stream: new PassThrough({ highWaterMark: 512 * 1024 }),
+        stream: new PassThrough({ highWaterMark: 64 * 1024 }),
         blocked: false,
     };
     producer.subscribers.add(subscriber);
     const remove = () => {
-        producer.subscribers.delete(subscriber);
-        if (producer.subscribers.size === 0)
-            stopCameraLiveProducer(producer);
+        removeCameraLiveSubscriber(producer, subscriber);
     };
     subscriber.stream.once("close", remove);
     subscriber.stream.once("error", remove);

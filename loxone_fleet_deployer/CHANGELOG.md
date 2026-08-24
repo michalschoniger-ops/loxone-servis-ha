@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.15.1
+
+- Nasazuje Evora Smart Hub 3.0.15 s pětisekundovým prověřením druhého streamu, transparentním fallbackem po úvodním i pozdějším výpadku, bezpečným údajem o skutečném zdroji rámce a úklidem odpojených odběratelů před zaplněním limitu.
+- Součástí jsou Evora Smart Menu 3.0.9 s pravdivým označením úsporného náhledu a Windows Config Launcher 3.0.0.3 s bezokenním watchdogem přes `wscript.exe`; helper zachovává databázi, názvy kamer, DPAPI párování, čtecí Excel/Graph nastavení, šifrovaná připojení i vratnou kopii zdroje 3.0.14.
+
 ## 3.0.14.1
 
 - Nasazuje Evora Smart Hub 3.0.14 s transparentním přechodem z nedostupného druhého streamu na zmenšený hlavní stream a s ARM profilem hlavního detailu 1280 px / 10 fps / dva kodérovací workery.

@@ -11,13 +11,16 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.2"
+$HelperVersion = "3.0.0.3"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
 $RuntimeStatePath = Join-Path $AppDirectory "runtime.json"
 $StopRequestPath = Join-Path $AppDirectory "stop.request"
 $RestartScriptPath = Join-Path $AppDirectory "Restart-EvoraConfigLauncher.ps1"
+$HiddenWrapperPath = Join-Path $AppDirectory "Run-EvoraConfigLauncher.vbs"
+$ScheduledTaskName = "Evora Smart Hub Config Launcher"
+$StartupShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Evora Config Launcher.lnk"
 $MutexName = "Local\EvoraSmartHubConfigLauncher"
 $script:LauncherPhase = "startup"
 $script:HubConnectionVerified = $false
@@ -41,6 +44,52 @@ function Write-SafeLog([string]$Message) {
   if ((Get-Item -LiteralPath $LogPath -ErrorAction SilentlyContinue).Length -gt 1048576) {
     $tail = Get-Content -LiteralPath $LogPath -Tail 500
     Set-Content -LiteralPath $LogPath -Value $tail -Encoding UTF8
+  }
+}
+
+function Install-HiddenLauncherEntrypoints {
+  try {
+    $expectedScriptPath = [IO.Path]::GetFullPath((Join-Path $AppDirectory "EvoraConfigLauncher.ps1"))
+    if ([IO.Path]::GetFullPath($PSCommandPath) -ine $expectedScriptPath) { return }
+    $wrapper = @'
+Option Explicit
+
+Dim shell, fileSystem, installDirectory, powerShellPath, launcherPath, command
+Set shell = CreateObject("WScript.Shell")
+Set fileSystem = CreateObject("Scripting.FileSystemObject")
+installDirectory = fileSystem.GetParentFolderName(WScript.ScriptFullName)
+powerShellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+launcherPath = fileSystem.BuildPath(installDirectory, "EvoraConfigLauncher.ps1")
+command = Chr(34) & powerShellPath & Chr(34) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & launcherPath & Chr(34)
+shell.Run command, 0, False
+'@
+    Set-Content -LiteralPath $HiddenWrapperPath -Value $wrapper -Encoding Unicode
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $task = Get-ScheduledTask -TaskName $ScheduledTaskName -ErrorAction SilentlyContinue
+    if ($null -ne $task -and [string]$task.Principal.UserId -ieq $identity) {
+      $actions = @($task.Actions)
+      $ownsTask = $actions.Count -eq 1 -and (
+        ([string]$actions[0].Execute -match '(?i)(?:^|\\)powershell\.exe$' -and [string]$actions[0].Arguments -like "*$expectedScriptPath*") -or
+        ([string]$actions[0].Execute -match '(?i)(?:^|\\)wscript\.exe$' -and [string]$actions[0].Arguments -like "*$HiddenWrapperPath*")
+      )
+      if ($ownsTask) {
+        $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" `
+          -Argument "//B //Nologo `"$HiddenWrapperPath`"" -WorkingDirectory $AppDirectory
+        Set-ScheduledTask -TaskName $ScheduledTaskName -Action $action | Out-Null
+      }
+    }
+    $startupDirectory = Split-Path -Parent $StartupShortcutPath
+    New-Item -ItemType Directory -Path $startupDirectory -Force | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($StartupShortcutPath)
+    $shortcut.TargetPath = "$env:SystemRoot\System32\wscript.exe"
+    $shortcut.Arguments = "//B //Nologo `"$HiddenWrapperPath`""
+    $shortcut.WorkingDirectory = $AppDirectory
+    $shortcut.Description = "Evora Smart Hub - Loxone Config Launcher"
+    $shortcut.Save()
+    Write-SafeLog "Hidden launcher entrypoints are installed."
+  } catch {
+    Write-SafeLog "Hidden launcher entrypoints could not be installed safely."
   }
 }
 
@@ -933,6 +982,7 @@ if (-not $createdNew) { exit 0 }
 
 try {
   Remove-Item -LiteralPath $StopRequestPath -Force -ErrorAction SilentlyContinue
+  Install-HiddenLauncherEntrypoints
   Write-LauncherRuntime
   Write-SafeLog "Launcher started."
   Initialize-LauncherTray $configuredHubUrl

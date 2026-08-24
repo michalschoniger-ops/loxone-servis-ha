@@ -11,11 +11,15 @@ Set-StrictMode -Version Latest
 
 $source = Join-Path $PSScriptRoot "EvoraConfigLauncher.ps1"
 $restartSource = Join-Path $PSScriptRoot "Restart-EvoraConfigLauncher.ps1"
+$wrapperSource = Join-Path $PSScriptRoot "Run-EvoraConfigLauncher.vbs"
 if (-not (Test-Path -LiteralPath $source)) {
   throw "EvoraConfigLauncher.ps1 must be in the same folder as this installer."
 }
 if (-not (Test-Path -LiteralPath $restartSource)) {
   throw "Restart-EvoraConfigLauncher.ps1 must be in the same folder as this installer."
+}
+if (-not (Test-Path -LiteralPath $wrapperSource)) {
+  throw "Run-EvoraConfigLauncher.vbs must be in the same folder as this installer."
 }
 
 $sourceText = Get-Content -LiteralPath $source -Raw
@@ -26,12 +30,14 @@ $expectedVersion = $versionMatch.Groups[1].Value
 $installDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $installedScript = Join-Path $installDirectory "EvoraConfigLauncher.ps1"
 $installedRestartScript = Join-Path $installDirectory "Restart-EvoraConfigLauncher.ps1"
+$installedWrapper = Join-Path $installDirectory "Run-EvoraConfigLauncher.vbs"
 $configPath = Join-Path $installDirectory "config.json"
 $runtimePath = Join-Path $installDirectory "runtime.json"
 $stopRequestPath = Join-Path $installDirectory "stop.request"
 $rollbackDirectory = Join-Path $installDirectory "install-rollback"
 $rollbackScript = Join-Path $rollbackDirectory "EvoraConfigLauncher.ps1"
 $rollbackRestartScript = Join-Path $rollbackDirectory "Restart-EvoraConfigLauncher.ps1"
+$rollbackWrapper = Join-Path $rollbackDirectory "Run-EvoraConfigLauncher.vbs"
 $rollbackConfig = Join-Path $rollbackDirectory "config.json"
 $scheduledTaskName = "Evora Smart Hub Config Launcher"
 $startupDirectory = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
@@ -121,11 +127,11 @@ function Stop-InstalledLauncher([string]$ScriptPath) {
   throw "The previous Launcher process did not stop safely."
 }
 
-function Register-LauncherWatchdog([string]$ScriptPath) {
-  $powerShellPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-  $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
+function Register-LauncherWatchdog([string]$WrapperPath) {
+  $wscriptPath = "$env:SystemRoot\System32\wscript.exe"
+  $arguments = "//B //Nologo `"$WrapperPath`""
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $arguments -WorkingDirectory $installDirectory
+  $action = New-ScheduledTaskAction -Execute $wscriptPath -Argument $arguments -WorkingDirectory $installDirectory
   $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
   $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
@@ -137,20 +143,20 @@ function Register-LauncherWatchdog([string]$ScriptPath) {
   Enable-ScheduledTask -TaskName $scheduledTaskName | Out-Null
 }
 
-function Save-StartupShortcut([string]$ScriptPath) {
+function Save-StartupShortcut([string]$WrapperPath) {
   New-Item -ItemType Directory -Path $startupDirectory -Force | Out-Null
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-  $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
+  $shortcut.TargetPath = "$env:SystemRoot\System32\wscript.exe"
+  $shortcut.Arguments = "//B //Nologo `"$WrapperPath`""
   $shortcut.WorkingDirectory = $installDirectory
   $shortcut.Description = "Evora Smart Hub - Loxone Config Launcher"
   $shortcut.Save()
 }
 
-function Start-InstalledLauncher([string]$ScriptPath) {
+function Start-InstalledLauncher([string]$WrapperPath) {
   Remove-Item -LiteralPath $stopRequestPath -Force -ErrorAction SilentlyContinue
-  Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ScriptPath`"")
+  Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList @("//B", "//Nologo", "`"$WrapperPath`"") -WindowStyle Hidden
 }
 
 function Wait-LauncherHealthy([string]$ScriptPath, [string]$Version, [int]$TimeoutSeconds = 45) {
@@ -175,10 +181,12 @@ Remove-Item -LiteralPath $rollbackDirectory -Recurse -Force -ErrorAction Silentl
 New-Item -ItemType Directory -Path $rollbackDirectory -Force | Out-Null
 $hadInstalledScript = Test-Path -LiteralPath $installedScript
 $hadInstalledRestart = Test-Path -LiteralPath $installedRestartScript
+$hadInstalledWrapper = Test-Path -LiteralPath $installedWrapper
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadShortcut = Test-Path -LiteralPath $shortcutPath
 if ($hadInstalledScript) { Copy-Item -LiteralPath $installedScript -Destination $rollbackScript -Force }
 if ($hadInstalledRestart) { Copy-Item -LiteralPath $installedRestartScript -Destination $rollbackRestartScript -Force }
+if ($hadInstalledWrapper) { Copy-Item -LiteralPath $installedWrapper -Destination $rollbackWrapper -Force }
 if ($hadConfig) { Copy-Item -LiteralPath $configPath -Destination $rollbackConfig -Force }
 
 if (-not $reuseExistingPairing) {
@@ -201,9 +209,10 @@ try {
   Stop-InstalledLauncher $installedScript
   Copy-Item -LiteralPath $source -Destination $installedScript -Force
   Copy-Item -LiteralPath $restartSource -Destination $installedRestartScript -Force
-  Register-LauncherWatchdog $installedScript
-  Save-StartupShortcut $installedScript
-  Start-InstalledLauncher $installedScript
+  Copy-Item -LiteralPath $wrapperSource -Destination $installedWrapper -Force
+  Register-LauncherWatchdog $installedWrapper
+  Save-StartupShortcut $installedWrapper
+  Start-InstalledLauncher $installedWrapper
   if (-not (Wait-LauncherHealthy $installedScript $expectedVersion)) {
     throw "The installed Launcher did not confirm an authenticated Hub heartbeat within 45 seconds."
   }
@@ -216,14 +225,16 @@ try {
   else { Remove-Item -LiteralPath $installedScript -Force -ErrorAction SilentlyContinue }
   if ($hadInstalledRestart) { Copy-Item -LiteralPath $rollbackRestartScript -Destination $installedRestartScript -Force }
   else { Remove-Item -LiteralPath $installedRestartScript -Force -ErrorAction SilentlyContinue }
+  if ($hadInstalledWrapper) { Copy-Item -LiteralPath $rollbackWrapper -Destination $installedWrapper -Force }
+  else { Copy-Item -LiteralPath $wrapperSource -Destination $installedWrapper -Force }
   if ($hadConfig) { Copy-Item -LiteralPath $rollbackConfig -Destination $configPath -Force }
   else { Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue }
   $restoredAndStarted = $false
   if ($hadInstalledScript -and $hadConfig) {
-    try { Register-LauncherWatchdog $installedScript } catch { }
-    try { Save-StartupShortcut $installedScript } catch { }
+    try { Register-LauncherWatchdog $installedWrapper } catch { }
+    try { Save-StartupShortcut $installedWrapper } catch { }
     try {
-      Start-InstalledLauncher $installedScript
+      Start-InstalledLauncher $installedWrapper
       $restoredAndStarted = $true
     } catch { }
   } else {

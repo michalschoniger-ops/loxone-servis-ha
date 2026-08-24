@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.26.2
+
+- Přepíná systémové repozitáře obou build vrstev na HTTPS, protože živý Home Assistant builder odmítl spojení na `deb.debian.org` přes port 80. Aplikační payload 3.0.26, vratná výměna i všechna uživatelská data zůstávají zachované.
+
 ## 3.0.26.1
 
 - Nasazuje Evora Smart Hub 3.0.26 s opravami z prvního auditu LongHorizon Harness: konečnými timeouty klienta a video brány, úklidem neúspěšných procesů a streamů, pravdivými chybovými stavy a bezpečnějším service workerem.

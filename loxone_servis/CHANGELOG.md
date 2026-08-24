@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.20
+
+- Firemní Milesight RTSP už není pro Hub překódován na sled samostatných JPEGů. Interní, checksumem ověřená video brána přebaluje kompatibilní H.264/H.265 beze změny obrazu; Hub používá WebRTC a při nedostupném přímém mediálním spojení automaticky přejde na zabezpečené HLS přes stejnou HTTPS adresu.
+- Mřížka používá úsporný NVR substream a detail hlavní stream. Přenos se spouští jen pro viditelné karty, RTSP přístup zůstává pouze v paměti a správcovské API video brány i její RTSP listener poslouchají výhradně na loopbacku. Veřejně je otevřen pouze šifrovaný WebRTC mediální port.
+- Evora Smart Menu 3.0.11 nahrazuje JPEG náhled nativním `AVPlayer` HLS videem s krátkým bufferem, automatickým opakováním a autorizací v HTTP hlavičce; token ani RTSP adresa nejsou v URL.
+- Připojovací stav karty zobrazuje pouze vystředěný spinner. Tmavý režim globálního hledání sjednocuje průhledné pozadí inputu s obalem, takže pod ikonou nezůstává odlišný obdélník.
+
 ## 3.0.19
 
 - Postranní nabídka Hubu řadí hlavní systémy podle provozní priority: LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení. Stejné pořadí používá desktop i mobilní vysouvací nabídka.

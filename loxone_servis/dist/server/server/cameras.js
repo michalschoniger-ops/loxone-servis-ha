@@ -931,20 +931,42 @@ export function cameraLiveFrameHeader(quality, streamCandidateIndex, jpegLength)
 function encodeRtspCredential(value) {
     return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
 }
-export function cameraSnapshotInputScript(input, streamPath) {
+function cameraRtspUrl(input, streamPath) {
     const access = normalizeCameraIntegrationInput(input);
     if (!/^ch_[14]\d{2}$/.test(streamPath)) {
         throw new CameraIntegrationError("Cesta obrazu kamery není platná.", "CAMERA_CONFIG_INVALID");
     }
     const username = encodeRtspCredential(access.username);
     const password = encodeRtspCredential(access.password);
+    return `rtsp://${username}:${password}@${access.host}:${access.rtspPort}/${streamPath}`;
+}
+export function cameraSnapshotInputScript(input, streamPath) {
     return [
         "ffconcat version 1.0",
-        `file 'rtsp://${username}:${password}@${access.host}:${access.rtspPort}/${streamPath}'`,
+        `file '${cameraRtspUrl(input, streamPath)}'`,
         "option rtsp_transport tcp",
         "option timeout 8000000",
         "",
     ].join("\n");
+}
+/**
+ * Returns authenticated RTSP sources for the loopback-only video gateway.
+ * Callers must keep the returned URLs in memory and must never log or persist
+ * them. The URL fragment disables audio/backchannel negotiation so previews
+ * carry only the video bytes needed by Hub and Menu.
+ */
+export function cameraGatewaySources(db, channelId, quality) {
+    const row = cameraRow(db);
+    if (!row)
+        throw new CameraIntegrationError("NVR zatím není nastavené.", "CAMERA_CONFIG_INVALID");
+    const channel = rowToOverview(row).channels.find((item) => item.id === channelId && item.online);
+    if (!channel)
+        throw new CameraIntegrationError("Kamera nebyla nalezena nebo není připojená.", "CAMERA_CONFIG_INVALID");
+    const access = storedCameraAccess(row);
+    return cameraLiveStreamCandidates(channelId, quality).map((streamPath, index) => ({
+        url: `${cameraRtspUrl(access, streamPath)}#media=video#backchannel=0#timeout=20`,
+        source: cameraLiveStreamSource(quality, index),
+    }));
 }
 async function uncachedSnapshot(access, streamPath) {
     return await new Promise((resolve, reject) => {

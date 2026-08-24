@@ -1,6 +1,6 @@
 {
   "name": "@evora/loxone-servis",
-  "version": "3.0.19",
+  "version": "3.0.20",
   "private": true,
   "description": "Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.",
   "type": "module",
@@ -27,6 +27,7 @@
     "archiver": "^7.0.1",
     "fast-xml-parser": "^5.2.5",
     "fastify": "^5.6.1",
+    "hls.js": "1.6.16",
     "otpauth": "^9.4.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

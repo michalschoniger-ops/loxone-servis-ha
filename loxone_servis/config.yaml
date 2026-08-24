@@ -1,5 +1,5 @@
 name: Evora Smart Hub
-version: "3.0.19"
+version: "3.0.20"
 slug: loxone_fleet
 description: Bezpečný servisní a monitorovací hub pro Loxone a Home Assistant.
 url: https://github.com/michalschoniger-ops/loxone-servis
@@ -19,8 +19,12 @@ watchdog: http://[HOST]:[PORT:8099]/healthz
 homeassistant_api: true
 ports:
   8099/tcp: 8099
+  18555/tcp: 18555
+  18555/udp: 18555
 ports_description:
   8099/tcp: Přímý web Evora Smart Hubu (pro HTTPS reverse proxy nebo Tailscale Funnel)
+  18555/tcp: Šifrovaná WebRTC média Milesight (TCP záloha)
+  18555/udp: Šifrovaná WebRTC média Milesight (plynulý UDP přenos)
 options:
   credentials_master_key: ""
   bootstrap_admin_email: schoniger@evorasmart.cz

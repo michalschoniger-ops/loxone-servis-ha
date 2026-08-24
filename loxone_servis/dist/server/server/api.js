@@ -25,6 +25,7 @@ import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, S
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getCameraOverview, getPreferredCameraLiveStream, getCameraSnapshot, optimizeCameraThirdMjpegStream, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
+import { cameraVideoGateway } from "./camera-video-gateway.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -204,6 +205,14 @@ function sendIntranetError(reply, error) {
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
 }).strict();
+const cameraWebRtcSchema = z.object({
+    quality: z.enum(["preview", "main"]).default("preview"),
+    offer: z.string().min(10).max(512 * 1024),
+}).strict();
+const cameraHlsSessionSchema = z.object({
+    id: z.string().regex(/^[A-Za-z0-9]{8}$/),
+    n: z.string().regex(/^\d{1,12}$/).optional(),
+}).strict();
 const cameraHttpEventSchema = z.enum([
     "region_entrance",
     "region_exit",
@@ -246,6 +255,52 @@ async function sendCameraLiveStream(reply, db, channelId, quality) {
         const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404
             : error instanceof CameraIntegrationError && error.code === "CAMERA_STREAM_LIMIT" ? 503
                 : 502;
+        return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+    }
+}
+async function sendCameraWebRtc(reply, db, channelId, quality, offer) {
+    try {
+        const result = await cameraVideoGateway.exchangeWebRtc(db, channelId, quality, offer);
+        return reply
+            .header("Cache-Control", "private, no-store, no-transform, max-age=0")
+            .header("Pragma", "no-cache")
+            .send(result);
+    }
+    catch (error) {
+        const message = error instanceof CameraIntegrationError ? error.message : "WebRTC obraz kamery není dostupný.";
+        const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 400 : 502;
+        return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+    }
+}
+async function sendCameraHlsMaster(reply, db, channelId, quality) {
+    try {
+        const result = await cameraVideoGateway.hlsMaster(db, channelId, quality);
+        return reply
+            .header("Cache-Control", "private, no-store, no-transform, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Accel-Buffering", "no")
+            .type(result.contentType)
+            .send(result.body);
+    }
+    catch (error) {
+        const message = error instanceof CameraIntegrationError ? error.message : "HLS obraz kamery není dostupný.";
+        const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 400 : 502;
+        return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+    }
+}
+async function sendCameraHlsResource(reply, resource, sessionId, sequence) {
+    try {
+        const result = await cameraVideoGateway.hlsResource(resource, sessionId, sequence);
+        return reply
+            .header("Cache-Control", "private, no-store, no-transform, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Accel-Buffering", "no")
+            .type(result.contentType)
+            .send(result.body);
+    }
+    catch (error) {
+        const message = error instanceof CameraIntegrationError ? error.message : "HLS segment není dostupný.";
+        const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 400 : 502;
         return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
     }
 }
@@ -722,6 +777,24 @@ export async function registerApi(app, db, jobs) {
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
         return sendCameraLiveStream(reply, db, channelId, quality);
+    });
+    app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/index.m3u8", { config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const { quality } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraHlsMaster(reply, db, channelId, quality);
+    });
+    app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 1_200, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const resource = z.enum(["playlist.m3u8", "init.mp4", "segment.m4s", "segment.ts"])
+            .parse(request.params.resource);
+        const { id, n } = cameraHlsSessionSchema.parse(request.query);
+        return sendCameraHlsResource(reply, resource, id, n);
     });
     app.put("/api/integrations/worklog/v1/cameras/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -1378,6 +1451,29 @@ export async function registerApi(app, db, jobs) {
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
         return sendCameraLiveStream(reply, db, channelId, quality);
+    });
+    app.post("/api/cameras/:channelId/webrtc", { config: { rateLimit: { max: 45, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const { quality, offer } = cameraWebRtcSchema.parse(request.body);
+        return sendCameraWebRtc(reply, db, channelId, quality, offer);
+    });
+    app.get("/api/cameras/:channelId/hls/index.m3u8", { config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const { quality } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraHlsMaster(reply, db, channelId, quality);
+    });
+    app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 1_200, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const resource = z.enum(["playlist.m3u8", "init.mp4", "segment.m4s", "segment.ts"])
+            .parse(request.params.resource);
+        const { id, n } = cameraHlsSessionSchema.parse(request.query);
+        return sendCameraHlsResource(reply, resource, id, n);
     });
     app.get("/api/cameras/:channelId/capabilities", async (request, reply) => {
         if (!requireRole(request, reply, ["admin", "technician"]))

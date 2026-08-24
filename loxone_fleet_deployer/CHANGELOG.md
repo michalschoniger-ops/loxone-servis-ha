@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.20.1
+
+- Nasazuje Evora Smart Hub 3.0.20 s převodem interního Milesight RTSP na WebRTC a zabezpečené HLS, checksumem ověřenou video bránou a Evora Smart Menu 3.0.11 s nativním AVPlayer HLS přehráváním.
+- Zachovává databázi, čtecí Excel/Graph synchronizaci, názvy kamer, šifrované NVR přístupy, DPAPI párování i vratný zdroj Hubu 3.0.19; P2P transport dalších NVR tato verze ještě nevydává za hotový.
+
 ## 3.0.19.3
 
 - Aktualizuje veřejný instalační balíček Evora Smart Menu 3.0.10 o bezpečné čekání a jeden opakovaný `launchctl bootstrap`, pokud macOS po `bootout` krátce vrátí I/O chybu.

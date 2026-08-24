@@ -16,6 +16,7 @@ import { registerCanonicalProxy } from "./proxy.js";
 import { registerApplicationErrorHandler } from "./error-handler.js";
 import { cacheControlForStaticPath, isSpaNavigationRequest } from "./static-assets.js";
 import { requestLogSerializer } from "./logging.js";
+import { stopCameraVideoGateway } from "./camera-video-gateway.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -130,6 +131,7 @@ if (config.schedulerEnabled)
 async function shutdown(signal) {
     app.log.info({ signal }, "shutting down");
     jobs?.stop();
+    stopCameraVideoGateway();
     await app.close();
     database?.close();
     process.exit(0);

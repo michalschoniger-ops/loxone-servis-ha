@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM ghcr.io/home-assistant/base:3.22
 
 ARG BUILD_VERSION
 ARG BUILD_ARCH

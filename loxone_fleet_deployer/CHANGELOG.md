@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.24.2
+
+- Používá oficiální vícearchitekturní Home Assistant base 3.22 z GitHub Container Registry. Obchází opakovaně živě potvrzený timeout Docker Hubu při sestavení helperu; payload Hubu 3.0.24 a jeho kontrolní součet zůstávají stejné.
+
 ## 3.0.24.1
 
 - Nasazuje Evora Smart Hub 3.0.24 s checksumem připnutým go2rtc 1.9.14 a jedinou auditovatelnou úpravou pevné HLS životnosti z pěti na 30 sekund. Pomalý přenos segmentu přes Home Assistant proxy tak nemá ukončit zdravý RTSP proud.

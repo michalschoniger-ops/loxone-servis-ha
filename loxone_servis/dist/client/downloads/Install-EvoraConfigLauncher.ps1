@@ -11,12 +11,16 @@ Set-StrictMode -Version Latest
 
 $source = Join-Path $PSScriptRoot "EvoraConfigLauncher.ps1"
 $restartSource = Join-Path $PSScriptRoot "Restart-EvoraConfigLauncher.ps1"
+$restartWrapperSource = Join-Path $PSScriptRoot "Restart-EvoraConfigLauncher.vbs"
 $wrapperSource = Join-Path $PSScriptRoot "Run-EvoraConfigLauncher.vbs"
 if (-not (Test-Path -LiteralPath $source)) {
   throw "EvoraConfigLauncher.ps1 must be in the same folder as this installer."
 }
 if (-not (Test-Path -LiteralPath $restartSource)) {
   throw "Restart-EvoraConfigLauncher.ps1 must be in the same folder as this installer."
+}
+if (-not (Test-Path -LiteralPath $restartWrapperSource)) {
+  throw "Restart-EvoraConfigLauncher.vbs must be in the same folder as this installer."
 }
 if (-not (Test-Path -LiteralPath $wrapperSource)) {
   throw "Run-EvoraConfigLauncher.vbs must be in the same folder as this installer."
@@ -30,6 +34,7 @@ $expectedVersion = $versionMatch.Groups[1].Value
 $installDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $installedScript = Join-Path $installDirectory "EvoraConfigLauncher.ps1"
 $installedRestartScript = Join-Path $installDirectory "Restart-EvoraConfigLauncher.ps1"
+$installedRestartWrapper = Join-Path $installDirectory "Restart-EvoraConfigLauncher.vbs"
 $installedWrapper = Join-Path $installDirectory "Run-EvoraConfigLauncher.vbs"
 $configPath = Join-Path $installDirectory "config.json"
 $runtimePath = Join-Path $installDirectory "runtime.json"
@@ -37,6 +42,7 @@ $stopRequestPath = Join-Path $installDirectory "stop.request"
 $rollbackDirectory = Join-Path $installDirectory "install-rollback"
 $rollbackScript = Join-Path $rollbackDirectory "EvoraConfigLauncher.ps1"
 $rollbackRestartScript = Join-Path $rollbackDirectory "Restart-EvoraConfigLauncher.ps1"
+$rollbackRestartWrapper = Join-Path $rollbackDirectory "Restart-EvoraConfigLauncher.vbs"
 $rollbackWrapper = Join-Path $rollbackDirectory "Run-EvoraConfigLauncher.vbs"
 $rollbackConfig = Join-Path $rollbackDirectory "config.json"
 $scheduledTaskName = "Evora Smart Hub Config Launcher"
@@ -181,11 +187,13 @@ Remove-Item -LiteralPath $rollbackDirectory -Recurse -Force -ErrorAction Silentl
 New-Item -ItemType Directory -Path $rollbackDirectory -Force | Out-Null
 $hadInstalledScript = Test-Path -LiteralPath $installedScript
 $hadInstalledRestart = Test-Path -LiteralPath $installedRestartScript
+$hadInstalledRestartWrapper = Test-Path -LiteralPath $installedRestartWrapper
 $hadInstalledWrapper = Test-Path -LiteralPath $installedWrapper
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadShortcut = Test-Path -LiteralPath $shortcutPath
 if ($hadInstalledScript) { Copy-Item -LiteralPath $installedScript -Destination $rollbackScript -Force }
 if ($hadInstalledRestart) { Copy-Item -LiteralPath $installedRestartScript -Destination $rollbackRestartScript -Force }
+if ($hadInstalledRestartWrapper) { Copy-Item -LiteralPath $installedRestartWrapper -Destination $rollbackRestartWrapper -Force }
 if ($hadInstalledWrapper) { Copy-Item -LiteralPath $installedWrapper -Destination $rollbackWrapper -Force }
 if ($hadConfig) { Copy-Item -LiteralPath $configPath -Destination $rollbackConfig -Force }
 
@@ -209,6 +217,7 @@ try {
   Stop-InstalledLauncher $installedScript
   Copy-Item -LiteralPath $source -Destination $installedScript -Force
   Copy-Item -LiteralPath $restartSource -Destination $installedRestartScript -Force
+  Copy-Item -LiteralPath $restartWrapperSource -Destination $installedRestartWrapper -Force
   Copy-Item -LiteralPath $wrapperSource -Destination $installedWrapper -Force
   Register-LauncherWatchdog $installedWrapper
   Save-StartupShortcut $installedWrapper
@@ -225,6 +234,8 @@ try {
   else { Remove-Item -LiteralPath $installedScript -Force -ErrorAction SilentlyContinue }
   if ($hadInstalledRestart) { Copy-Item -LiteralPath $rollbackRestartScript -Destination $installedRestartScript -Force }
   else { Remove-Item -LiteralPath $installedRestartScript -Force -ErrorAction SilentlyContinue }
+  if ($hadInstalledRestartWrapper) { Copy-Item -LiteralPath $rollbackRestartWrapper -Destination $installedRestartWrapper -Force }
+  else { Remove-Item -LiteralPath $installedRestartWrapper -Force -ErrorAction SilentlyContinue }
   if ($hadInstalledWrapper) { Copy-Item -LiteralPath $rollbackWrapper -Destination $installedWrapper -Force }
   else { Copy-Item -LiteralPath $wrapperSource -Destination $installedWrapper -Force }
   if ($hadConfig) { Copy-Item -LiteralPath $rollbackConfig -Destination $configPath -Force }

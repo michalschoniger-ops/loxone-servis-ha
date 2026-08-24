@@ -131,7 +131,7 @@ if (config.schedulerEnabled)
 async function shutdown(signal) {
     app.log.info({ signal }, "shutting down");
     jobs?.stop();
-    stopCameraVideoGateway();
+    await stopCameraVideoGateway();
     await app.close();
     database?.close();
     process.exit(0);

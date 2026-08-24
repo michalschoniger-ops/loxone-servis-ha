@@ -26,7 +26,7 @@ Každá provozní informace rozlišuje, zda se právě načítá, je aktuální 
 - Home Assistant Fleet s přehledem aktualizací Core, Supervisoru, OS, add-onů a integrací, potvrzovanou instalací a restartem
 - bezpečný Config Bridge s odpovídající verzí Loxone Configu, projektem, adresou a kopírováním přístupů
 - osobní Windows Config Launcher, který podle firmwaru spustí přesnou instalovanou verzi Configu a bezpečně vyplní ruční připojení
-- Evora Smart Menu 3.0.12 výhradně pro správce na macOS, se složkami Miniserverů, ověřeným počtem online/offline prvků, Health stavem a stářím kontroly, volbou Loxone App nebo Config, živou docházkou včetně 30minutového odpočtu přestávky v horní liště, plynulým úsporným HLS videem Milesight, neblokujícím globálním hledáním a samostatně uvedenou živou verzí Menu i Hubu
+- Evora Smart Menu 3.0.13 výhradně pro správce na macOS, se složkami Miniserverů, ověřeným počtem online/offline prvků, Health stavem a stářím kontroly, volbou Loxone App nebo Config, živou docházkou včetně 30minutového odpočtu přestávky v horní liště, plynulým úsporným HLS videem Milesight, neblokujícím globálním hledáním a samostatně uvedenou živou verzí Menu i Hubu
 - Milesight NVR v privátní síti HA Práce s automatickým seznamem online i offline kanálů, šifrovanými přístupy a vlastními názvy. Hub používá NVR jako jediný síťový bod: obraz načítá z kanálů NVR a kamerové schopnosti, třetí MJPEG stream i VCA HTTP notifikace ověřuje přes NVR Channel Access. Třetí stream nastaví jen na parametry potvrzené API konkrétní kamery a změnu vždy přečte zpět; bez ověřené podpory zachová dosavadní sdílený NVR stream.
 - správcovské centrum Evora Intranetu: aktuální pracovní stav, běžící čas, příchod a odchod, Home office, služební cesta, měsíční souhrny, dvouměsíční historie, kontakty kolegů a žádosti o dovolenou či absenci
 - barevné složky a podsložky, přesné fotografie z oficiálního Loxone Shop CDN, dostupná kvalita Air signálu a profilové fotografie uživatelů
@@ -52,7 +52,7 @@ Home Assistant adresy mohou být Tailscale (`*.ts.net`), Nabu Casa (`*.ui.nabu.c
 
 Fotografie a PDF interních servisních úkolů mají omezený typ i velikost, server ověřuje skutečnou signaturu obsahu a ukládá je šifrovaně pomocí AES-256-GCM. Stažení vyžaduje aktivní roli správce nebo technika, používá `no-store` a prohlížeč nesmí obsah odhadovat podle názvu souboru.
 
-Microsoft Graph propojení Excelu používá tenantově omezenou veřejnou aplikaci, `offline_access` a delegované oprávnění `Files.ReadWrite`, které Microsoft vyžaduje i pro rozlišení položky ze sdíleného odkazu přes `/shares`. Hub 3.0.25 tuto relaci používá pouze ke čtení: neodesílá změnu buňky ani heslo či klientské tajemství; obnovovací token je šifrovaný a krátkodobý device code vidí pouze správce po dobu připojení.
+Microsoft Graph propojení Excelu používá tenantově omezenou veřejnou aplikaci, `offline_access` a delegované oprávnění `Files.ReadWrite`, které Microsoft vyžaduje i pro rozlišení položky ze sdíleného odkazu přes `/shares`. Hub 3.0.26 tuto relaci používá pouze ke čtení: neodesílá změnu buňky ani heslo či klientské tajemství; obnovovací token je šifrovaný a krátkodobý device code vidí pouze správce po dobu připojení.
 
 ## Jediný zdroj dat
 

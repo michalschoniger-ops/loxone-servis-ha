@@ -1,5 +1,5 @@
 /* global self, caches, fetch, Request, Response, URL */
-const CACHE_NAME = "evora-smart-hub-shell-v3.0.25";
+const CACHE_NAME = "evora-smart-hub-shell-v3.0.26";
 const scopeUrl = new URL(self.registration.scope);
 
 function relativePath(url) {
@@ -24,31 +24,42 @@ async function cacheAppShell() {
     .map((match) => new URL(match[1], scopeUrl))
     .filter((url) => url.origin === scopeUrl.origin && url.pathname.startsWith(scopeUrl.pathname));
   assetUrls.push(new URL("evora-hub-mark.svg", scopeUrl));
-  await Promise.allSettled(assetUrls.map((url) => cache.add(new Request(url, { cache: "reload" }))));
+  await Promise.all(assetUrls.map((url) => cache.add(new Request(url, { cache: "reload" }))));
 }
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(cacheAppShell());
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    await cacheAppShell();
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("evora-smart-hub-shell-") && key !== CACHE_NAME).map((key) => caches.delete(key)))));
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith("evora-smart-hub-shell-") && key !== CACHE_NAME).map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET" || isPrivateRequest(request)) return;
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).then((response) => {
-      if (response.ok) void caches.open(CACHE_NAME).then((cache) => cache.put(new Request(self.registration.scope), response.clone()));
+    event.respondWith(fetch(request).then(async (response) => {
+      if (response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(new Request(self.registration.scope), response.clone());
+      }
       return response;
     }).catch(async () => (await caches.match(new Request(self.registration.scope))) || Response.error()));
     return;
   }
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-    if (response.ok && response.type === "basic") void caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then(async (response) => {
+    if (response.ok && response.type === "basic") {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
     return response;
   })));
 });

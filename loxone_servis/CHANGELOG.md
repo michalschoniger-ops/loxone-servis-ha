@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.26
+
+- Server i klient drží časový limit až do úplného přečtení odpovědi. Video gateway při neúspěšném startu ukončí vlastní proces, uklidí každý nefunkční kandidát a při vypnutí čeká na skutečný konec potomka; offline kanál už transport vůbec nespouští.
+- Service worker přijme shell jen jako úplný celek, čeká na `skipWaiting`, `clients.claim` i zápis cache. Incidenty, úkoly, kamery a flotila při chybě nezobrazí falešný prázdný či nenastavený stav, ale trvalou chybu s bezpečným opakováním a případně posledními daty.
+- Responzivní navigace skrývá na středním desktopu skutečné textové popisky, tabulka flotily se vejde při 1280 px, Config zůstává dostupný na iPadu a dotykové ovládání má minimálně 44 px. Tmavé hledání má jednotný podklad a kontrast primárních akcí i ikony Intranetu je zvýšený.
+- Evora Smart Menu 3.0.13 průběžně čte výstup pomocných procesů s časovým limitem, při chybě zachová poslední stav a nepřekrývá název kamery stavovým štítkem.
+- Windows Launcher 3.0.0.5 používá atomickou výměnu, skrytý restart přes `wscript.exe`, čerstvý autentizovaný heartbeat a automatický rollback na ověřenou předchozí verzi. Uživatelské DPAPI párování se neaktualizuje ani nepřenáší.
+
 ## 3.0.25
 
 - Hub i Evora Smart Menu dočasně zobrazují pouze kameru „Parkoviště - Recepce - 2“ (stabilní kanál 7), aby se neotvíralo deset současných problematických relací.

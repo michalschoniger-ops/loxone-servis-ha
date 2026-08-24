@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.26.1
+
+- Nasazuje Evora Smart Hub 3.0.26 s opravami z prvního auditu LongHorizon Harness: konečnými timeouty klienta a video brány, úklidem neúspěšných procesů a streamů, pravdivými chybovými stavy a bezpečnějším service workerem.
+- Součástí jsou Evora Smart Menu 3.0.13 s omezeným čekáním na podprocesy a Windows Config Launcher 3.0.0.5 s transakční aktualizací, ověřením návratu online a automatickým rollbackem. V Hubu i Menu zůstává zveřejněna pouze kamera „Parkoviště - Recepce - 2“; P2P dalších NVR se tímto nevydává za hotové.
+
 ## 3.0.25.1
 
 - Nasazuje Evora Smart Hub 3.0.25, který v Hubu i Evora Smart Menu dočasně publikuje pouze kameru „Parkoviště - Recepce - 2“ (stabilní kanál 7).

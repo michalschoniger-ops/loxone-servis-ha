@@ -3,7 +3,10 @@ param(
   [string]$PairingCode = "",
   [string]$AgentName = $env:COMPUTERNAME,
   [switch]$PairOnly,
-  [switch]$SelfTest
+  [switch]$SelfTest,
+  [switch]$CompleteUpdate,
+  [int]$WaitForPid = 0,
+  [string]$ExpectedVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,13 +14,13 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.4"
+$HelperVersion = "3.0.0.5"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
 $RuntimeStatePath = Join-Path $AppDirectory "runtime.json"
 $StopRequestPath = Join-Path $AppDirectory "stop.request"
-$RestartScriptPath = Join-Path $AppDirectory "Restart-EvoraConfigLauncher.ps1"
+$RestartWrapperPath = Join-Path $AppDirectory "Restart-EvoraConfigLauncher.vbs"
 $HiddenWrapperPath = Join-Path $AppDirectory "Run-EvoraConfigLauncher.vbs"
 $ScheduledTaskName = "Evora Smart Hub Config Launcher"
 $StartupShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Evora Config Launcher.lnk"
@@ -25,7 +28,7 @@ $MutexName = "Local\EvoraSmartHubConfigLauncher"
 $script:LauncherPhase = "startup"
 $script:HubConnectionVerified = $false
 $script:AutomaticUpdateState = "passed"
-$script:AutomaticUpdateMessage = "Updates use an authenticated Hub manifest and an exact SHA-256 check."
+$script:AutomaticUpdateMessage = "Updates use an authenticated SHA-256 manifest, an atomic replacement, authenticated health verification, and automatic rollback."
 $script:PairingRejectedNoticeShown = $false
 $script:TrayIcon = $null
 $script:TrayIconImage = $null
@@ -64,6 +67,22 @@ command = Chr(34) & powerShellPath & Chr(34) & " -NoProfile -NonInteractive -Exe
 shell.Run command, 0, False
 '@
     Set-Content -LiteralPath $HiddenWrapperPath -Value $wrapper -Encoding Unicode
+    $restartWrapper = @'
+Option Explicit
+
+Dim shell, fileSystem, installDirectory, powerShellPath, launcherPath, command, waitPid, expectedVersion
+If WScript.Arguments.Count <> 2 Then WScript.Quit 2
+Set shell = CreateObject("WScript.Shell")
+Set fileSystem = CreateObject("Scripting.FileSystemObject")
+installDirectory = fileSystem.GetParentFolderName(WScript.ScriptFullName)
+powerShellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+launcherPath = fileSystem.BuildPath(installDirectory, "EvoraConfigLauncher.ps1")
+waitPid = CLng(WScript.Arguments(0))
+expectedVersion = CStr(WScript.Arguments(1))
+command = Chr(34) & powerShellPath & Chr(34) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & launcherPath & Chr(34) & " -CompleteUpdate -WaitForPid " & CStr(waitPid) & " -ExpectedVersion " & Chr(34) & expectedVersion & Chr(34)
+shell.Run command, 0, False
+'@
+    Set-Content -LiteralPath $RestartWrapperPath -Value $restartWrapper -Encoding Unicode
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $task = Get-ScheduledTask -TaskName $ScheduledTaskName -ErrorAction SilentlyContinue
     if ($null -ne $task -and [string]$task.Principal.UserId -ieq $identity) {
@@ -535,6 +554,107 @@ function Get-LauncherDiagnostics($Executables) {
   }
 }
 
+function Get-TrustedUpdateRuntime([string]$LauncherPath) {
+  if (-not (Test-Path -LiteralPath $RuntimeStatePath -PathType Leaf)) { return $null }
+  try {
+    $state = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+    if ([IO.Path]::GetFullPath([string]$state.scriptPath) -ine [IO.Path]::GetFullPath($LauncherPath)) { return $null }
+    $process = Get-Process -Id ([int]$state.pid) -ErrorAction Stop
+    if ($process.ProcessName -notin @("powershell", "pwsh")) { return $null }
+    if ($process.StartTime.ToUniversalTime().Ticks -ne [Int64]$state.processStartUtcTicks) { return $null }
+    return [pscustomobject]@{ Process = $process; State = $state }
+  } catch {
+    return $null
+  }
+}
+
+function Start-HiddenLauncher {
+  if (-not (Test-Path -LiteralPath $HiddenWrapperPath -PathType Leaf)) {
+    throw "Hidden Launcher wrapper is missing."
+  }
+  Remove-Item -LiteralPath $StopRequestPath -Force -ErrorAction SilentlyContinue
+  $wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+  Start-Process -FilePath $wscriptPath -ArgumentList @("//B", "//Nologo", "`"$HiddenWrapperPath`"") -WindowStyle Hidden
+}
+
+function Wait-LauncherUpdateHealthy([string]$LauncherPath, [string]$Version, [DateTime]$NotBefore, [int]$TimeoutSeconds = 45) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    $runtime = Get-TrustedUpdateRuntime $LauncherPath
+    if ($null -ne $runtime) {
+      try {
+        $connectedAt = [DateTime]::Parse([string]$runtime.State.connectedAt).ToUniversalTime()
+        if ([string]$runtime.State.helperVersion -eq $Version -and $connectedAt -ge $NotBefore.AddSeconds(-2)) {
+          return $true
+        }
+      } catch { }
+    }
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+  return $false
+}
+
+function Complete-LauncherUpdate {
+  $expectedLauncherPath = [IO.Path]::GetFullPath((Join-Path $AppDirectory "EvoraConfigLauncher.ps1"))
+  if ([IO.Path]::GetFullPath($PSCommandPath) -ine $expectedLauncherPath) {
+    throw "Update completion must run from the installed Launcher."
+  }
+  if ($ExpectedVersion -notmatch '^\d+(?:\.\d+){3}$' -or $ExpectedVersion -ne $HelperVersion) {
+    throw "Update completion received an invalid version."
+  }
+  $backupPath = "$expectedLauncherPath.bak"
+  $failedPath = "$expectedLauncherPath.failed"
+  $startedAt = (Get-Date).ToUniversalTime()
+  try {
+    if ($WaitForPid -gt 0) {
+      $deadline = (Get-Date).AddSeconds(45)
+      do {
+        $running = Get-Process -Id $WaitForPid -ErrorAction SilentlyContinue
+        if ($null -eq $running) { break }
+        Start-Sleep -Milliseconds 200
+      } while ((Get-Date) -lt $deadline)
+      if ($null -ne (Get-Process -Id $WaitForPid -ErrorAction SilentlyContinue)) {
+        throw "Previous Launcher process did not stop in time."
+      }
+    }
+    Start-HiddenLauncher
+    if (-not (Wait-LauncherUpdateHealthy $expectedLauncherPath $ExpectedVersion $startedAt)) {
+      throw "Replacement Launcher did not confirm an authenticated heartbeat."
+    }
+    Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $failedPath -Force -ErrorAction SilentlyContinue
+    Write-SafeLog "Automatic update health check passed; rollback backup was removed."
+    return $true
+  } catch {
+    $runtime = Get-TrustedUpdateRuntime $expectedLauncherPath
+    if ($null -ne $runtime) {
+      Stop-Process -Id $runtime.Process.Id -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 500
+    }
+    if (-not (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+      Write-SafeLog "Automatic update failed and no rollback backup was available."
+      return $false
+    }
+    Remove-Item -LiteralPath $failedPath -Force -ErrorAction SilentlyContinue
+    [IO.File]::Replace($backupPath, $expectedLauncherPath, $failedPath, $true)
+    Remove-Item -LiteralPath $failedPath -Force -ErrorAction SilentlyContinue
+    $restoredText = Get-Content -LiteralPath $expectedLauncherPath -Raw
+    $restoredVersionMatch = [Regex]::Match($restoredText, '(?m)^\$HelperVersion\s*=\s*"([0-9]+(?:\.[0-9]+){3})"\s*$')
+    if (-not $restoredVersionMatch.Success) {
+      Write-SafeLog "Automatic update rolled back, but the restored version marker was invalid."
+      return $false
+    }
+    $rollbackStartedAt = (Get-Date).ToUniversalTime()
+    Start-HiddenLauncher
+    if (-not (Wait-LauncherUpdateHealthy $expectedLauncherPath $restoredVersionMatch.Groups[1].Value $rollbackStartedAt)) {
+      Write-SafeLog "Automatic update rolled back, but the previous Launcher did not reconnect."
+      return $false
+    }
+    Write-SafeLog "Automatic update failed health verification; the previous working Launcher was restored and reconnected."
+    return $false
+  }
+}
+
 function Install-LauncherUpdate($Update, [string]$BaseUrl) {
   if ($null -eq $Update -or -not $Update.version -or -not $Update.url -or -not $Update.sha256) { return $false }
   if ([string]$Update.version -eq $HelperVersion) { return $false }
@@ -551,22 +671,26 @@ function Install-LauncherUpdate($Update, [string]$BaseUrl) {
     $expectedVersionLine = '$HelperVersion = "' + [string]$Update.version + '"'
     if (-not (Select-String -LiteralPath $pendingPath -SimpleMatch $expectedVersionLine -Quiet)) { throw "version marker missing" }
     if ([IO.Path]::GetExtension($PSCommandPath) -ne ".ps1") { throw "unsupported launch path" }
-    Set-LauncherPhase "automatic-update-install"
-    Copy-Item -LiteralPath $PSCommandPath -Destination "$PSCommandPath.bak" -Force
-    Copy-Item -LiteralPath $pendingPath -Destination $PSCommandPath -Force
-    Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
-    Write-SafeLog "Launcher update installed after exact SHA-256 verification."
-    if (Test-Path -LiteralPath $RestartScriptPath) {
-      Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$RestartScriptPath`"", "-WaitForPid", "$PID", "-LauncherPath", "`"$PSCommandPath`"") -WindowStyle Hidden
-    } else {
-      Write-SafeLog "Delayed restart helper is missing; the watchdog will restore the Launcher."
+    if (-not (Test-Path -LiteralPath $RestartWrapperPath -PathType Leaf)) {
+      throw "hidden restart helper missing"
     }
+    Set-LauncherPhase "automatic-update-install"
+    $backupPath = "$PSCommandPath.bak"
+    Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    [IO.File]::Replace($pendingPath, $PSCommandPath, $backupPath, $true)
+    Write-SafeLog "Launcher update installed after exact SHA-256 verification."
+    $wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+    Start-Process -FilePath $wscriptPath -ArgumentList @("//B", "//Nologo", "`"$RestartWrapperPath`"", "$PID", "`"$([string]$Update.version)`"") -WindowStyle Hidden
     return $true
   } catch {
     $script:AutomaticUpdateState = "warning"
     $script:AutomaticUpdateMessage = "Automatic update failed safely; the existing launcher remains available."
     Write-SafeLog "Automatic update failed safely ($(Get-SafeExceptionFingerprint $_))."
     Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath "$PSCommandPath.bak" -PathType Leaf) {
+      Copy-Item -LiteralPath "$PSCommandPath.bak" -Destination $PSCommandPath -Force
+      Remove-Item -LiteralPath "$PSCommandPath.bak" -Force -ErrorAction SilentlyContinue
+    }
     return $false
   }
 }
@@ -967,6 +1091,11 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
     }
   } while ((Get-Date) -lt $deadline)
   throw (New-LauncherFailure "CONNECTION_DIALOG_TIMEOUT" "The connection dialog stayed open; connection was not confirmed.")
+}
+
+if ($CompleteUpdate) {
+  if (Complete-LauncherUpdate) { exit 0 }
+  exit 2
 }
 
 if ($PairingCode) {

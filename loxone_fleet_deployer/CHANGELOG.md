@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.19.2
+
+- Opravuje runtime značku Hubu v produkčním Docker obrazu, aby health, přihlášené Menu i rozhraní skutečně hlásily vydanou verzi 3.0.19 místo 3.0.18.
+- Zachovává stejný aplikační build, databázi a vratný zdroj; helper mění pouze ověřený zdroj lokálního add-onu a po nasazení vyžaduje nový rebuild.
+
 ## 3.0.19.1
 
 - Nasazuje Evora Smart Hub 3.0.19 s obnovenou veřejnou Home Assistant proxy pro Hub i Evora Smart Menu a s pořadím LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení.

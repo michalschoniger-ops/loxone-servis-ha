@@ -24,7 +24,7 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { cameraLiveContentType, CameraIntegrationError, deleteCameraIntegration, getCameraLiveStream, getCameraOverview, getCameraSnapshot, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
+import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getCameraOverview, getPreferredCameraLiveStream, getCameraSnapshot, optimizeCameraThirdMjpegStream, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -204,16 +204,41 @@ function sendIntranetError(reply, error) {
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
 }).strict();
-function sendCameraLiveStream(reply, db, channelId, quality) {
+const cameraHttpEventSchema = z.enum([
+    "region_entrance",
+    "region_exit",
+    "loitering",
+    "advanced_motion",
+    "line_crossing_1",
+    "people_counting",
+    "human_detection",
+    "tamper_detection",
+    "line_crossing_2",
+    "line_crossing_3",
+    "line_crossing_4",
+    "object_left_removed",
+]);
+const cameraHttpNotificationTargetSchema = z.object({
+    enabled: z.boolean(),
+    triggerInterval: z.number().int().min(0).max(900),
+    method: z.enum(["GET", "POST"]),
+    url: z.string().max(1_024),
+    username: z.string().max(128),
+    password: z.string().max(256).optional(),
+    clearPassword: z.boolean().optional(),
+}).strict();
+async function sendCameraLiveStream(reply, db, channelId, quality) {
     try {
-        const stream = getCameraLiveStream(db, channelId, quality);
+        const result = await getPreferredCameraLiveStream(db, channelId, quality);
+        const stream = result.stream;
         reply.raw.once("close", () => stream.destroy());
         return reply
             .header("Cache-Control", "private, no-store, no-transform, max-age=0")
             .header("Pragma", "no-cache")
             .header("X-Accel-Buffering", "no")
             .header("X-Content-Type-Options", "nosniff")
-            .type(cameraLiveContentType())
+            .header("X-Evora-Stream-Source", result.source)
+            .type(result.contentType)
             .send(stream);
     }
     catch (error) {
@@ -1353,6 +1378,100 @@ export async function registerApi(app, db, jobs) {
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
         return sendCameraLiveStream(reply, db, channelId, quality);
+    });
+    app.get("/api/cameras/:channelId/capabilities", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        try {
+            return { item: await getCameraChannelCapabilities(db, channelId) };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 404
+                    : error.code === "CAMERA_AUTH_FAILED" ? 401
+                        : error.code === "CAMERA_CAPABILITY_UNSUPPORTED" ? 409
+                            : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
+    });
+    app.post("/api/cameras/:channelId/third-stream/optimize", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        try {
+            const capabilities = await optimizeCameraThirdMjpegStream(db, channelId);
+            audit(db, "cameras.third_stream_optimized", user.id, null, {
+                channelId,
+                width: capabilities.thirdStream.current?.width,
+                height: capabilities.thirdStream.current?.height,
+                frameRate: capabilities.thirdStream.current?.frameRate,
+            });
+            return { item: capabilities, overview: getCameraOverview(db) };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 404
+                    : error.code === "CAMERA_AUTH_FAILED" ? 401
+                        : error.code === "CAMERA_CAPABILITY_UNSUPPORTED" ? 409
+                            : error.code === "CAMERA_READBACK_FAILED" ? 502
+                                : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
+    });
+    app.get("/api/cameras/:channelId/notifications/:event", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const params = request.params;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(params.channelId);
+        const event = cameraHttpEventSchema.parse(params.event);
+        try {
+            return { item: await getCameraHttpNotifications(db, channelId, event) };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 404
+                    : error.code === "CAMERA_AUTH_FAILED" ? 401
+                        : error.code === "CAMERA_CAPABILITY_UNSUPPORTED" ? 409
+                            : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
+    });
+    app.put("/api/cameras/:channelId/notifications/:event", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const params = request.params;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(params.channelId);
+        const event = cameraHttpEventSchema.parse(params.event);
+        const input = z.object({ targets: z.array(cameraHttpNotificationTargetSchema).length(3) }).strict().parse(request.body);
+        try {
+            const item = await saveCameraHttpNotifications(db, channelId, event, input.targets);
+            audit(db, "cameras.http_notifications_saved", user.id, null, {
+                channelId,
+                event,
+                eventLabel: CAMERA_HTTP_EVENTS[event].label,
+                enabledTargets: item.targets.filter((target) => target.enabled).length,
+            });
+            return { item };
+        }
+        catch (error) {
+            if (error instanceof CameraIntegrationError) {
+                const status = error.code === "CAMERA_CONFIG_INVALID" ? 400
+                    : error.code === "CAMERA_AUTH_FAILED" ? 401
+                        : error.code === "CAMERA_CAPABILITY_UNSUPPORTED" ? 409
+                            : 502;
+                return reply.code(status).send({ error: error.message, code: error.code });
+            }
+            throw error;
+        }
     });
     app.patch("/api/cameras/:channelId", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

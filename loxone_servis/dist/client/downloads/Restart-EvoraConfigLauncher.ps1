@@ -22,4 +22,9 @@ if ($WaitForPid -gt 0) {
 }
 
 Remove-Item -LiteralPath (Join-Path $PSScriptRoot "stop.request") -Force -ErrorAction SilentlyContinue
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$expectedLauncherPath`"")
+$wrapperPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "Run-EvoraConfigLauncher.vbs"))
+if (-not (Test-Path -LiteralPath $wrapperPath -PathType Leaf)) {
+  throw "Hidden Launcher wrapper is missing."
+}
+$wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+Start-Process -FilePath $wscriptPath -ArgumentList @("//B", "//Nologo", "`"$wrapperPath`"") -WindowStyle Hidden

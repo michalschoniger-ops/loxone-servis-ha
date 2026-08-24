@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.16.1
+
+- Nasazuje Evora Smart Hub 3.0.16 s online i offline kanály, originální značkou Milesight a bezpečným přístupem ke schopnostem kamer přes NVR Channel Access.
+- Třetí MJPEG stream se zapíná pouze podle parametrů potvrzených konkrétní kamerou a po zápisu se znovu načte; stejné pravidlo read-back platí pro tři HTTP cíle VCA událostí. Součástí jsou Evora Smart Menu 3.0.10 a Windows Config Launcher 3.0.0.4; helper zachovává databázi, čtecí Excel/Graph nastavení, vlastní názvy kamer, DPAPI párování a šifrovaná připojení i vratnou kopii zdroje 3.0.15.
+
 ## 3.0.15.1
 
 - Nasazuje Evora Smart Hub 3.0.15 s pětisekundovým prověřením druhého streamu, transparentním fallbackem po úvodním i pozdějším výpadku, bezpečným údajem o skutečném zdroji rámce a úklidem odpojených odběratelů před zaplněním limitu.

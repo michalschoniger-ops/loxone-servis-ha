@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.16
+
+- Sekce **Milesight** zachovává online i offline kanály NVR, používá oficiální značku a zobrazuje skutečný stav přístupu ke každé kameře. Síťovým cílem zůstává výhradně NVR; kamerové CGI se volá přes ověřený Channel Access port daného kanálu.
+- Hub nejdřív načte schopnosti konkrétní kamery. Třetí stream zapne jako MJPEG pouze tehdy, když kamera sama potvrdí podporované rozlišení a snímkovou frekvenci, zvolí nejvyšší potvrzenou kombinaci a po zápisu provede úplný read-back. Ověřený třetí MJPEG stream předává souvisle; při jeho absenci zachová dosavadní sdílený NVR stream.
+- U podporovaných VCA událostí lze načíst a upravit tři HTTP cíle, metodu a interval. Uložené heslo se nikdy neposílá klientovi; prázdné pole jej zachová a výslovné smazání je samostatná volba. Uložení se potvrdí novým čtením z kamery.
+- Evora Smart Menu 3.0.10 přejmenovává kategorii na **Milesight**, používá oficiální značku a nadále ukazuje vlastní verzi odděleně od živé verze Hubu.
+- Windows Config Launcher 3.0.0.4 zachovává při automatickém stažení Home Assistant ingress prefix a zpožděný restart spouští přes bezokenní VBS obálku.
+- Microsoft Graph synchronizace Excelu zůstává pouze pro čtení; přesun nebo drobná změna řádku aktualizuje stejný Hub úkol a zápis do Excelu je vypnutý.
+
 ## 3.0.15
 
 - Každý kamerový náhled nejprve po dobu nejvýše pěti sekund prověří skutečný druhý stream a potom bez přerušení klienta použije zmenšený hlavní stream. Každý multipart rámec nese bezpečný údaj `substream` nebo `main-fallback`, takže živá kontrola může prokázat skutečný zdroj po jednotlivých kamerách bez zveřejnění RTSP adresy či přístupu.

@@ -11,7 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.3"
+$HelperVersion = "3.0.0.4"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -350,6 +350,26 @@ function Normalize-HubUrl([string]$Value) {
   return $normalized
 }
 
+function Resolve-HubUpdateUri([string]$BaseUrl, [string]$Path) {
+  $updatePath = $Path.Trim()
+  if ($updatePath -ne "/downloads/EvoraConfigLauncher.ps1") {
+    throw "unsupported launcher update path"
+  }
+  # BaseUrl can be a Home Assistant ingress URL. Uri(base, "/downloads/...")
+  # would silently discard that ingress prefix and download from the HA root.
+  $baseUri = [Uri](Normalize-HubUrl $BaseUrl)
+  $targetUri = [Uri]("$($baseUri.AbsoluteUri.TrimEnd('/'))$updatePath")
+  $sameOrigin = $targetUri.IsAbsoluteUri -and
+    $targetUri.Scheme -eq $baseUri.Scheme -and
+    $targetUri.Host -ieq $baseUri.Host -and
+    $targetUri.Port -eq $baseUri.Port -and
+    -not $targetUri.UserInfo -and
+    -not $targetUri.Query -and
+    -not $targetUri.Fragment
+  if (-not $sameOrigin) { throw "launcher update must stay on the paired Hub origin" }
+  return $targetUri
+}
+
 function Test-HubPreflight([string]$BaseUrl) {
   $uri = [Uri]$BaseUrl
   $parsedAddress = $null
@@ -519,7 +539,7 @@ function Install-LauncherUpdate($Update, [string]$BaseUrl) {
   if ($null -eq $Update -or -not $Update.version -or -not $Update.url -or -not $Update.sha256) { return $false }
   if ([string]$Update.version -eq $HelperVersion) { return $false }
   Set-LauncherPhase "automatic-update-download"
-  $targetUri = [Uri]::new([Uri]$BaseUrl, [string]$Update.url)
+  $targetUri = Resolve-HubUpdateUri $BaseUrl ([string]$Update.url)
   $pendingPath = Join-Path $AppDirectory "EvoraConfigLauncher.pending.ps1"
   try {
     Invoke-WebRequest -Uri $targetUri.AbsoluteUri -OutFile $pendingPath -UseBasicParsing -TimeoutSec 45

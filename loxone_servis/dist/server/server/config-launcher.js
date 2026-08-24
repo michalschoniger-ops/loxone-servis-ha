@@ -6,7 +6,7 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
 export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
-export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.3";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.4";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);

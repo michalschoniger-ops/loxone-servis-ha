@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.18.1
+
+- Nasazuje Evora Smart Hub 3.0.18 s řízeným rozestupem startu deseti Milesight náhledů, aby se NVR nepřetížilo současnou inicializací všech RTSP relací.
+- Zachovává filtr vadných zahřívacích rámců, prioritu hlavního streamu a vratný zdroj aktuálního Hubu 3.0.17; databázi ani trvalý adresář `/data` nemění.
+
 ## 3.0.17.1
 
 - Nasazuje Evora Smart Hub 3.0.17 s filtrem vadných počátečních kamerových rámců, uvolněním náhledových RTSP relací při otevření detailu a konečným timeoutem místo nekonečného načítání.

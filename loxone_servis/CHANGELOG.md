@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.18
+
+- Přehled Milesight spouští náhledové relace jednotlivých kamer s řízeným rozestupem 700 ms. NVR tak po otevření stránky nedostane deset současných RTSP/FFmpeg inicializací; čekající dlaždice ukazuje pravdivý stav „Čeká na uvolnění NVR“ a vlastní watchdog začne až po skutečném startu přenosu.
+- Otevření detailu stále okamžitě pozastaví všechny náhledy a dá hlavnímu 1280×720 streamu prioritu. Po zavření detailu se náhledy znovu obnoví stejným řízeným pořadím.
+
 ## 3.0.17
 
 - Živý read-back všech deseti kanálů odhalil, že některé NVR substreamy po připojení nejprve vracejí šedé nebo částečně rozpadlé dekódované snímky. Hub nyní zahazuje poškozené a nízko-informační zahřívací rámce, čeká na dva po sobě jdoucí použitelné JPEGy a FFmpeg nastavuje na zahazování poškozených paketů.

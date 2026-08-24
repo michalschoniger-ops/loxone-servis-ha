@@ -1,13 +1,4 @@
-FROM node:22-bookworm-slim AS build
-
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json tsconfig.server.json vite.config.ts ./
-COPY src ./src
-RUN npm run build
-
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim
 
 ARG BUILD_VERSION=3.0.21
 ARG BUILD_ARCH
@@ -43,7 +34,7 @@ RUN set -eu; \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/dist ./dist
+COPY dist ./dist
 COPY THIRD_PARTY_NOTICES.md ./
 COPY docker-entrypoint.sh /usr/local/bin/loxone-servis
 RUN chmod 0755 /usr/local/bin/loxone-servis && mkdir -p /data && chmod 0700 /data

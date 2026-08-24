@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.21.2
+
+- Opravuje katalogový payload 3.0.21 na runtime-only Dockerfile, který sestavuje obraz z již otestovaného `dist` a nevyžaduje nezveřejněné TypeScript zdroje.
+- Aplikační verze zůstává 3.0.21; helper zachovává původní rollback 3.0.20 a po neúspěšném buildu mění pouze připravený lokální zdroj.
+
 ## 3.0.21.1
 
 - Nasazuje Evora Smart Hub 3.0.21 s pravdivou detekcí dekódovaných WebRTC/HLS snímků, serverovým ověřením postupujících HLS segmentů, automatickým H.264 fallbackem a bez aktivního MJPEG přenosu.

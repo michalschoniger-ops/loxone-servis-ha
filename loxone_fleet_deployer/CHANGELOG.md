@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.21.3
+
+- Aktualizuje klientský bundle 3.0.21 tak, aby moderní prohlížeč označil kameru jako živou až po dvou skutečně dekódovaných snímcích z `requestVideoFrameCallback`; samotný posun časové osy už černý nebo zamrzlý obraz nepotvrdí.
+- Zachovává runtime-only opravu helperu 3.0.21.2, databázi i původní vratný zdroj 3.0.20.
+
 ## 3.0.21.2
 
 - Opravuje katalogový payload 3.0.21 na runtime-only Dockerfile, který sestavuje obraz z již otestovaného `dist` a nevyžaduje nezveřejněné TypeScript zdroje.

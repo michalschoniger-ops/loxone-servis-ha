@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.19.3
+
+- Aktualizuje veřejný instalační balíček Evora Smart Menu 3.0.10 o bezpečné čekání a jeden opakovaný `launchctl bootstrap`, pokud macOS po `bootout` krátce vrátí I/O chybu.
+- Aplikační runtime Hubu zůstává 3.0.19; helper zachovává databázi i původní rollback a aktualizuje pouze ověřený lokální zdroj.
+
 ## 3.0.19.2
 
 - Opravuje runtime značku Hubu v produkčním Docker obrazu, aby health, přihlášené Menu i rozhraní skutečně hlásily vydanou verzi 3.0.19 místo 3.0.18.

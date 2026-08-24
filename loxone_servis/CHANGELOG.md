@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.17
+
+- Živý read-back všech deseti kanálů odhalil, že některé NVR substreamy po připojení nejprve vracejí šedé nebo částečně rozpadlé dekódované snímky. Hub nyní zahazuje poškozené a nízko-informační zahřívací rámce, čeká na dva po sobě jdoucí použitelné JPEGy a FFmpeg nastavuje na zahazování poškozených paketů.
+- Při otevření detailu se ukončí všech deset náhledových relací pod modalem, aby hlavní stream nesoutěžil o RTSP relace a výkon NVR. Po zavření detailu se mřížka znovu připojí.
+- Náhled i detail mají konečný watchdog a nejvýše dva automatické pokusy. Pokud obraz nedorazí, spinner skončí pravdivým stavem „Obraz momentálně není dostupný“; označení „živě“ se zobrazí až po skutečně načteném rámci.
+- Kanál bez potvrzeného NVR Channel Access už nespouští nekonečné zjišťování schopností kamery. Hub ponechá funkční živý obraz a přesně vysvětlí, proč zatím nelze otevřít třetí stream ani VCA nastavení.
+
 ## 3.0.16
 
 - Sekce **Milesight** zachovává online i offline kanály NVR, používá oficiální značku a zobrazuje skutečný stav přístupu ke každé kameře. Síťovým cílem zůstává výhradně NVR; kamerové CGI se volá přes ověřený Channel Access port daného kanálu.

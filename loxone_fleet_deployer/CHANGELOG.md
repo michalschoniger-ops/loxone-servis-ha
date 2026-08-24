@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.17.1
+
+- Nasazuje Evora Smart Hub 3.0.17 s filtrem vadných počátečních kamerových rámců, uvolněním náhledových RTSP relací při otevření detailu a konečným timeoutem místo nekonečného načítání.
+- Před výměnou zachová vratný zdroj aktuálního Hubu 3.0.16; databázi a trvalý adresář `/data` nemění.
+
 ## 3.0.16.2
 
 - Opravuje instalační payload 3.0.16 na runtime-only Dockerfile, který používá již ověřený produkční `dist` a nevyžaduje zdrojové `src` uvnitř veřejného HA katalogu.

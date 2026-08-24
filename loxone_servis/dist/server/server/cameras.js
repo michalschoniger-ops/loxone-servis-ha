@@ -12,6 +12,14 @@ const LIVE_PREVIEW_PROBE_TIMEOUT_MS = 5_000;
 const LIVE_SUBSCRIBER_BACKPRESSURE_TIMEOUT_MS = 5_000;
 const MAX_LIVE_PRODUCERS = 12;
 const LIVE_BOUNDARY = "evora-camera-frame";
+const LIVE_WARMUP_MIN_FRAMES = {
+    preview: 6,
+    main: 8,
+};
+const LIVE_MIN_JPEG_BYTES = {
+    preview: 4_096,
+    main: 8_192,
+};
 export class CameraIntegrationError extends Error {
     code;
     constructor(message, code) {
@@ -894,7 +902,7 @@ export function cameraLiveFfmpegArguments(quality) {
     const profile = CAMERA_LIVE_STREAM_PROFILES[quality];
     return [
         "-hide_banner", "-loglevel", "quiet", "-threads", String(profile.threads),
-        "-fflags", "nobuffer", "-analyzeduration", "500000", "-probesize", "1048576",
+        "-fflags", "+discardcorrupt", "-analyzeduration", "1000000", "-probesize", "2097152",
         "-f", "concat", "-safe", "0",
         "-protocol_whitelist", "file,pipe,tcp,udp,rtp,rtsp",
         "-i", "pipe:0",
@@ -1095,6 +1103,13 @@ function publishCameraLiveFrame(producer, jpeg) {
         }
     }
 }
+export function cameraLiveFrameIsUsable(quality, jpegLength, warmupFrames, warmupValidFrames) {
+    if (jpegLength < LIVE_MIN_JPEG_BYTES[quality])
+        return false;
+    if (warmupFrames < LIVE_WARMUP_MIN_FRAMES[quality])
+        return false;
+    return warmupValidFrames >= 2;
+}
 export function extractCameraJpegFrames(input) {
     const frames = [];
     let remainder = input;
@@ -1124,6 +1139,14 @@ function consumeCameraLiveBytes(producer, chunk) {
         const decoder = producer.decoder;
         if (!decoder)
             return;
+        producer.warmupFrames += 1;
+        if (jpeg.length < LIVE_MIN_JPEG_BYTES[producer.quality]) {
+            producer.warmupValidFrames = 0;
+            continue;
+        }
+        producer.warmupValidFrames += 1;
+        if (!producer.receivedFrame && !cameraLiveFrameIsUsable(producer.quality, jpeg.length, producer.warmupFrames, producer.warmupValidFrames))
+            continue;
         const firstFrame = !producer.receivedFrame;
         producer.receivedFrame = true;
         if (firstFrame && producer.quality === "preview") {
@@ -1152,6 +1175,8 @@ function startCameraLiveDecoder(producer) {
     });
     producer.decoder = decoder;
     producer.buffer = Buffer.alloc(0);
+    producer.warmupFrames = 0;
+    producer.warmupValidFrames = 0;
     producer.receivedFrame = false;
     armCameraLiveFrameTimeout(producer, decoder);
     decoder.once("error", () => handleCameraLiveDecoderFailure(producer, decoder));
@@ -1177,6 +1202,8 @@ function startCameraLiveProducer(access, channelId, quality) {
         quality,
         streamCandidates: cameraLiveStreamCandidates(channelId, quality),
         streamCandidateIndex: cameraLiveInitialCandidateIndex(quality, cameraPreviewStreamPreferences.get(channelId)),
+        warmupFrames: 0,
+        warmupValidFrames: 0,
         receivedFrame: false,
         stopped: false,
     };

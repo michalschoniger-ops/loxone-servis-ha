@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.13.1
+
+- Nasazuje Evora Smart Hub 3.0.13 se souvislým zabezpečeným přenosem druhého streamu v přehledu a Menu 3.0.7 a hlavního streamu v detailu kamery.
+- Sdílí jednu FFmpeg/RTSP relaci stejné kamery a kvality mezi klienty, při odchodu posledního diváka ji ukončí a zachovává databázi, vlastní názvy kamer, čtecí Excel/Graph nastavení, šifrovaná připojení i vratnou kopii zdroje 3.0.12.
+
 ## 3.0.12.1
 
 - Nasazuje Evora Smart Hub 3.0.12 s opravou HTTP 400 při načtení seznamu ze staršího Milesight NVR, zabezpečenými RTSP náhledy a přejmenováním kamer, které přežije obnovení seznamu.

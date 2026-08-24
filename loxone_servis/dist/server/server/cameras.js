@@ -1,11 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 const CAMERA_INTEGRATION_ID = "primary";
 const SNAPSHOT_CACHE_MS = 4_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
+const LIVE_FRAME_TIMEOUT_MS = 15_000;
+const MAX_LIVE_PRODUCERS = 12;
+const LIVE_BOUNDARY = "evora-camera-frame";
 export class CameraIntegrationError extends Error {
     code;
     constructor(message, code) {
@@ -371,6 +375,7 @@ export async function refreshCameraIntegration(db) {
         const channels = preserveCustomCameraNames(rowToOverview(row).channels, discovery.channels);
         db.prepare(`UPDATE camera_integrations SET vendor=?,model=?,firmware=?,connection_state='online',channels_json=?,
        last_checked_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE id=?`).run(discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(channels), now, now, now, row.id);
+        clearSnapshotCache();
     }
     catch (error) {
         const state = error instanceof CameraIntegrationError && error.code === "CAMERA_AUTH_FAILED"
@@ -418,6 +423,30 @@ export function cameraSnapshotFfmpegArguments() {
         "-i", "pipe:0",
         "-map", "0:v:0",
         "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "5",
+        "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+    ];
+}
+const CAMERA_LIVE_STREAM_PROFILES = {
+    preview: { fps: 8, maxWidth: 640, jpegQuality: 7 },
+    main: { fps: 15, maxWidth: 1_600, jpegQuality: 5 },
+};
+export function cameraLiveStreamPath(channelId, quality) {
+    if (!Number.isInteger(channelId) || channelId < 0 || channelId > 99) {
+        throw new CameraIntegrationError("Kamera nebyla nalezena.", "CAMERA_CONFIG_INVALID");
+    }
+    return `ch_${quality === "preview" ? "4" : "1"}${String(channelId).padStart(2, "0")}`;
+}
+export function cameraLiveFfmpegArguments(quality) {
+    const profile = CAMERA_LIVE_STREAM_PROFILES[quality];
+    return [
+        "-hide_banner", "-loglevel", "quiet", "-threads", "1",
+        "-fflags", "nobuffer", "-analyzeduration", "500000", "-probesize", "1048576",
+        "-f", "concat", "-safe", "0",
+        "-protocol_whitelist", "file,pipe,tcp,udp,rtp,rtsp",
+        "-i", "pipe:0",
+        "-map", "0:v:0", "-an", "-sn", "-dn",
+        "-vf", `fps=${profile.fps},scale='min(${profile.maxWidth},iw)':-2`,
+        "-q:v", String(profile.jpegQuality),
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
     ];
 }
@@ -507,6 +536,7 @@ function runSnapshotQueued(operation) {
 }
 function clearSnapshotCache() {
     snapshotCache.clear();
+    stopAllCameraLiveProducers();
 }
 export async function getCameraSnapshot(db, channelId) {
     const row = cameraRow(db);
@@ -530,4 +560,132 @@ export async function getCameraSnapshot(db, channelId) {
         .finally(() => snapshotInFlight.delete(channelId));
     snapshotInFlight.set(channelId, pending);
     return pending;
+}
+const cameraLiveProducers = new Map();
+function stopCameraLiveProducer(producer, error) {
+    if (producer.stopped)
+        return;
+    producer.stopped = true;
+    clearTimeout(producer.frameTimer);
+    cameraLiveProducers.delete(producer.key);
+    if (!producer.decoder.killed)
+        producer.decoder.kill("SIGKILL");
+    for (const subscriber of producer.subscribers) {
+        if (error)
+            subscriber.stream.destroy(error);
+        else
+            subscriber.stream.end();
+    }
+    producer.subscribers.clear();
+}
+function stopAllCameraLiveProducers() {
+    for (const producer of cameraLiveProducers.values())
+        stopCameraLiveProducer(producer);
+}
+function armCameraLiveFrameTimeout(producer) {
+    clearTimeout(producer.frameTimer);
+    producer.frameTimer = setTimeout(() => {
+        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý obraz kamery se zastavil.", "CAMERA_STREAM_FAILED"));
+    }, LIVE_FRAME_TIMEOUT_MS);
+}
+function publishCameraLiveFrame(producer, jpeg) {
+    const header = Buffer.from(`--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`, "ascii");
+    const part = Buffer.concat([header, jpeg, Buffer.from("\r\n", "ascii")]);
+    for (const subscriber of producer.subscribers) {
+        if (subscriber.blocked || subscriber.stream.destroyed)
+            continue;
+        if (!subscriber.stream.write(part)) {
+            subscriber.blocked = true;
+            subscriber.stream.once("drain", () => { subscriber.blocked = false; });
+        }
+    }
+}
+export function extractCameraJpegFrames(input) {
+    const frames = [];
+    let remainder = input;
+    while (remainder.length > 0) {
+        const start = remainder.indexOf(Buffer.from([0xff, 0xd8]));
+        if (start < 0) {
+            return { frames, remainder: remainder.subarray(Math.max(0, remainder.length - 1)) };
+        }
+        if (start > 0)
+            remainder = remainder.subarray(start);
+        const end = remainder.indexOf(Buffer.from([0xff, 0xd9]), 2);
+        if (end < 0)
+            return { frames, remainder };
+        frames.push(remainder.subarray(0, end + 2));
+        remainder = remainder.subarray(end + 2);
+    }
+    return { frames, remainder };
+}
+function consumeCameraLiveBytes(producer, chunk) {
+    const parsed = extractCameraJpegFrames(Buffer.concat([producer.buffer, chunk]));
+    producer.buffer = parsed.remainder;
+    if (producer.buffer.length > MAX_JPEG_BYTES) {
+        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý snímek kamery je příliš velký.", "CAMERA_STREAM_FAILED"));
+        return;
+    }
+    for (const jpeg of parsed.frames) {
+        armCameraLiveFrameTimeout(producer);
+        publishCameraLiveFrame(producer, jpeg);
+    }
+}
+function startCameraLiveProducer(access, channelId, quality) {
+    if (cameraLiveProducers.size >= MAX_LIVE_PRODUCERS) {
+        throw new CameraIntegrationError("Je otevřeno příliš mnoho živých kamer.", "CAMERA_STREAM_LIMIT");
+    }
+    const key = `${channelId}:${quality}`;
+    const streamPath = cameraLiveStreamPath(channelId, quality);
+    const decoder = spawn("ffmpeg", cameraLiveFfmpegArguments(quality), {
+        stdio: ["pipe", "pipe", "ignore"],
+    });
+    const producer = {
+        key,
+        decoder,
+        subscribers: new Set(),
+        buffer: Buffer.alloc(0),
+        frameTimer: setTimeout(() => undefined, LIVE_FRAME_TIMEOUT_MS),
+        stopped: false,
+    };
+    cameraLiveProducers.set(key, producer);
+    armCameraLiveFrameTimeout(producer);
+    decoder.once("error", () => {
+        stopCameraLiveProducer(producer, new CameraIntegrationError("Převod živého obrazu není dostupný.", "CAMERA_STREAM_FAILED"));
+    });
+    decoder.once("exit", () => {
+        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý obraz kamery byl ukončen.", "CAMERA_STREAM_FAILED"));
+    });
+    decoder.stdin?.on("error", () => undefined);
+    // stderr is intentionally disabled because FFmpeg could repeat the
+    // authenticated RTSP input in a diagnostic message.
+    decoder.stdout?.on("data", (chunk) => consumeCameraLiveBytes(producer, chunk));
+    decoder.stdin?.end(cameraSnapshotInputScript(access, streamPath));
+    return producer;
+}
+export function getCameraLiveStream(db, channelId, quality) {
+    const row = cameraRow(db);
+    if (!row)
+        throw new CameraIntegrationError("NVR zatím není nastavené.", "CAMERA_CONFIG_INVALID");
+    const channel = rowToOverview(row).channels.find((item) => item.id === channelId && item.online);
+    if (!channel)
+        throw new CameraIntegrationError("Kamera nebyla nalezena nebo není připojená.", "CAMERA_CONFIG_INVALID");
+    const key = `${channelId}:${quality}`;
+    const producer = cameraLiveProducers.get(key)
+        ?? startCameraLiveProducer(storedCameraAccess(row), channelId, quality);
+    const subscriber = {
+        stream: new PassThrough({ highWaterMark: 512 * 1024 }),
+        blocked: false,
+    };
+    producer.subscribers.add(subscriber);
+    const remove = () => {
+        producer.subscribers.delete(subscriber);
+        if (producer.subscribers.size === 0)
+            stopCameraLiveProducer(producer);
+    };
+    subscriber.stream.once("close", remove);
+    subscriber.stream.once("error", remove);
+    return subscriber.stream;
+}
+export function cameraLiveContentType() {
+    return `multipart/x-mixed-replace; boundary=${LIVE_BOUNDARY}`;
 }

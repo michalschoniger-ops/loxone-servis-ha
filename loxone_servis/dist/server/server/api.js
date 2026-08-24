@@ -24,7 +24,7 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { CameraIntegrationError, deleteCameraIntegration, getCameraOverview, getCameraSnapshot, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
+import { cameraLiveContentType, CameraIntegrationError, deleteCameraIntegration, getCameraLiveStream, getCameraOverview, getCameraSnapshot, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, } from "./cameras.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -200,6 +200,29 @@ function sendIntranetError(reply, error) {
                     : error.code === "not_provided" ? 502
                         : 500;
     return reply.code(status).send({ error: error.message, code: error.code.toUpperCase() });
+}
+const cameraStreamQuerySchema = z.object({
+    quality: z.enum(["preview", "main"]).default("preview"),
+}).strict();
+function sendCameraLiveStream(request, reply, db, channelId, quality) {
+    try {
+        const stream = getCameraLiveStream(db, channelId, quality);
+        reply.raw.once("close", () => stream.destroy());
+        return reply
+            .header("Cache-Control", "private, no-store, no-transform, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Accel-Buffering", "no")
+            .header("X-Content-Type-Options", "nosniff")
+            .type(cameraLiveContentType())
+            .send(stream);
+    }
+    catch (error) {
+        const message = error instanceof CameraIntegrationError ? error.message : "Živý obraz kamery není dostupný.";
+        const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404
+            : error instanceof CameraIntegrationError && error.code === "CAMERA_STREAM_LIMIT" ? 503
+                : 502;
+        return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
+    }
 }
 function recordOperationalResult(db, input) {
     try {
@@ -666,6 +689,14 @@ export async function registerApi(app, db, jobs) {
             const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404 : 502;
             return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
         }
+    });
+    app.get("/api/integrations/worklog/v1/cameras/:channelId/live", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const { quality } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraLiveStream(request, reply, db, channelId, quality);
     });
     app.put("/api/integrations/worklog/v1/cameras/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -1315,6 +1346,13 @@ export async function registerApi(app, db, jobs) {
             const status = error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID" ? 404 : 502;
             return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
         }
+    });
+    app.get("/api/cameras/:channelId/live", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const { quality } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraLiveStream(request, reply, db, channelId, quality);
     });
     app.patch("/api/cameras/:channelId", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

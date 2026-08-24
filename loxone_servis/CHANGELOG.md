@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.13
+
+- Nahrazuje periodické JPEG snapshoty souvislým autorizovaným přenosem. Přehled Hubu i Evora Smart Menu 3.0.7 používají úsporný druhý Milesight stream `ch_4xx`; detail po kliknutí otevírá kvalitnější hlavní stream `ch_1xx`.
+- Pro stejnou kameru a kvalitu Hub sdílí jediný FFmpeg proces mezi klienty, pomalému klientovi zahazuje starší rámce a po odpojení posledního diváka RTSP relaci okamžitě ukončí. Karty mimo viewport a skrytá karta prohlížeče žádný stream nedrží.
+- NVR přístupy i RTSP adresa zůstávají pouze v jednorázovém stdin FFmpegu. Browser i Menu dostávají autorizované `multipart/x-mixed-replace` bez hesla, RTSP URL nebo dlouhodobého tokenu v adrese.
+
 ## 3.0.12
 
 - Opravuje HTTP 400 na starším Milesight NVR. Hub už nespojuje podporovaný `get.camera.ipclist` s nepodporovaným systémovým příkazem; načítá pouze seznam, který používá i webové rozhraní tohoto firmwaru.

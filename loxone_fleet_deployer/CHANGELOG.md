@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.26.3
+
+- Před prvním HTTPS stažením přenáší do minimální Node runtime vrstvy důvěryhodný certifikační svazek z build vrstvy. Řeší živě zjištěný bootstrap certifikátů bez vypnutí TLS kontroly; aplikační verze zůstává 3.0.26.
+
 ## 3.0.26.2
 
 - Přepíná systémové repozitáře obou build vrstev na HTTPS, protože živý Home Assistant builder odmítl spojení na `deb.debian.org` přes port 80. Aplikační payload 3.0.26, vratná výměna i všechna uživatelská data zůstávají zachované.

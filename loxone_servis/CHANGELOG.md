@@ -2,7 +2,7 @@
 
 ## 3.0.26
 
-- Obě kontejnerové build vrstvy načítají systémové balíky přes HTTPS, aby sestavení nebylo závislé na dostupnosti nezabezpečeného portu 80.
+- Obě kontejnerové build vrstvy načítají systémové balíky přes HTTPS; minimální runtime před prvním stažením převezme důvěryhodný certifikační svazek z build vrstvy, takže se nevypíná ověřování TLS ani se nepoužívá port 80.
 - Server i klient drží časový limit až do úplného přečtení odpovědi. Video gateway při neúspěšném startu ukončí vlastní proces, uklidí každý nefunkční kandidát a při vypnutí čeká na skutečný konec potomka; offline kanál už transport vůbec nespouští.
 - Service worker přijme shell jen jako úplný celek, čeká na `skipWaiting`, `clients.claim` i zápis cache. Incidenty, úkoly, kamery a flotila při chybě nezobrazí falešný prázdný či nenastavený stav, ale trvalou chybu s bezpečným opakováním a případně posledními daty.
 - Responzivní navigace skrývá na středním desktopu skutečné textové popisky, tabulka flotily se vejde při 1280 px, Config zůstává dostupný na iPadu a dotykové ovládání má minimálně 44 px. Tmavé hledání má jednotný podklad a kontrast primárních akcí i ikony Intranetu je zvýšený.

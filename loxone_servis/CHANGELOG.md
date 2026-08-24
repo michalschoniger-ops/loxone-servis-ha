@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.14
+
+- Živý test 3.0.13 odhalil, že cílový starší Milesight NVR nenabízí očekávanou cestu druhého streamu `ch_4xx`. Úsporný stream nyní tuto cestu bezpečně zkusí a bez přerušení klienta automaticky přejde na zmenšený hlavní `ch_1xx`; nikde nezveřejní RTSP adresu ani přístup.
+- Detail hlavního streamu používá 1280 px, 10 fps a dva kodérovací workery místo 1600 px/15 fps s jedním workerem. Snižuje tím objem jednotlivých JPEG rámců a zvyšuje skutečnou plynulost na ARM hostiteli.
+- Evora Smart Menu 3.0.8 označuje náhled pravdivě jako úsporný stream bez tvrzení, že každý NVR skutečně poskytl samostatný druhý stream.
+
 ## 3.0.13
 
 - Nahrazuje periodické JPEG snapshoty souvislým autorizovaným přenosem. Přehled Hubu i Evora Smart Menu 3.0.7 používají úsporný druhý Milesight stream `ch_4xx`; detail po kliknutí otevírá kvalitnější hlavní stream `ch_1xx`.

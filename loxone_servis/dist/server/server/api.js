@@ -204,7 +204,7 @@ function sendIntranetError(reply, error) {
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
 }).strict();
-function sendCameraLiveStream(request, reply, db, channelId, quality) {
+function sendCameraLiveStream(reply, db, channelId, quality) {
     try {
         const stream = getCameraLiveStream(db, channelId, quality);
         reply.raw.once("close", () => stream.destroy());
@@ -696,7 +696,7 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraLiveStream(request, reply, db, channelId, quality);
+        return sendCameraLiveStream(reply, db, channelId, quality);
     });
     app.put("/api/integrations/worklog/v1/cameras/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -1352,7 +1352,7 @@ export async function registerApi(app, db, jobs) {
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraLiveStream(request, reply, db, channelId, quality);
+        return sendCameraLiveStream(reply, db, channelId, quality);
     });
     app.patch("/api/cameras/:channelId", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);

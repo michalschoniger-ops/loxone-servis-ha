@@ -427,8 +427,8 @@ export function cameraSnapshotFfmpegArguments() {
     ];
 }
 const CAMERA_LIVE_STREAM_PROFILES = {
-    preview: { fps: 8, maxWidth: 640, jpegQuality: 7 },
-    main: { fps: 15, maxWidth: 1_600, jpegQuality: 5 },
+    preview: { fps: 8, maxWidth: 640, jpegQuality: 8, threads: 1 },
+    main: { fps: 10, maxWidth: 1_280, jpegQuality: 7, threads: 2 },
 };
 export function cameraLiveStreamPath(channelId, quality) {
     if (!Number.isInteger(channelId) || channelId < 0 || channelId > 99) {
@@ -439,7 +439,7 @@ export function cameraLiveStreamPath(channelId, quality) {
 export function cameraLiveFfmpegArguments(quality) {
     const profile = CAMERA_LIVE_STREAM_PROFILES[quality];
     return [
-        "-hide_banner", "-loglevel", "quiet", "-threads", "1",
+        "-hide_banner", "-loglevel", "quiet", "-threads", String(profile.threads),
         "-fflags", "nobuffer", "-analyzeduration", "500000", "-probesize", "1048576",
         "-f", "concat", "-safe", "0",
         "-protocol_whitelist", "file,pipe,tcp,udp,rtp,rtsp",
@@ -449,6 +449,10 @@ export function cameraLiveFfmpegArguments(quality) {
         "-q:v", String(profile.jpegQuality),
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
     ];
+}
+export function cameraLiveStreamCandidates(channelId, quality) {
+    const preferred = cameraLiveStreamPath(channelId, quality);
+    return quality === "preview" ? [preferred, cameraLiveStreamPath(channelId, "main")] : [preferred];
 }
 function encodeRtspCredential(value) {
     return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -562,19 +566,17 @@ export async function getCameraSnapshot(db, channelId) {
     return pending;
 }
 const cameraLiveProducers = new Map();
-function stopCameraLiveProducer(producer, error) {
+function stopCameraLiveProducer(producer) {
     if (producer.stopped)
         return;
     producer.stopped = true;
-    clearTimeout(producer.frameTimer);
+    if (producer.frameTimer)
+        clearTimeout(producer.frameTimer);
     cameraLiveProducers.delete(producer.key);
-    if (!producer.decoder.killed)
+    if (producer.decoder && !producer.decoder.killed)
         producer.decoder.kill("SIGKILL");
     for (const subscriber of producer.subscribers) {
-        if (error)
-            subscriber.stream.destroy(error);
-        else
-            subscriber.stream.end();
+        subscriber.stream.end();
     }
     producer.subscribers.clear();
 }
@@ -582,10 +584,11 @@ function stopAllCameraLiveProducers() {
     for (const producer of cameraLiveProducers.values())
         stopCameraLiveProducer(producer);
 }
-function armCameraLiveFrameTimeout(producer) {
-    clearTimeout(producer.frameTimer);
+function armCameraLiveFrameTimeout(producer, decoder) {
+    if (producer.frameTimer)
+        clearTimeout(producer.frameTimer);
     producer.frameTimer = setTimeout(() => {
-        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý obraz kamery se zastavil.", "CAMERA_STREAM_FAILED"));
+        handleCameraLiveDecoderFailure(producer, decoder);
     }, LIVE_FRAME_TIMEOUT_MS);
 }
 function publishCameraLiveFrame(producer, jpeg) {
@@ -622,44 +625,66 @@ function consumeCameraLiveBytes(producer, chunk) {
     const parsed = extractCameraJpegFrames(Buffer.concat([producer.buffer, chunk]));
     producer.buffer = parsed.remainder;
     if (producer.buffer.length > MAX_JPEG_BYTES) {
-        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý snímek kamery je příliš velký.", "CAMERA_STREAM_FAILED"));
+        stopCameraLiveProducer(producer);
         return;
     }
     for (const jpeg of parsed.frames) {
-        armCameraLiveFrameTimeout(producer);
+        const decoder = producer.decoder;
+        if (!decoder)
+            return;
+        producer.receivedFrame = true;
+        armCameraLiveFrameTimeout(producer, decoder);
         publishCameraLiveFrame(producer, jpeg);
     }
+}
+function handleCameraLiveDecoderFailure(producer, decoder) {
+    if (producer.stopped || producer.decoder !== decoder)
+        return;
+    if (!producer.receivedFrame && producer.streamCandidateIndex + 1 < producer.streamCandidates.length) {
+        producer.streamCandidateIndex += 1;
+        if (!decoder.killed)
+            decoder.kill("SIGKILL");
+        startCameraLiveDecoder(producer);
+        return;
+    }
+    stopCameraLiveProducer(producer);
+}
+function startCameraLiveDecoder(producer) {
+    const streamPath = producer.streamCandidates[producer.streamCandidateIndex];
+    const decoder = spawn("ffmpeg", cameraLiveFfmpegArguments(producer.quality), {
+        stdio: ["pipe", "pipe", "ignore"],
+    });
+    producer.decoder = decoder;
+    producer.buffer = Buffer.alloc(0);
+    producer.receivedFrame = false;
+    armCameraLiveFrameTimeout(producer, decoder);
+    decoder.once("error", () => handleCameraLiveDecoderFailure(producer, decoder));
+    decoder.once("exit", () => handleCameraLiveDecoderFailure(producer, decoder));
+    decoder.stdin?.on("error", () => undefined);
+    // stderr is intentionally disabled because FFmpeg could repeat the
+    // authenticated RTSP input in a diagnostic message.
+    decoder.stdout?.on("data", (chunk) => consumeCameraLiveBytes(producer, chunk));
+    decoder.stdin?.end(cameraSnapshotInputScript(producer.access, streamPath));
 }
 function startCameraLiveProducer(access, channelId, quality) {
     if (cameraLiveProducers.size >= MAX_LIVE_PRODUCERS) {
         throw new CameraIntegrationError("Je otevřeno příliš mnoho živých kamer.", "CAMERA_STREAM_LIMIT");
     }
     const key = `${channelId}:${quality}`;
-    const streamPath = cameraLiveStreamPath(channelId, quality);
-    const decoder = spawn("ffmpeg", cameraLiveFfmpegArguments(quality), {
-        stdio: ["pipe", "pipe", "ignore"],
-    });
     const producer = {
         key,
-        decoder,
+        decoder: null,
         subscribers: new Set(),
         buffer: Buffer.alloc(0),
-        frameTimer: setTimeout(() => undefined, LIVE_FRAME_TIMEOUT_MS),
+        access,
+        quality,
+        streamCandidates: cameraLiveStreamCandidates(channelId, quality),
+        streamCandidateIndex: 0,
+        receivedFrame: false,
         stopped: false,
     };
     cameraLiveProducers.set(key, producer);
-    armCameraLiveFrameTimeout(producer);
-    decoder.once("error", () => {
-        stopCameraLiveProducer(producer, new CameraIntegrationError("Převod živého obrazu není dostupný.", "CAMERA_STREAM_FAILED"));
-    });
-    decoder.once("exit", () => {
-        stopCameraLiveProducer(producer, new CameraIntegrationError("Živý obraz kamery byl ukončen.", "CAMERA_STREAM_FAILED"));
-    });
-    decoder.stdin?.on("error", () => undefined);
-    // stderr is intentionally disabled because FFmpeg could repeat the
-    // authenticated RTSP input in a diagnostic message.
-    decoder.stdout?.on("data", (chunk) => consumeCameraLiveBytes(producer, chunk));
-    decoder.stdin?.end(cameraSnapshotInputScript(access, streamPath));
+    startCameraLiveDecoder(producer);
     return producer;
 }
 export function getCameraLiveStream(db, channelId, quality) {

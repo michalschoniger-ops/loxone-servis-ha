@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.14.1
+
+- Nasazuje Evora Smart Hub 3.0.14 s transparentním přechodem z nedostupného druhého streamu na zmenšený hlavní stream a s ARM profilem hlavního detailu 1280 px / 10 fps / dva kodérovací workery.
+- Součástí je Evora Smart Menu 3.0.8 s pravdivým označením úsporného streamu; helper zachovává databázi, vlastní názvy kamer, čtecí Excel/Graph nastavení, šifrovaná připojení i vratnou kopii zdroje 3.0.13.
+
 ## 3.0.13.1
 
 - Nasazuje Evora Smart Hub 3.0.13 se souvislým zabezpečeným přenosem druhého streamu v přehledu a Menu 3.0.7 a hlavního streamu v detailu kamery.

@@ -16,6 +16,7 @@ const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
 const HLS_PLAYLIST_CACHE_MS = 350;
 const HLS_MAX_CACHED_SEGMENTS = 12;
 const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [250, 500];
+const HLS_INITIAL_READY_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 3_000];
 export async function waitForCameraHlsSegment(loader, delaysMs = HLS_SEGMENT_READY_RETRY_DELAYS_MS, pause = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))) {
     let lastResult;
     let lastError;
@@ -514,7 +515,38 @@ class CameraVideoGateway {
             resources: new CameraHlsResourceCache(),
         };
         this.rememberHlsSession(session);
+        try {
+            await this.warmHlsSession(session);
+        }
+        catch (error) {
+            this.forgetHlsSession(session);
+            throw error;
+        }
         return session.master;
+    }
+    async warmHlsSession(session) {
+        let lastError;
+        for (let attempt = 0; attempt <= HLS_INITIAL_READY_RETRY_DELAYS_MS.length; attempt += 1) {
+            if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, HLS_INITIAL_READY_RETRY_DELAYS_MS[attempt - 1]));
+            }
+            try {
+                const playlist = await session.resources.load("playlist.m3u8", () => this.fetchHlsResource("playlist.m3u8", session.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), session.id);
+                if (!latest) {
+                    throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
+                }
+                await session.resources.load(`${latest.resource}:${latest.sequence}`, () => this.fetchHlsResource(latest.resource, session.id, latest.sequence), { segment: true });
+                session.lastResourceAt = Date.now();
+                return;
+            }
+            catch (error) {
+                lastError = error;
+            }
+        }
+        if (lastError instanceof CameraIntegrationError)
+            throw lastError;
+        throw new CameraIntegrationError("HLS video se nepodařilo včas předehřát.", "CAMERA_STREAM_FAILED");
     }
     async hlsMaster(db, channelId, quality, codecs = "h264,h265") {
         const sources = cameraGatewaySources(db, channelId, quality);

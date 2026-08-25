@@ -9,6 +9,7 @@
 - Windows Config Launcher 3.0.0.8 při použití již běžící přesné verze znovu získá `MainWindowHandle` po Qt navigaci, prioritně fyzicky aktivuje Domů a rozpozná přesné české varianty `Ručně připojit` i `Manuálně připojit`. Tok nového okna a bezpečné ponechání Configu při chybě zůstávají zachované.
 - Ruční synchronizace Excelu odesílá platné prázdné JSON tělo místo HTTP 415. Hodinový import se spustí jen s platnou Microsoft Graph relací, bez nepodporovaného anonymního SharePoint fallbacku; při chybě zůstane viditelná poslední lokální sada úkolů. Párování přesunutých a drobně změněných řádků dál aktualizuje stávající úkol místo duplikace a writeback zůstává vypnutý.
 - Produkční Home Assistant image používá již kompletně otestovaný katalogový `dist`; build proto nevyžaduje TypeScript zdroje, které nejsou součástí distribučního add-on kontextu.
+- Čerstvý HLS master se klientovi vrátí až poté, co relay v omezeném startovním okně skutečně načte a uloží první video segment. Klient tak při prvním otevření nedostane právě oznámený, ale ještě nedokončený fragment; neúspěšná startovní relace se zahodí a bounded keep-warm může navázat čistě.
 
 ## 3.0.32
 

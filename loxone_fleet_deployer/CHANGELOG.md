@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.33.3
+
+- Před vrácením čerstvého HLS masteru klientovi omezeně vyčká, až relay skutečně načte a uloží první video segment. Opravuje živě reprodukovaný start, kdy VLC po prvním ještě nedokončeném fragmentu přestal žádat další data, přestože později zahřátá relace už vracela postupující segmenty HTTP 200.
+- Opravná výměna stejné aplikační verze 3.0.33 zachovává původní rollback na 3.0.32, databázi i `/data`; po nasazení vyžaduje dlouhý důkaz skutečně dekódovaných snímků.
+
 ## 3.0.33.2
 
 - Opravuje produkční Dockerfile Hubu 3.0.33 na runtime-only sestavení z již otestovaného katalogového `dist`. První build přes helper 3.0.33.1 skončil ještě před zastavením nebo nahrazením živého Hubu 3.0.32, protože distribuční add-on kontext záměrně neobsahuje TypeScript zdroje.

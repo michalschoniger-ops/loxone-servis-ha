@@ -23,11 +23,12 @@ RUN set -eu; \
     test "$(grep -c 'const keepalive = 30 \* time.Second' internal/hls/hls.go)" -eq 1; \
     test "$(grep -c 'data := session.Segment(sequence)' internal/hls/hls.go)" -eq 2; \
     test "$(grep -c 'func (s \*Session) Segment(sequence int)' internal/hls/session.go)" -eq 1; \
+    test "$(grep -c 'ready = len(s.buffer) > len(s.init)' internal/hls/session.go)" -eq 1; \
     CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o /out/go2rtc .
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG BUILD_VERSION=3.0.37
+ARG BUILD_VERSION=3.0.38
 ARG BUILD_ARCH
 ENV NODE_ENV=production \
     PORT=8099 \

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.38.1
+
+- Nasazuje Evora Smart Hub 3.0.38 s opravenou připraveností MPEG-TS segmentů: 376B PAT/PMT základ už není považován za hotové video a segment čeká na skutečná obrazová TS data.
+- Zachovává vratný zdroj Hubu 3.0.37, databázi, šifrované přístupy, `/data` i nativní klienty. Evora Smart Menu 3.0.23 s atomickým ukotvením všech stránek zůstává beze změny.
+
 ## 3.0.37.1
 
 - Nasazuje Evora Smart Hub 3.0.37 s jedinou sdílenou předehřívanou MPEG-TS HLS relací kanálu 7 pro Hub i macOS Menu. Odstraňuje samostatnou fMP4 relaci, která na živém Hubu 3.0.36 vracela 502 a neposkytla dekódovaný snímek.

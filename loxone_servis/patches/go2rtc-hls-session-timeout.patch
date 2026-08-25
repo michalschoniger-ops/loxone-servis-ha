@@ -63,9 +63,16 @@
 @@ -106 +112 @@
 -func (s *Session) Segment() (segment []byte) {
 +func (s *Session) nextSegment() (segment []byte) {
-@@ -121 +126,0 @@
+@@ -112 +118,5 @@
+-		if len(s.buffer) > 0 {
++		ready := len(s.buffer) > 0
++		if _, ok := s.cons.(*mp4.Consumer); !ok {
++			ready = len(s.buffer) > len(s.init)
++		}
++		if ready {
+@@ -121 +130,0 @@
 -			s.seq++
-@@ -127,0 +133,24 @@
+@@ -127,0 +136,24 @@
 +
 +func (s *Session) Segment(sequence int) []byte {
 +	s.segmentMu.Lock()

@@ -1,8 +1,13 @@
 # Changelog
 
+## 3.0.38
+
+- Lokální patch go2rtc při vytváření MPEG-TS HLS segmentu už nepovažuje samotný 376B PAT/PMT základ za hotové video. Druhý a každý další segment počká na skutečná TS obrazová data; číslovaná cache přitom dál vrací stejný segment všem klientům. Opravuje se živě doložený stav Hubu 3.0.37, kdy všechny požadavky vracely HTTP 200, ale AVPlayer i VLC dostaly jen hlavičku bez dekódovatelného snímku.
+
 ## 3.0.37
 
 - Kanál 7 používá pro Hub i plné macOS Menu jedinou sdílenou, předehřívanou MPEG-TS HLS relaci. Odstraňuje se soupeření paralelní fMP4 relace, které se v živém Hubu 3.0.36 projevilo HTTP 502 a nulou dekódovaných snímků; přímý RTSP zdroj zůstává pouze uvnitř serveru a klienti nikdy nedostanou přihlašovací údaje ani RTSP adresu.
+- Evora Smart Menu 3.0.23 před změnou výšky stránky nejprve předpočítá a bez vykreslení nastaví celý nový rám interního AppKit panelu se stejným osmibodovým odstupem. Teprve uvnitř stejné neanimované transakce změní výšku navigátoru, takže přechod nemá zobrazit jediný mezisnímek přisunutý k horní liště.
 
 ## 3.0.36
 

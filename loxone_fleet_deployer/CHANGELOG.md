@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.33.5
+
+- Opravný payload stejné aplikační verze 3.0.33 publikuje bezpečné webové akce Miniserverů, Windows Menu 3.0.21 a macOS Menu 3.0.17 s neblokujícím snapshotem `Systémy`, spolehlivějším fokusem hledání a jednořádkovými tickety.
+- Zachovává původní vratný zdroj, databázi, šifrovaná připojení a `/data`; kontrolní součet payloadu je připnutý v deployeru a po nasazení je vyžadován read-back assetů i nativních klientů.
+
 ## 3.0.33.4
 
 - Před zveřejněním čerstvého HLS masteru atomicky načte a uloží inicializační fragment i všechny segmenty aktuálního playlistu. Opravuje další živě reprodukovaný start, při kterém byly master a playlist HTTP 200, ale VLC narazil na 502 při initu a ukončil demuxer před prvním snímkem.

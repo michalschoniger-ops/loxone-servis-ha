@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.28.1
+
+- Nasazuje Evora Smart Hub 3.0.28 s jednou sdílenou upstream HLS relací pro náhled kamery „Parkoviště - Recepce - 2“. Hub každý init a segment načte z go2rtc pouze jednou a souběžné klienty obslouží z omezené cache posledních 12 segmentů; přenos je H.264/fMP4 z RTSP, nikdy MJPEG.
+- Zachovává Evora Smart Menu 3.0.14 s přímými výsledky hledání Miniserverů a volbou existujícího/nového okna Configu i Windows Launcher 3.0.0.6. Před výměnou uchová vratný zdroj živého Hubu 3.0.27 a nemění databázi ani `/data`.
+
 ## 3.0.27.2
 
 - Opravuje katalogový payload 3.0.27 na runtime-only Dockerfile, který sestavuje obraz z již otestovaného `dist` a nevyžaduje nezveřejněné TypeScript zdroje. Neúspěšný build helperu 3.0.27.1 nezastavil ani nenahradil živý Hub 3.0.26.

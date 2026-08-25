@@ -12,6 +12,51 @@ const MAX_HLS_MANIFEST_BYTES = 64 * 1024;
 const MAX_HLS_INIT_BYTES = 4 * 1024 * 1024;
 const MAX_HLS_SEGMENT_BYTES = 12 * 1024 * 1024;
 const HLS_SESSION_PATTERN = /^[A-Za-z0-9]{8}$/;
+const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
+const HLS_PLAYLIST_CACHE_MS = 350;
+const HLS_MAX_CACHED_SEGMENTS = 12;
+export class CameraHlsResourceCache {
+    values = new Map();
+    pending = new Map();
+    segmentOrder = [];
+    async load(key, loader, options = {}) {
+        const now = Date.now();
+        const cached = this.values.get(key);
+        if (cached && (cached.expiresAt === null || cached.expiresAt > now))
+            return cached.response;
+        if (cached)
+            this.values.delete(key);
+        const inFlight = this.pending.get(key);
+        if (inFlight)
+            return inFlight;
+        const request = loader().then((response) => {
+            const expiresAt = options.ttlMs === undefined ? null : Date.now() + options.ttlMs;
+            this.values.set(key, { response, expiresAt });
+            if (options.segment) {
+                this.segmentOrder.push(key);
+                while (this.segmentOrder.length > HLS_MAX_CACHED_SEGMENTS) {
+                    const oldest = this.segmentOrder.shift();
+                    if (oldest)
+                        this.values.delete(oldest);
+                }
+            }
+            return response;
+        });
+        this.pending.set(key, request);
+        try {
+            return await request;
+        }
+        finally {
+            if (this.pending.get(key) === request)
+                this.pending.delete(key);
+        }
+    }
+    clear() {
+        this.values.clear();
+        this.pending.clear();
+        this.segmentOrder.splice(0);
+    }
+}
 function streamName(channelId, quality, candidateIndex) {
     return `evora_primary_${quality}_${String(channelId).padStart(2, "0")}_${candidateIndex}`;
 }
@@ -150,6 +195,32 @@ class CameraVideoGateway {
     starting = null;
     registeredStreams = new Map();
     registeringStreams = new Map();
+    hlsSessionsByKey = new Map();
+    hlsSessionsById = new Map();
+    hlsMasterRequests = new Map();
+    clearGatewayState() {
+        this.registeredStreams.clear();
+        this.registeringStreams.clear();
+        for (const session of this.hlsSessionsByKey.values())
+            session.resources.clear();
+        this.hlsSessionsByKey.clear();
+        this.hlsSessionsById.clear();
+        this.hlsMasterRequests.clear();
+    }
+    forgetHlsSession(session) {
+        if (this.hlsSessionsByKey.get(session.key) === session)
+            this.hlsSessionsByKey.delete(session.key);
+        if (this.hlsSessionsById.get(session.id) === session)
+            this.hlsSessionsById.delete(session.id);
+        session.resources.clear();
+    }
+    rememberHlsSession(session) {
+        const previous = this.hlsSessionsByKey.get(session.key);
+        if (previous && previous !== session)
+            this.forgetHlsSession(previous);
+        this.hlsSessionsByKey.set(session.key, session);
+        this.hlsSessionsById.set(session.id, session);
+    }
     async terminateChild(child, graceMs = 2_000) {
         if (child.exitCode !== null || child.signalCode !== null)
             return;
@@ -195,8 +266,7 @@ class CameraVideoGateway {
     async startProcess() {
         if (await this.gatewayResponds())
             return;
-        this.registeredStreams.clear();
-        this.registeringStreams.clear();
+        this.clearGatewayState();
         const candidates = await automaticWebRtcCandidates();
         const inlineConfig = JSON.stringify({
             api: { listen: "127.0.0.1:1984" },
@@ -213,8 +283,7 @@ class CameraVideoGateway {
         child.once("exit", () => {
             if (this.child === child) {
                 this.child = null;
-                this.registeredStreams.clear();
-                this.registeringStreams.clear();
+                this.clearGatewayState();
             }
         });
         const spawnError = new Promise((_resolve, reject) => {
@@ -330,44 +399,7 @@ class CameraVideoGateway {
         }
         throw new CameraIntegrationError("Kamera nenabídla WebRTC kompatibilní video.", "CAMERA_STREAM_FAILED");
     }
-    async hlsMaster(db, channelId, quality, codecs = "h264,h265") {
-        const sources = cameraGatewaySources(db, channelId, quality);
-        for (const [candidateIndex, source] of sources.entries()) {
-            const name = streamName(channelId, quality, candidateIndex);
-            try {
-                await this.registerStream(name, source.url);
-                const query = new URLSearchParams({ src: name, video: codecs });
-                const result = await this.request(`/api/stream.m3u8?${query.toString()}`, {
-                    method: "GET",
-                    headers: { "User-Agent": `Evora-Smart-Hub/${config.appVersion}` },
-                }, async (response) => {
-                    const body = await readLimited(response, MAX_HLS_MANIFEST_BYTES);
-                    return { ok: response.ok, body };
-                });
-                if (!result.ok) {
-                    continue;
-                }
-                const master = rewriteCameraHlsMasterPlaylist(result.body.toString("utf8"));
-                cameraHlsSessionId(master);
-                return {
-                    body: Buffer.from(master, "utf8"),
-                    contentType: "application/vnd.apple.mpegurl",
-                };
-            }
-            catch (error) {
-                if (error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID")
-                    throw error;
-            }
-        }
-        throw new CameraIntegrationError("Kamera nenabídla kompatibilní HLS video.", "CAMERA_STREAM_FAILED");
-    }
-    async hlsResource(resource, sessionId, sequence) {
-        if (!HLS_SESSION_PATTERN.test(sessionId)) {
-            throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
-        }
-        if (resource !== "playlist.m3u8" && resource !== "init.mp4" && (!sequence || !/^\d{1,12}$/.test(sequence))) {
-            throw new CameraIntegrationError("HLS segment není platný.", "CAMERA_CONFIG_INVALID");
-        }
+    async fetchHlsResource(resource, sessionId, sequence) {
         const query = new URLSearchParams({ id: sessionId });
         if (sequence)
             query.set("n", sequence);
@@ -396,11 +428,101 @@ class CameraVideoGateway {
                     : "video/mp2t",
         };
     }
+    async prepareHlsMaster(name, codecs) {
+        const key = `${name}|${codecs}`;
+        const cached = this.hlsSessionsByKey.get(key);
+        if (cached) {
+            if (Date.now() - cached.lastResourceAt < HLS_SESSION_VALIDATE_AFTER_MS)
+                return cached.master;
+            try {
+                await cached.resources.load("playlist.m3u8", () => this.fetchHlsResource("playlist.m3u8", cached.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                cached.lastResourceAt = Date.now();
+                return cached.master;
+            }
+            catch {
+                this.forgetHlsSession(cached);
+            }
+        }
+        const query = new URLSearchParams({ src: name, video: codecs });
+        const result = await this.request(`/api/stream.m3u8?${query.toString()}`, {
+            method: "GET",
+            headers: { "User-Agent": `Evora-Smart-Hub/${config.appVersion}` },
+        }, async (response) => {
+            const body = await readLimited(response, MAX_HLS_MANIFEST_BYTES);
+            return { ok: response.ok, body };
+        });
+        if (!result.ok) {
+            throw new CameraIntegrationError("Kamera nenabídla kompatibilní HLS video.", "CAMERA_STREAM_FAILED");
+        }
+        const masterText = rewriteCameraHlsMasterPlaylist(result.body.toString("utf8"));
+        const session = {
+            key,
+            id: cameraHlsSessionId(masterText),
+            master: {
+                body: Buffer.from(masterText, "utf8"),
+                contentType: "application/vnd.apple.mpegurl",
+            },
+            lastResourceAt: Date.now(),
+            resources: new CameraHlsResourceCache(),
+        };
+        this.rememberHlsSession(session);
+        return session.master;
+    }
+    async hlsMaster(db, channelId, quality, codecs = "h264,h265") {
+        const sources = cameraGatewaySources(db, channelId, quality);
+        for (const [candidateIndex, source] of sources.entries()) {
+            const name = streamName(channelId, quality, candidateIndex);
+            try {
+                await this.registerStream(name, source.url);
+                const key = `${name}|${codecs}`;
+                let request = this.hlsMasterRequests.get(key);
+                if (!request) {
+                    request = this.prepareHlsMaster(name, codecs);
+                    this.hlsMasterRequests.set(key, request);
+                }
+                try {
+                    return await request;
+                }
+                finally {
+                    if (this.hlsMasterRequests.get(key) === request)
+                        this.hlsMasterRequests.delete(key);
+                }
+            }
+            catch (error) {
+                if (error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID")
+                    throw error;
+            }
+        }
+        throw new CameraIntegrationError("Kamera nenabídla kompatibilní HLS video.", "CAMERA_STREAM_FAILED");
+    }
+    async hlsResource(resource, sessionId, sequence) {
+        if (!HLS_SESSION_PATTERN.test(sessionId)) {
+            throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
+        }
+        if (resource !== "playlist.m3u8" && resource !== "init.mp4" && (!sequence || !/^\d{1,12}$/.test(sequence))) {
+            throw new CameraIntegrationError("HLS segment není platný.", "CAMERA_CONFIG_INVALID");
+        }
+        const session = this.hlsSessionsById.get(sessionId);
+        if (!session)
+            return this.fetchHlsResource(resource, sessionId, sequence);
+        const resourceKey = `${resource}:${sequence ?? ""}`;
+        try {
+            const response = await session.resources.load(resourceKey, () => this.fetchHlsResource(resource, sessionId, sequence), resource === "playlist.m3u8"
+                ? { ttlMs: HLS_PLAYLIST_CACHE_MS }
+                : { segment: resource === "segment.m4s" || resource === "segment.ts" });
+            session.lastResourceAt = Date.now();
+            return response;
+        }
+        catch (error) {
+            if (resource === "playlist.m3u8")
+                this.forgetHlsSession(session);
+            throw error;
+        }
+    }
     async stop() {
         const child = this.child;
         this.child = null;
-        this.registeredStreams.clear();
-        this.registeringStreams.clear();
+        this.clearGatewayState();
         if (!child)
             return;
         await this.terminateChild(child);

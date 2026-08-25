@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.28
+
+- Hub a Evora Smart Menu sdílejí pro stejnou kameru a náhledový H.264 profil jednu upstream HLS relaci. Každý init a video segment načte Hub z go2rtc nejvýše jednou; souběžné i pozdější čtení obslouží omezená serverová cache posledních 12 segmentů, protože živý go2rtc endpoint vydává tentýž segment upstreamu jen jednou.
+- Vytvoření HLS relace i načtení stejného segmentu je single-flight. Opakované otevření Hubu nebo Menu tak nevytváří další dočasné session, které by po prvních dvou klientech vracely HTTP 502. Cache se při restartu gateway vyčistí a po skutečném vypršení relace se master před znovupoužitím ověří.
+- Publikovaná zůstává pouze online kamera `Parkoviště - Recepce - 2`; náhled je H.264/fMP4 přebalený z RTSP, nikoli MJPEG. Evora Smart Menu zůstává 3.0.14 a Windows Config Launcher 3.0.0.6.
+
 ## 3.0.27
 
 - Video gateway registruje shodný RTSP zdroj pouze jednou a souběžný neúspěšný klient už nemaže stream používaný Hubem nebo Evora Smart Menu. Publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2`; živý obraz je dál H.264/H.265 přes WebRTC/HLS, nikdy MJPEG.

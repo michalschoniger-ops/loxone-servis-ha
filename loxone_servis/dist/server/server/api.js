@@ -755,7 +755,7 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality, "h264,h265");
+        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
     });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -1435,7 +1435,8 @@ export async function registerApi(app, db, jobs) {
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
         const { quality, hevc } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality, hevc === "1" ? "h264,h265" : "h264");
+        const codecs = quality === "preview" ? "h264" : hevc === "1" ? "h264,h265" : "h264";
+        return sendCameraHlsMaster(reply, db, channelId, quality, codecs);
     });
     app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))

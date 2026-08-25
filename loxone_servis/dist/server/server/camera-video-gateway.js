@@ -154,11 +154,12 @@ export function cameraHlsSessionId(input) {
     }
     return parseHlsRelativeUrl(playlistLine, "playlist.m3u8").searchParams.get("id") ?? "";
 }
-export function cameraHlsLatestSegment(input, expectedSessionId) {
+export function cameraHlsSegments(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
         throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
     }
-    const lines = input.trim().split(/\r?\n/).reverse();
+    const references = [];
+    const lines = input.trim().split(/\r?\n/);
     for (const line of lines) {
         const resource = line.startsWith("segment.m4s?")
             ? "segment.m4s"
@@ -172,9 +173,12 @@ export function cameraHlsLatestSegment(input, expectedSessionId) {
         if (parsed.searchParams.get("id") !== expectedSessionId || !/^\d{1,12}$/.test(sequence)) {
             throw new CameraIntegrationError("HLS segment nepatří do očekávané relace.", "CAMERA_STREAM_FAILED");
         }
-        return { resource, sequence };
+        references.push({ resource, sequence });
     }
-    return null;
+    return references;
+}
+export function cameraHlsLatestSegment(input, expectedSessionId) {
+    return cameraHlsSegments(input, expectedSessionId).at(-1) ?? null;
 }
 export function rewriteCameraHlsMediaPlaylist(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
@@ -532,11 +536,17 @@ class CameraVideoGateway {
             }
             try {
                 const playlist = await session.resources.load("playlist.m3u8", () => this.fetchHlsResource("playlist.m3u8", session.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
-                const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), session.id);
-                if (!latest) {
+                const playlistText = playlist.body.toString("utf8");
+                const segments = cameraHlsSegments(playlistText, session.id);
+                if (!segments.length) {
                     throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
                 }
-                await session.resources.load(`${latest.resource}:${latest.sequence}`, () => this.fetchHlsResource(latest.resource, session.id, latest.sequence), { segment: true });
+                if (playlistText.includes("#EXT-X-MAP:")) {
+                    await session.resources.load("init.mp4:", () => this.fetchHlsResource("init.mp4", session.id));
+                }
+                for (const segment of segments) {
+                    await session.resources.load(`${segment.resource}:${segment.sequence}`, () => this.fetchHlsResource(segment.resource, session.id, segment.sequence), { segment: true });
+                }
                 session.lastResourceAt = Date.now();
                 return;
             }

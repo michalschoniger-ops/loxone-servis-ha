@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.33.4
+
+- Před zveřejněním čerstvého HLS masteru atomicky načte a uloží inicializační fragment i všechny segmenty aktuálního playlistu. Opravuje další živě reprodukovaný start, při kterém byly master a playlist HTTP 200, ale VLC narazil na 502 při initu a ukončil demuxer před prvním snímkem.
+- Zachovává aplikační verzi 3.0.33, původní rollback na 3.0.32, databázi i `/data`; přijetí hotfixu zůstává podmíněné dlouhým VLC během s dekódovanými snímky a bez neúspěšných upstream odpovědí.
+
 ## 3.0.33.3
 
 - Před vrácením čerstvého HLS masteru klientovi omezeně vyčká, až relay skutečně načte a uloží první video segment. Opravuje živě reprodukovaný start, kdy VLC po prvním ještě nedokončeném fragmentu přestal žádat další data, přestože později zahřátá relace už vracela postupující segmenty HTTP 200.

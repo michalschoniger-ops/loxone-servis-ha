@@ -15,6 +15,17 @@ const HLS_SESSION_PATTERN = /^[A-Za-z0-9]{8}$/;
 const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
 const HLS_PLAYLIST_CACHE_MS = 350;
 const HLS_MAX_CACHED_SEGMENTS = 12;
+const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [150, 300, 450, 600, 750];
+export async function waitForCameraHlsSegment(loader, delaysMs = HLS_SEGMENT_READY_RETRY_DELAYS_MS, pause = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))) {
+    let result = await loader();
+    for (const delayMs of delaysMs) {
+        if (result.ok)
+            break;
+        await pause(delayMs);
+        result = await loader();
+    }
+    return result;
+}
 export class CameraHlsResourceCache {
     values = new Map();
     pending = new Map();
@@ -408,10 +419,13 @@ class CameraVideoGateway {
             : resource === "init.mp4"
                 ? MAX_HLS_INIT_BYTES
                 : MAX_HLS_SEGMENT_BYTES;
-        const result = await this.request(`/api/hls/${resource}?${query.toString()}`, { method: "GET" }, async (response) => ({
+        const load = () => this.request(`/api/hls/${resource}?${query.toString()}`, { method: "GET" }, async (response) => ({
             ok: response.ok,
             body: await readLimited(response, maximum),
         }));
+        const result = resource === "segment.m4s" || resource === "segment.ts"
+            ? await waitForCameraHlsSegment(load)
+            : await load();
         if (!result.ok) {
             throw new CameraIntegrationError("HLS relace vypršela nebo segment není dostupný.", "CAMERA_STREAM_FAILED");
         }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.29.1
+
+- Nasazuje Evora Smart Hub 3.0.29, který uvnitř jediné sdílené HLS relace omezeně vyčká na právě oznámený, ale ještě nedokončený video segment. Přechodná nedostupnost fragmentu se řeší jedním single-flight požadavkem a klientům se nemá propisovat jako HTTP 502.
+- Zachovává pouze kameru „Parkoviště - Recepce - 2“, H.264/fMP4 z RTSP bez MJPEG, Evora Smart Menu 3.0.14 a Windows Launcher 3.0.0.6. Před výměnou uchová vratný zdroj živého Hubu 3.0.28 a nemění databázi ani `/data`.
+
 ## 3.0.28.1
 
 - Nasazuje Evora Smart Hub 3.0.28 s jednou sdílenou upstream HLS relací pro náhled kamery „Parkoviště - Recepce - 2“. Hub každý init a segment načte z go2rtc pouze jednou a souběžné klienty obslouží z omezené cache posledních 12 segmentů; přenos je H.264/fMP4 z RTSP, nikdy MJPEG.

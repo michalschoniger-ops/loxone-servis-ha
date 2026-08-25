@@ -52,7 +52,7 @@ Home Assistant adresy mohou být Tailscale (`*.ts.net`), Nabu Casa (`*.ui.nabu.c
 
 Fotografie a PDF interních servisních úkolů mají omezený typ i velikost, server ověřuje skutečnou signaturu obsahu a ukládá je šifrovaně pomocí AES-256-GCM. Stažení vyžaduje aktivní roli správce nebo technika, používá `no-store` a prohlížeč nesmí obsah odhadovat podle názvu souboru.
 
-Microsoft Graph propojení Excelu používá tenantově omezenou veřejnou aplikaci, `offline_access` a delegované oprávnění `Files.ReadWrite`, které Microsoft vyžaduje i pro rozlišení položky ze sdíleného odkazu přes `/shares`. Hub 3.0.28 tuto relaci používá pouze ke čtení: neodesílá změnu buňky ani heslo či klientské tajemství; obnovovací token je šifrovaný a krátkodobý device code vidí pouze správce po dobu připojení.
+Microsoft Graph propojení Excelu používá tenantově omezenou veřejnou aplikaci, `offline_access` a delegované oprávnění `Files.ReadWrite`, které Microsoft vyžaduje i pro rozlišení položky ze sdíleného odkazu přes `/shares`. Hub 3.0.29 tuto relaci používá pouze ke čtení: neodesílá změnu buňky ani heslo či klientské tajemství; obnovovací token je šifrovaný a krátkodobý device code vidí pouze správce po dobu připojení.
 
 ## Jediný zdroj dat
 

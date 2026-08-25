@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.29
+
+- Hub při krátkém závodě mezi zveřejněním nového HLS segmentu v playlistu a jeho skutečnou dostupností v go2rtc drží jeden sdílený požadavek uvnitř serveru a provede omezené čekání. Prohlížeč ani Evora Smart Menu tak nedostanou přechodnou HTTP 502 jen proto, že právě oznámený fragment ještě není kompletní.
+- Opakování se týká pouze H.264/HLS video segmentu, je časově omezené na 2,25 sekundy a stále běží single-flight pro všechny klienty. Úspěšný segment se uloží do omezené cache; trvalá chyba zůstane po vyčerpání pokusů pravdivě viditelná.
+- Publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2`; transport je RTSP přebalený do HLS/fMP4 bez MJPEG. Evora Smart Menu zůstává 3.0.14 a Windows Config Launcher 3.0.0.6.
+
 ## 3.0.28
 
 - Hub a Evora Smart Menu sdílejí pro stejnou kameru a náhledový H.264 profil jednu upstream HLS relaci. Každý init a video segment načte Hub z go2rtc nejvýše jednou; souběžné i pozdější čtení obslouží omezená serverová cache posledních 12 segmentů, protože živý go2rtc endpoint vydává tentýž segment upstreamu jen jednou.

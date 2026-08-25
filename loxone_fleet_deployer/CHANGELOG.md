@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.30.1
+
+- Nasazuje Evora Smart Hub 3.0.30 s krátkým interním timeoutem každého čtení právě vznikajícího HLS segmentu a s omezeným single-flight opakováním rychlé 502 i zavěšeného loopback požadavku.
+- Součástí je Evora Smart Menu 3.0.15 s opraveným klávesovým fokusem po kliknutí do globálního i Miniserverového hledání. Publikovaná zůstává pouze kamera „Parkoviště - Recepce - 2“, H.264/HLS/fMP4 z RTSP bez MJPEG; vratným zdrojem je živý Hub 3.0.29 a databáze ani `/data` se nemění.
+
 ## 3.0.29.1
 
 - Nasazuje Evora Smart Hub 3.0.29, který uvnitř jediné sdílené HLS relace omezeně vyčká na právě oznámený, ale ještě nedokončený video segment. Přechodná nedostupnost fragmentu se řeší jedním single-flight požadavkem a klientům se nemá propisovat jako HTTP 502.

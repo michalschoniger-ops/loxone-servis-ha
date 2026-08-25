@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.30
+
+- HLS brána kromě rychlé HTTP 502 zachytí také zavěšené interní čtení právě vznikajícího segmentu. Jednotlivý loopback pokus má limit 1,5 sekundy a následné časově omezené pokusy zůstávají single-flight, takže všichni klienti stále používají jedinou RTSP/HLS relaci.
+- Evora Smart Menu 3.0.15 opravuje fokus globálního i Miniserverového hledání: kliknutí do pole po otevření Menu znovu získá field editor na následujícím AppKit cyklu a uživatel může hned psát. Přímé výsledky Miniserverů bez procházení složek zůstávají zachované.
+- Publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2`; transport je H.264/HLS/fMP4 z RTSP bez MJPEG. Windows Config Launcher zůstává 3.0.0.6.
+
 ## 3.0.29
 
 - Hub při krátkém závodě mezi zveřejněním nového HLS segmentu v playlistu a jeho skutečnou dostupností v go2rtc drží jeden sdílený požadavek uvnitř serveru a provede omezené čekání. Prohlížeč ani Evora Smart Menu tak nedostanou přechodnou HTTP 502 jen proto, že právě oznámený fragment ještě není kompletní.

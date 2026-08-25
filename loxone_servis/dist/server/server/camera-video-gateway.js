@@ -481,8 +481,8 @@ class CameraVideoGateway {
                     : "video/mp2t",
         };
     }
-    async prepareHlsMaster(name, codecs) {
-        const key = `${name}|${codecs}`;
+    async prepareHlsMaster(name, mode) {
+        const key = `${name}|${mode}`;
         const cached = this.hlsSessionsByKey.get(key);
         if (cached) {
             if (Date.now() - cached.lastResourceAt < HLS_SESSION_VALIDATE_AFTER_MS)
@@ -496,7 +496,12 @@ class CameraVideoGateway {
                 this.forgetHlsSession(cached);
             }
         }
-        const query = new URLSearchParams({ src: name, video: codecs });
+        const query = new URLSearchParams({ src: name });
+        // go2rtc deliberately selects MPEG-TS HLS when no codec filter is sent.
+        // That avoids fMP4 init/fragment sequence races while keeping one direct
+        // RTSP-derived stream compatible with native Safari HLS and hls.js.
+        if (mode !== "mpegts")
+            query.set("video", mode);
         const result = await this.request(`/api/stream.m3u8?${query.toString()}`, {
             method: "GET",
             headers: { "User-Agent": `Evora-Smart-Hub/${config.appVersion}` },
@@ -558,16 +563,16 @@ class CameraVideoGateway {
             throw lastError;
         throw new CameraIntegrationError("HLS video se nepodařilo včas předehřát.", "CAMERA_STREAM_FAILED");
     }
-    async hlsMaster(db, channelId, quality, codecs = "h264,h265") {
+    async hlsMaster(db, channelId, quality, mode = "mpegts") {
         const sources = cameraGatewaySources(db, channelId, quality);
         for (const [candidateIndex, source] of sources.entries()) {
             const name = streamName(channelId, quality, candidateIndex);
             try {
                 await this.registerStream(name, source.url);
-                const key = `${name}|${codecs}`;
+                const key = `${name}|${mode}`;
                 let request = this.hlsMasterRequests.get(key);
                 if (!request) {
-                    request = this.prepareHlsMaster(name, codecs);
+                    request = this.prepareHlsMaster(name, mode);
                     this.hlsMasterRequests.set(key, request);
                 }
                 try {
@@ -622,7 +627,7 @@ class CameraVideoGateway {
                 state.timer = null;
                 void (async () => {
                     try {
-                        const master = await this.hlsMaster(db, channelId, quality, "h264");
+                        const master = await this.hlsMaster(db, channelId, quality, "mpegts");
                         const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
                         const playlist = await this.hlsResource("playlist.m3u8", sessionId);
                         const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), sessionId);

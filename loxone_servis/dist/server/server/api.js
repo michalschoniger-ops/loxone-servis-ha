@@ -5,7 +5,7 @@ import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
 import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, saveCredentials } from "./repository.js";
-import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, LoxoneError, } from "./loxone/client.js";
+import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, resolveConnection, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, LoxoneError, } from "./loxone/client.js";
 import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readProgramBackupCatalog, readSelectedProgramBackup, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
 import { replaceProjectFolderMembers } from "./folder-members.js";
@@ -26,7 +26,8 @@ import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents,
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraFleetOverview, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, PUBLISHED_CAMERA_CHANNEL_ID, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
-import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
+import { discoverGateControl, executeGateControl, gateControlStatus, GateControlError } from "./gate-control.js";
+import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getCachedIntranetSnapshot, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
 import { windowsMenuPackage, windowsMenuUpdateManifest } from "./windows-menu.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -151,6 +152,14 @@ function exactConfigRelease(db, version) {
         configUrl: current?.config_url || officialConfigDownloadUrl(version),
     };
 }
+async function miniserverWebInterfaceUrl(server) {
+    const connection = await resolveConnection(server.serial, server.localUrl);
+    const parsed = new URL(connection.baseUrl);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new LoxoneError("invalid_response", "Miniserver nevrátil bezpečnou adresu webového rozhraní.");
+    }
+    return parsed.toString();
+}
 function miniserverDeviceImage(type) {
     const normalized = type.toLowerCase();
     if (normalized.includes("compact"))
@@ -203,6 +212,16 @@ function sendIntranetError(reply, error) {
                         : 500;
     return reply.code(status).send({ error: error.message, code: error.code.toUpperCase() });
 }
+function sendGateError(reply, error) {
+    if (error instanceof GateControlError) {
+        const status = error.code === "UNAVAILABLE" ? 503 : 409;
+        return reply.code(status).send({ error: error.message, code: `GATE_${error.code}` });
+    }
+    if (error instanceof LoxoneError) {
+        return reply.code(502).send({ error: error.message, code: `GATE_${error.code.toUpperCase()}` });
+    }
+    return reply.code(500).send({ error: "Příkaz brány skončil interní chybou Hubu.", code: "GATE_INTERNAL_ERROR" });
+}
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
     hevc: z.enum(["0", "1"]).default("0"),
@@ -252,9 +271,9 @@ async function sendCameraWebRtc(reply, db, channelId, quality, offer) {
         return reply.code(status).send({ error: message, code: error instanceof CameraIntegrationError ? error.code : "CAMERA_STREAM_FAILED" });
     }
 }
-async function sendCameraHlsMaster(reply, db, channelId, quality, codecs) {
+async function sendCameraHlsMaster(reply, db, channelId, quality, mode) {
     try {
-        const result = await cameraVideoGateway.hlsMaster(db, channelId, quality, codecs);
+        const result = await cameraVideoGateway.hlsMaster(db, channelId, quality, mode);
         return reply
             .header("Cache-Control", "private, no-store, no-transform, max-age=0")
             .header("Pragma", "no-cache")
@@ -727,7 +746,9 @@ export async function registerApi(app, db, jobs) {
         const agent = preferredLauncherAgent(db, identity.ownerUserId);
         const folderColors = new Map(listProjectFolders(db).map((folder) => [folder.id, folder.color]));
         const cameraOverview = getCameraOverview(db);
-        const intranet = await getIntranetSnapshot(db);
+        // This endpoint feeds native menus. It must be a pure cached read so
+        // opening "Systémy" never waits for an unrelated Intranet refresh.
+        const intranet = getCachedIntranetSnapshot(db);
         const items = listMiniservers(db).map((server) => {
             const release = exactConfigRelease(db, server.currentFirmware);
             return {
@@ -758,8 +779,12 @@ export async function registerApi(app, db, jobs) {
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         return {
             appVersion: config.appVersion,
+            capabilities: {
+                miniserverWebInterface: true,
+            },
             user: { email: identity.email },
             launcherAgent: agent,
+            gate: gateControlStatus(db),
             nvr: {
                 configured: cameraOverview.configured,
                 name: cameraOverview.name,
@@ -824,6 +849,34 @@ export async function registerApi(app, db, jobs) {
             items,
         };
     });
+    app.put("/api/integrations/worklog/v1/gate/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        z.object({}).strict().parse(request.body ?? {});
+        try {
+            const item = await discoverGateControl(db);
+            audit(db, "worklog.gate_configured", identity.ownerUserId, null, { integrationId: identity.tokenId, project: item.project });
+            return { item };
+        }
+        catch (error) {
+            return sendGateError(reply, error);
+        }
+    });
+    app.post("/api/integrations/worklog/v1/gate/:command", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const command = z.enum(["open", "close"]).parse(request.params.command);
+        try {
+            const result = await executeGateControl(db, command);
+            audit(db, `worklog.gate_${command}`, identity.ownerUserId, null, { integrationId: identity.tokenId });
+            return result;
+        }
+        catch (error) {
+            return sendGateError(reply, error);
+        }
+    });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/snapshot", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
@@ -851,7 +904,7 @@ export async function registerApi(app, db, jobs) {
             return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
         }
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
+        return sendCameraHlsMaster(reply, db, channelId, quality, "mpegts");
     });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -903,17 +956,29 @@ export async function registerApi(app, db, jobs) {
         }
         const serial = serialSchema.parse(request.params.serial);
         const input = z.object({
-            action: z.enum(["loxone_app", "loxone_config"]),
+            action: z.enum(["loxone_app", "loxone_config", "web_interface"]),
             launchMode: z.enum(["existing", "new_window"]).optional(),
         }).strict().parse(request.body);
         const server = getMiniserver(db, serial);
         if (!server)
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        if (input.action === "web_interface") {
+            try {
+                const url = await miniserverWebInterfaceUrl(server);
+                audit(db, "worklog.web_interface_opened", identity.ownerUserId, serial, { integrationId: identity.tokenId });
+                return { action: input.action, url };
+            }
+            catch (error) {
+                if (error instanceof LoxoneError)
+                    return reply.code(502).send({ error: error.message, code: error.code });
+                throw error;
+            }
+        }
         const credentials = getStoredCredentials(db, serial);
         if (!credentials) {
             return reply.code(409).send({ error: "U Miniserveru nejsou uložené přístupy.", code: "CREDENTIALS_MISSING" });
         }
-        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         if (input.action === "loxone_app") {
             audit(db, "worklog.loxone_app_opened", identity.ownerUserId, serial, { integrationId: identity.tokenId });
             return { action: input.action, url: workLogLoxoneAppUrl(serial, credentials.username, credentials.password) };
@@ -1083,6 +1148,25 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         return { items: listMiniservers(db) };
+    });
+    app.get("/api/miniservers/:serial/web-interface", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        const server = getMiniserver(db, serial);
+        if (!server)
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        try {
+            const url = await miniserverWebInterfaceUrl(server);
+            audit(db, "miniserver.web_interface_opened", user.id, serial, {});
+            return reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache").redirect(url);
+        }
+        catch (error) {
+            if (error instanceof LoxoneError)
+                return reply.code(502).send({ error: error.message, code: error.code });
+            throw error;
+        }
     });
     app.get("/api/miniservers/:serial/profile", async (request, reply) => {
         if (!requireRole(request, reply, ["admin", "technician"]))
@@ -1468,6 +1552,40 @@ export async function registerApi(app, db, jobs) {
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         return getCameraFleetOverview(db);
     });
+    app.get("/api/cameras/gate", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return gateControlStatus(db);
+    });
+    app.put("/api/cameras/gate/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        z.object({}).strict().parse(request.body ?? {});
+        try {
+            const item = await discoverGateControl(db);
+            audit(db, "cameras.gate_configured", user.id, null, { project: item.project });
+            return { item };
+        }
+        catch (error) {
+            return sendGateError(reply, error);
+        }
+    });
+    app.post("/api/cameras/gate/:command", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        const command = z.enum(["open", "close"]).parse(request.params.command);
+        try {
+            const result = await executeGateControl(db, command);
+            audit(db, `cameras.gate_${command}`, user.id, null, {});
+            return result;
+        }
+        catch (error) {
+            return sendGateError(reply, error);
+        }
+    });
     app.put("/api/cameras/config", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
         if (!user)
@@ -1548,9 +1666,8 @@ export async function registerApi(app, db, jobs) {
         if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
             return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
         }
-        const { quality, hevc } = cameraStreamQuerySchema.parse(request.query);
-        const codecs = quality === "preview" ? "h264" : hevc === "1" ? "h264,h265" : "h264";
-        return sendCameraHlsMaster(reply, db, channelId, quality, codecs);
+        const { quality } = cameraStreamQuerySchema.parse(request.query);
+        return sendCameraHlsMaster(reply, db, channelId, quality, "mpegts");
     });
     app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))

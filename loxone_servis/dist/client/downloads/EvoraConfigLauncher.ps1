@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.8"
+$HelperVersion = "3.0.0.12"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -37,6 +37,7 @@ $script:TrayState = ""
 $script:TrayExitRequested = $false
 $script:ForceLauncherScan = $false
 $script:TrayHubUrl = ""
+$script:NextTrayOwnerCheckAt = [DateTime]::MinValue
 
 function Write-SafeLog([string]$Message) {
   if (-not (Test-Path -LiteralPath $AppDirectory)) {
@@ -250,6 +251,11 @@ public static class EvoraTrayNative {
   }
 }
 
+function Get-LauncherLocalizedText([string]$AsciiText) {
+  if ($null -eq $AsciiText) { return "" }
+  return [System.Text.RegularExpressions.Regex]::Unescape($AsciiText)
+}
+
 function Set-LauncherTrayStatus([string]$State, [string]$Label) {
   if ($null -eq $script:TrayIcon) { return }
   if ($script:TrayState -ne $State) {
@@ -260,9 +266,10 @@ function Set-LauncherTrayStatus([string]$State, [string]$Label) {
     $script:TrayState = $State
     if ($null -ne $previousIcon) { $previousIcon.Dispose() }
   }
-  $tooltip = "Evora Config Launcher - $Label"
+  $localizedLabel = Get-LauncherLocalizedText $Label
+  $tooltip = "Evora Config Launcher - $localizedLabel"
   $script:TrayIcon.Text = $tooltip.Substring(0, [Math]::Min(63, $tooltip.Length))
-  if ($null -ne $script:TrayStatusItem) { $script:TrayStatusItem.Text = "Stav: $Label" }
+  if ($null -ne $script:TrayStatusItem) { $script:TrayStatusItem.Text = "Stav: $localizedLabel" }
 }
 
 function Initialize-LauncherTray([string]$BaseUrl) {
@@ -270,13 +277,13 @@ function Initialize-LauncherTray([string]$BaseUrl) {
   Add-Type -AssemblyName System.Drawing
   $script:TrayHubUrl = $BaseUrl
   $menu = [System.Windows.Forms.ContextMenuStrip]::new()
-  $status = [System.Windows.Forms.ToolStripMenuItem]::new("Stav: spouštím")
+  $status = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Stav: spou\u0161t\u00edm'))
   $status.Enabled = $false
-  $openHub = [System.Windows.Forms.ToolStripMenuItem]::new("Otevřít Evora Smart Hub")
-  $refresh = [System.Windows.Forms.ToolStripMenuItem]::new("Zkontrolovat připojení a aktualizace")
-  $repair = [System.Windows.Forms.ToolStripMenuItem]::new("Vytvořit nový párovací kód")
-  $diagnostics = [System.Windows.Forms.ToolStripMenuItem]::new("Otevřít diagnostický protokol")
-  $exit = [System.Windows.Forms.ToolStripMenuItem]::new("Ukončit Launcher")
+  $openHub = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Otev\u0159\u00edt Evora Smart Hub'))
+  $refresh = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Zkontrolovat p\u0159ipojen\u00ed a aktualizace'))
+  $repair = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Vytvo\u0159it nov\u00fd p\u00e1rovac\u00ed k\u00f3d'))
+  $diagnostics = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Otev\u0159\u00edt diagnostick\u00fd protokol'))
+  $exit = [System.Windows.Forms.ToolStripMenuItem]::new((Get-LauncherLocalizedText 'Ukon\u010dit Launcher'))
   $openHub.add_Click({ if ($script:TrayHubUrl) { Start-Process $script:TrayHubUrl } })
   $refresh.add_Click({ $script:ForceLauncherScan = $true })
   $repair.add_Click({
@@ -304,12 +311,29 @@ function Initialize-LauncherTray([string]$BaseUrl) {
   $notify.add_DoubleClick({ if ($script:TrayHubUrl) { Start-Process $script:TrayHubUrl } })
   $script:TrayIcon = $notify
   $script:TrayStatusItem = $status
-  Set-LauncherTrayStatus -State "starting" -Label "spouštím"
+  Set-LauncherTrayStatus -State "starting" -Label 'spou\u0161t\u00edm'
+}
+
+function Test-EvoraSmartMenuInstalled {
+  $menuPath = Join-Path $env:LOCALAPPDATA "Evora\SmartMenu\EvoraSmartMenu.exe"
+  return Test-Path -LiteralPath $menuPath -PathType Leaf
+}
+
+function Sync-LauncherTrayOwnership {
+  if (Test-EvoraSmartMenuInstalled) {
+    Dispose-LauncherTray
+    return
+  }
+  if ($null -eq $script:TrayIcon) { Initialize-LauncherTray $script:TrayHubUrl }
 }
 
 function Wait-WithTrayEvents([int]$Milliseconds) {
   $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(0, $Milliseconds))
   do {
+    if ([DateTime]::UtcNow -ge $script:NextTrayOwnerCheckAt) {
+      $script:NextTrayOwnerCheckAt = [DateTime]::UtcNow.AddSeconds(2)
+      Sync-LauncherTrayOwnership
+    }
     if ($null -ne $script:TrayIcon) { [System.Windows.Forms.Application]::DoEvents() }
     if ($script:TrayExitRequested -or (Test-LauncherStopRequested)) { return }
     Start-Sleep -Milliseconds 50
@@ -321,6 +345,7 @@ function Dispose-LauncherTray {
     $script:TrayIcon.Visible = $false
     $script:TrayIcon.Dispose()
     $script:TrayIcon = $null
+    $script:TrayStatusItem = $null
   }
   if ($null -ne $script:TrayIconImage) {
     $script:TrayIconImage.Dispose()
@@ -432,12 +457,13 @@ function Invoke-HubJson([string]$Method, [string]$BaseUrl, [string]$Path, $Body,
   $parameters = @{
     Uri = "$BaseUrl$Path"
     Method = $Method
-    ContentType = "application/json"
+    ContentType = "application/json; charset=utf-8"
     UseBasicParsing = $true
     TimeoutSec = 30
   }
   if ($null -ne $Body) {
-    $parameters.Body = ConvertTo-Json $Body -Compress -Depth 6
+    $json = ConvertTo-Json $Body -Compress -Depth 6
+    $parameters.Body = [Text.Encoding]::UTF8.GetBytes($json)
   }
   if ($Token) {
     $parameters.Headers = @{ Authorization = "Bearer $Token" }
@@ -797,13 +823,50 @@ function Click-AutomationElementCenter($Element) {
   if ($null -eq $Element -or -not $Element.Current.IsEnabled) {
     throw "Expected action is missing or disabled."
   }
+  $targetProcessId = [uint32]$Element.Current.ProcessId
+  $targetProcess = Get-Process -Id $targetProcessId -ErrorAction SilentlyContinue
+  if ($null -eq $targetProcess) {
+    throw "Expected action process is no longer available."
+  }
+  $targetProcess.Refresh()
+  if ($targetProcess.MainWindowHandle -eq 0 -or
+      -not [EvoraWin32]::ActivateWindow($targetProcess.MainWindowHandle, $targetProcessId)) {
+    throw "Expected Config window could not be activated safely."
+  }
+  Start-Sleep -Milliseconds 80
+  # Qt can expose child bounds relative to a background window and refresh
+  # them to screen coordinates only after activation. Always read the live
+  # bounds again, then translate only when the point is demonstrably local to
+  # the exact main-window rectangle (multi-monitor/DPI safe).
   $bounds = $Element.Current.BoundingRectangle
   if ($bounds.Width -le 0 -or $bounds.Height -le 0 -or $Element.Current.IsOffscreen) {
     throw "Expected action is not visible."
   }
-  [EvoraWin32]::SetCursorPos([int]($bounds.X + $bounds.Width / 2), [int]($bounds.Y + $bounds.Height / 2)) | Out-Null
-  [EvoraWin32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-  [EvoraWin32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+  $automationRoot = [Windows.Automation.AutomationElement]::FromHandle($targetProcess.MainWindowHandle)
+  if ($null -eq $automationRoot) { throw "Expected Config window is unavailable." }
+  $rootBounds = $automationRoot.Current.BoundingRectangle
+  $centerX = [double]($bounds.X + $bounds.Width / 2)
+  $centerY = [double]($bounds.Y + $bounds.Height / 2)
+  $centerInsideRoot = $centerX -ge $rootBounds.X -and
+    $centerX -le ($rootBounds.X + $rootBounds.Width) -and
+    $centerY -ge $rootBounds.Y -and
+    $centerY -le ($rootBounds.Y + $rootBounds.Height)
+  if (-not $centerInsideRoot) {
+    $looksLikeLocalPoint = $centerX -ge -4 -and $centerX -le ($rootBounds.Width + 4) -and
+      $centerY -ge -4 -and $centerY -le ($rootBounds.Height + 4)
+    if (-not $looksLikeLocalPoint) { throw "Expected action coordinates are outside the verified Config window." }
+    $centerX += $rootBounds.X
+    $centerY += $rootBounds.Y
+  }
+  $clickX = [int]$centerX
+  $clickY = [int]$centerY
+  if (-not [EvoraWin32]::SetCursorPos($clickX, $clickY) -or
+      -not [EvoraWin32]::PointBelongsToProcess($clickX, $clickY, $targetProcessId)) {
+    throw "Expected action point does not belong to the verified Config process."
+  }
+  if ([EvoraWin32]::ClickLeft() -ne 2) {
+    throw "Expected Config click was not inserted safely."
+  }
 }
 
 function Invoke-AutomationElement($Element) {
@@ -861,7 +924,9 @@ function Find-ReadyConfigProcess([int]$StartedProcessId, [string]$ExecutablePath
 
 function Find-ConnectDialog([int]$ProcessId, [int]$TimeoutSeconds) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-  $condition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, "QApplication.CMsConnectDlg")
+  $idCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, "QApplication.CMsConnectDlg")
+  $processCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcessId)
+  $globalCondition = New-Object Windows.Automation.AndCondition($processCondition, $idCondition)
   do {
     $candidateProcess = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if ($null -ne $candidateProcess) {
@@ -871,9 +936,13 @@ function Find-ConnectDialog([int]$ProcessId, [int]$TimeoutSeconds) {
           $processRoot = [Windows.Automation.AutomationElement]::FromHandle($candidateProcess.MainWindowHandle)
           if ($null -ne $processRoot) {
             if ($processRoot.Current.AutomationId -eq "QApplication.CMsConnectDlg") { return $processRoot }
-            # Qt exposes the modal dialog below its own main-window UIA tree,
-            # even though the dialog is visually a separate window.
-            $dialog = $processRoot.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+            # Search from the desktop with both the exact process and exact
+            # dialog identity. Traversing the entire Qt main-window tree while
+            # a modal is open can block UI Automation indefinitely.
+            $dialog = [Windows.Automation.AutomationElement]::RootElement.FindFirst(
+              [Windows.Automation.TreeScope]::Descendants,
+              $globalCondition
+            )
             if ($null -ne $dialog -and $dialog.Current.ProcessId -eq $ProcessId) { return $dialog }
           }
         }
@@ -900,6 +969,117 @@ function Find-ConfigMessageDialog([int]$ProcessId) {
   }
 }
 
+function Get-ConfigMessageDialogText($Dialog) {
+  if ($null -eq $Dialog) { return "" }
+  $parts = New-Object Collections.Generic.List[string]
+  try {
+    $dialogName = [string]$Dialog.Current.Name
+    if (-not [string]::IsNullOrWhiteSpace($dialogName)) { $parts.Add($dialogName) }
+    # The exact CLxMessageBox is a small modal subtree. Reading only its own
+    # exposed labels is bounded and avoids traversing the Qt main-window tree.
+    $elements = $Dialog.FindAll(
+      [Windows.Automation.TreeScope]::Descendants,
+      [Windows.Automation.Condition]::TrueCondition
+    )
+    $limit = [Math]::Min($elements.Count, 64)
+    for ($index = 0; $index -lt $limit; $index++) {
+      $name = [string]$elements.Item($index).Current.Name
+      if (-not [string]::IsNullOrWhiteSpace($name)) { $parts.Add($name) }
+    }
+  } catch { }
+  return ($parts -join " ").Trim()
+}
+
+function Await-WindowsRuntimeOperation($Operation, [Type]$ResultType, [int]$TimeoutMilliseconds = 4000) {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object {
+      $_.Name -eq "AsTask" -and
+      $_.IsGenericMethodDefinition -and
+      $_.GetParameters().Count -eq 1
+    } |
+    Select-Object -First 1
+  if ($null -eq $asTask) { throw "Windows Runtime task adapter is unavailable." }
+  $task = $asTask.MakeGenericMethod($ResultType).Invoke($null, @($Operation))
+  if (-not $task.Wait($TimeoutMilliseconds)) { throw "Windows Runtime operation timed out." }
+  return $task.Result
+}
+
+function Get-ConfigMessageDialogOcrText($Dialog) {
+  if ($null -eq $Dialog) { return "" }
+  $bitmap = $null
+  $graphics = $null
+  $memory = $null
+  $randomAccessStream = $null
+  $output = $null
+  $writer = $null
+  $softwareBitmap = $null
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $bounds = $Dialog.Current.BoundingRectangle
+    $width = [Math]::Max(1, [int][Math]::Ceiling($bounds.Width))
+    $height = [Math]::Max(1, [int][Math]::Ceiling($bounds.Height))
+    if ($width -gt 1600 -or $height -gt 900) { return "" }
+    $bitmap = New-Object Drawing.Bitmap($width, $height)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen([int]$bounds.X, [int]$bounds.Y, 0, 0, $bitmap.Size)
+    $memory = New-Object IO.MemoryStream
+    $bitmap.Save($memory, [Drawing.Imaging.ImageFormat]::Png)
+    $bytes = $memory.ToArray()
+
+    $randomAccessStream = New-Object 'Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType=WindowsRuntime'
+    $output = $randomAccessStream.GetOutputStreamAt(0)
+    $writer = New-Object 'Windows.Storage.Streams.DataWriter, Windows.Storage.Streams, ContentType=WindowsRuntime'($output)
+    $writer.WriteBytes($bytes)
+    [void](Await-WindowsRuntimeOperation ($writer.StoreAsync()) ([UInt32]))
+    [void](Await-WindowsRuntimeOperation ($writer.FlushAsync()) ([Boolean]))
+    [void]$writer.DetachStream()
+    $writer.Dispose()
+    $writer = $null
+    $output.Dispose()
+    $output = $null
+    $randomAccessStream.Seek(0)
+
+    $decoderType = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime]
+    $decoder = Await-WindowsRuntimeOperation ($decoderType::CreateAsync($randomAccessStream)) $decoderType
+    $softwareBitmapType = [Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics.Imaging, ContentType=WindowsRuntime]
+    $softwareBitmap = Await-WindowsRuntimeOperation ($decoder.GetSoftwareBitmapAsync()) $softwareBitmapType
+    $engine = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]::TryCreateFromUserProfileLanguages()
+    if ($null -eq $engine) { return "" }
+    $resultType = [Windows.Media.Ocr.OcrResult, Windows.Foundation, ContentType=WindowsRuntime]
+    $result = Await-WindowsRuntimeOperation ($engine.RecognizeAsync($softwareBitmap)) $resultType
+    return [string]$result.Text
+  } catch {
+    return ""
+  } finally {
+    if ($null -ne $softwareBitmap) { $softwareBitmap.Dispose() }
+    if ($null -ne $writer) { $writer.Dispose() }
+    if ($null -ne $output) { $output.Dispose() }
+    if ($null -ne $randomAccessStream) { $randomAccessStream.Dispose() }
+    if ($null -ne $memory) { $memory.Dispose() }
+    if ($null -ne $graphics) { $graphics.Dispose() }
+    if ($null -ne $bitmap) { $bitmap.Dispose() }
+  }
+}
+
+function Test-RemoteConnectAlreadyActiveDialog($Dialog) {
+  $text = Get-ConfigMessageDialogText $Dialog
+  if (-not (Normalize-AutomationLabel $text).Contains("remote connect")) {
+    $text = "$text $(Get-ConfigMessageDialogOcrText $Dialog)"
+  }
+  $normalized = Normalize-AutomationLabel $text
+  if ([string]::IsNullOrWhiteSpace($normalized) -or
+      -not $normalized.Contains("remote connect") -or
+      -not $normalized.Contains("miniserver")) {
+    return $false
+  }
+  return $normalized.Contains("jiz pripojen") -or
+    $normalized.Contains("uz pripojen") -or
+    $normalized.Contains("pojen") -or
+    $normalized.Contains("already connected") -or
+    ($normalized.Contains("bereits") -and $normalized.Contains("verbunden"))
+}
+
 function Open-ManualConnectDialog($Process, [bool]$OpenHomeFirst = $false) {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
@@ -908,9 +1088,67 @@ function Open-ManualConnectDialog($Process, [bool]$OpenHomeFirst = $false) {
 using System;
 using System.Runtime.InteropServices;
 public static class EvoraWin32 {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo;
+  }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public MOUSEINPUT mouse;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT {
+    public uint type; public INPUTUNION data;
+  }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr SetActiveWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+  public static bool PointBelongsToProcess(int x, int y, uint expectedProcessId) {
+    uint processId;
+    GetWindowThreadProcessId(WindowFromPoint(new POINT { X = x, Y = y }), out processId);
+    return processId == expectedProcessId;
+  }
+
+  public static uint ClickLeft() {
+    var inputs = new INPUT[2];
+    inputs[0].type = 0;
+    inputs[0].data.mouse.dwFlags = 0x0002;
+    inputs[1].type = 0;
+    inputs[1].data.mouse.dwFlags = 0x0004;
+    return SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
+
+  public static bool ActivateWindow(IntPtr target, uint expectedProcessId) {
+    IntPtr foreground = GetForegroundWindow();
+    uint ignored;
+    uint foregroundThread = GetWindowThreadProcessId(foreground, out ignored);
+    uint targetThread = GetWindowThreadProcessId(target, out ignored);
+    uint currentThread = GetCurrentThreadId();
+    if (foregroundThread != 0) AttachThreadInput(currentThread, foregroundThread, true);
+    if (targetThread != 0 && targetThread != foregroundThread) AttachThreadInput(currentThread, targetThread, true);
+    ShowWindowAsync(target, 9);
+    BringWindowToTop(target);
+    SetForegroundWindow(target);
+    SetActiveWindow(target);
+    SetFocus(target);
+    if (targetThread != 0 && targetThread != foregroundThread) AttachThreadInput(currentThread, targetThread, false);
+    if (foregroundThread != 0) AttachThreadInput(currentThread, foregroundThread, false);
+    for (int attempt = 0; attempt < 20; attempt++) {
+      uint foregroundProcessId;
+      GetWindowThreadProcessId(GetForegroundWindow(), out foregroundProcessId);
+      if (foregroundProcessId == expectedProcessId) return true;
+      System.Threading.Thread.Sleep(50);
+    }
+    return false;
+  }
 }
 '@
   }
@@ -935,7 +1173,14 @@ public static class EvoraWin32 {
 
   $findManualAction = {
     param($SearchRoot)
-    $items = $SearchRoot.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    # All project-page actions share this AutomationId. Query only those 13
+    # items and then require the exact normalized label and Qt label-button
+    # identity. A full Qt descendant walk can take minutes or never return.
+    $itemCondition = New-Object Windows.Automation.PropertyCondition(
+      [Windows.Automation.AutomationElement]::AutomationIdProperty,
+      $manualActionId
+    )
+    $items = $SearchRoot.FindAll([Windows.Automation.TreeScope]::Descendants, $itemCondition)
     $matches = @()
     for ($index = 0; $index -lt $items.Count; $index++) {
       $item = $items.Item($index)
@@ -943,9 +1188,11 @@ public static class EvoraWin32 {
         $normalizedName = Normalize-AutomationLabel ([string]$item.Current.Name)
         $controlType = [string]$item.Current.ControlType.ProgrammaticName
         $automationId = [string]$item.Current.AutomationId
+        $className = [string]$item.Current.ClassName
         $bounds = $item.Current.BoundingRectangle
-        $safeType = $controlType -match '\.(Button|ListItem|Hyperlink|Custom)$'
-        $verifiedIdentity = $automationId -eq $manualActionId -or $manualActionNames -contains $normalizedName
+        $safeType = $controlType -match '\.(Button|ListItem|Hyperlink|Custom)$' -or
+          ($controlType -eq "ControlType.Text" -and $className -eq "Lx::Config::CustomWidgets::CLabelButton")
+        $verifiedIdentity = $automationId -eq $manualActionId -and $manualActionNames -contains $normalizedName
         if ($verifiedIdentity -and
             $safeType -and
             $item.Current.IsEnabled -and
@@ -956,8 +1203,6 @@ public static class EvoraWin32 {
         }
       } catch { }
     }
-    $exactMatches = @($matches | Where-Object { $_.Current.AutomationId -eq $manualActionId })
-    if ($exactMatches.Count -gt 0) { return $exactMatches[0] }
     if ($matches.Count -eq 1) { return $matches[0] }
     return $null
   }
@@ -1015,13 +1260,11 @@ public static class EvoraWin32 {
   }
 
   Set-LauncherPhase "manual-connect-open-dialog"
-  Invoke-AutomationElement $manualAction
-  $dialog = Find-ConnectDialog $Process.Id 4
-  if ($null -eq $dialog) {
-    # A verified element-center click is the Qt compatibility fallback.
-    Click-AutomationElementCenter $manualAction
-    $dialog = Find-ConnectDialog $Process.Id 10
-  }
+  # Qt's InvokePattern can block synchronously until the modal closes. The
+  # physical click is therefore the primary and only action here; it still
+  # targets the uniquely verified live UIA element and never fixed coordinates.
+  Click-AutomationElementCenter $manualAction
+  $dialog = Find-ConnectDialog $Process.Id 10
   if ($null -eq $dialog) { throw (New-LauncherFailure "CONNECT_DIALOG_TIMEOUT" "Manual connect dialog did not open.") }
   return $dialog
 }
@@ -1123,6 +1366,8 @@ function Post-JobStatus([string]$BaseUrl, [string]$Token, [string]$JobId, [strin
       return
     } catch {
       if ($attempt -eq 3) {
+        $statusCode = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+        Write-SafeLog "Hub job status update failed (HTTP $statusCode)."
         throw (New-LauncherFailure "HUB_STATUS_FAILED" "The Hub did not accept the launcher status update.")
       }
       Start-Sleep -Milliseconds (300 * $attempt)
@@ -1188,7 +1433,15 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
   do {
     Start-Sleep -Milliseconds 500
     if ($null -eq (Find-ConnectDialog $process.Id 0)) {
-      if ($null -ne (Find-ConfigMessageDialog $process.Id)) {
+      $messageDialog = Find-ConfigMessageDialog $process.Id
+      if ($null -ne $messageDialog -and (Test-RemoteConnectAlreadyActiveDialog $messageDialog)) {
+        $alreadyActiveMessage = Get-LauncherLocalizedText 'Miniserver je ji\u017e p\u0159ipojen\u00fd p\u0159es Remote Connect v jin\u00e9 relaci Loxone Configu.'
+        Post-JobStatus $BaseUrl $Token $jobId "succeeded" $alreadyActiveMessage "REMOTE_CONNECT_ALREADY_ACTIVE"
+        Write-SafeLog "Config launch target is already active in another Remote Connect session."
+        Show-LauncherNotice (Get-LauncherLocalizedText 'Miniserver je ji\u017e p\u0159ipojen\u00fd') $alreadyActiveMessage
+        return
+      }
+      if ($null -ne $messageDialog) {
         throw (New-LauncherFailure "CONNECTION_REJECTED" "Loxone Config displayed an error after submitting the connection.")
       }
       if ($null -eq $dialogClosedAt) { $dialogClosedAt = Get-Date }
@@ -1247,7 +1500,8 @@ try {
   Install-HiddenLauncherEntrypoints
   Write-LauncherRuntime
   Write-SafeLog "Launcher started."
-  Initialize-LauncherTray $configuredHubUrl
+  $script:TrayHubUrl = $configuredHubUrl
+  Sync-LauncherTrayOwnership
   $lastScan = [DateTime]::MinValue
   $executables = @()
   $diagnostics = $null
@@ -1296,14 +1550,14 @@ try {
       Wait-WithTrayEvents 3000
     } catch {
       if (Test-HubRejectedPairing $_) {
-        Set-LauncherTrayStatus -State "offline" -Label "párování je neplatné"
+        Set-LauncherTrayStatus -State "offline" -Label 'p\u00e1rov\u00e1n\u00ed je neplatn\u00e9'
         Write-SafeLog "Hub rejected the stored launcher pairing. Re-pairing is required."
         if (-not $script:PairingRejectedNoticeShown) {
           $script:PairingRejectedNoticeShown = $true
           Show-LauncherNotice "Evora Smart Hub" "Stored pairing is no longer valid. Create a new code in Hub and run Opravit-parovani.cmd from the latest ZIP."
         }
       } else {
-        Set-LauncherTrayStatus -State "offline" -Label "Hub je nedostupný"
+        Set-LauncherTrayStatus -State "offline" -Label 'Hub je nedostupn\u00fd'
         Write-SafeLog "Hub poll failed; retrying later."
       }
       Wait-WithTrayEvents 30000

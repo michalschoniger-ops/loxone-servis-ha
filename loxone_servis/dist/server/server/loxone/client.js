@@ -300,6 +300,26 @@ export function extractLoxoneValue(body) {
         return decodeXml(element[1]);
     return trimmed;
 }
+export function extractLoxoneResponseCode(body) {
+    const trimmed = body.trim();
+    if (!trimmed)
+        return null;
+    if (trimmed.startsWith("{")) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            const value = Number(parsed.LL?.Code);
+            return Number.isInteger(value) ? value : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    const attribute = trimmed.match(/\bCode=(?:"(\d+)"|'(\d+)')/i);
+    if (attribute)
+        return Number(attribute[1] ?? attribute[2]);
+    const element = trimmed.match(/<Code>(\d+)<\/Code>/i);
+    return element ? Number(element[1]) : null;
+}
 async function fetchLoxoneResponse(connection, credentials, path, options = {}) {
     if (!path.startsWith("/"))
         throw new LoxoneError("invalid_response", "Neplatná cesta webservice.");
@@ -657,6 +677,21 @@ export async function miniserverCommand(db, serial, command) {
         sdtest: "/dev/sys/sdtest",
     }[command];
     return requestLoxone(connection, credentials, path, { timeoutMs: command === "sdtest" ? 60_000 : config.requestTimeoutMs });
+}
+export async function miniserverIoCommand(db, serial, control, command) {
+    const normalizedControl = control.trim();
+    const containsUnsafeCharacter = Array.from(normalizedControl).some((character) => character === "/" || character.charCodeAt(0) < 32);
+    if (!normalizedControl || normalizedControl.length > 80 || containsUnsafeCharacter) {
+        throw new LoxoneError("invalid_response", "Název ovládacího vstupu není platný.");
+    }
+    const { connection, credentials } = await context(db, serial);
+    const suffix = command === null ? "" : `/${command}`;
+    const raw = await requestLoxone(connection, credentials, `/dev/sps/io/${encodeURIComponent(normalizedControl)}${suffix}`, { raw: true });
+    const responseCode = extractLoxoneResponseCode(raw);
+    if (responseCode !== 200) {
+        throw new LoxoneError(responseCode === 401 || responseCode === 403 ? "no_access" : responseCode === 404 ? "unsupported" : "invalid_response", "Miniserver ovládací vstup odmítl nebo jej nezná.", responseCode ?? undefined);
+    }
+    return extractLoxoneValue(raw);
 }
 export async function deviceCommand(db, serial, device, command) {
     if (!/^[A-F0-9]{6,16}$/i.test(device.serial))

@@ -135,6 +135,16 @@ function loadSnapshot(db) {
         return emptySnapshot(configured, email);
     }
 }
+/**
+ * Returns only the last persisted Intranet state.
+ *
+ * Lightweight consumers such as native menu snapshots must never turn a menu
+ * open into a synchronous Intranet refresh. The regular Intranet route and
+ * background job remain responsible for refreshing stale data.
+ */
+export function getCachedIntranetSnapshot(db) {
+    return loadSnapshot(db);
+}
 function persistSnapshot(db, snapshot) {
     writeEncrypted(db, SETTINGS.snapshot, JSON.stringify(snapshot));
 }

@@ -936,10 +936,10 @@ export async function registerApi(app, db, jobs) {
             return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
         }
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        // Native macOS AVPlayer is most reliable with fragmented MP4 HLS. The
-        // source remains the direct NVR RTSP stream; go2rtc only repackages the
-        // H.264 video for the authenticated WorkLog transport.
-        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
+        // Native AVPlayer and the Hub share one prewarmed MPEG-TS HLS session.
+        // This avoids two competing pull-based go2rtc sessions while the source
+        // remains the direct NVR RTSP stream behind the authenticated transport.
+        return sendCameraHlsMaster(reply, db, channelId, quality, "mpegts");
     });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);

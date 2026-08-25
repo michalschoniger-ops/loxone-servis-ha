@@ -673,21 +673,17 @@ class CameraVideoGateway {
             state.timer = setTimeout(() => {
                 state.timer = null;
                 void (async () => {
-                    const results = await Promise.all(["h264", "mpegts"].map(async (mode) => {
-                        try {
-                            const master = await this.hlsMaster(db, channelId, quality, mode);
-                            const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
-                            await this.hlsResource("playlist.m3u8", sessionId);
-                            return true;
-                        }
-                        catch {
-                            // Každý transport má vlastní relaci. Dočasná chyba jednoho nesmí
-                            // shodit druhý; další omezené kolo jej zkusí znovu.
-                            return false;
-                        }
-                    }));
-                    const warmed = results.filter(Boolean).length;
-                    if (warmed > 0) {
+                    let warmed = false;
+                    try {
+                        const master = await this.hlsMaster(db, channelId, quality, "mpegts");
+                        const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
+                        await this.hlsResource("playlist.m3u8", sessionId);
+                        warmed = true;
+                    }
+                    catch {
+                        // Další omezené kolo zkusí jedinou sdílenou relaci znovu.
+                    }
+                    if (warmed) {
                         failures = 0;
                         schedule(250);
                     }

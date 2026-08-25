@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.37
+
+- Kanál 7 používá pro Hub i plné macOS Menu jedinou sdílenou, předehřívanou MPEG-TS HLS relaci. Odstraňuje se soupeření paralelní fMP4 relace, které se v živém Hubu 3.0.36 projevilo HTTP 502 a nulou dekódovaných snímků; přímý RTSP zdroj zůstává pouze uvnitř serveru a klienti nikdy nedostanou přihlašovací údaje ani RTSP adresu.
+
 ## 3.0.36
 
 - HLS pumpa kanálu 7 serializuje každý nový segment konkrétní relace a dodržuje jeho deklarovaný půlsekundový rytmus. Playlist se klientovi vrátí až poté, co jsou inicializace i všechny právě odkazované segmenty v omezené sdílené cache; souběžný browser, macOS Menu a keep-warm proto nespotřebují stejný pull segment dvakrát ani nevytvoří několikamilisekundový fragment.

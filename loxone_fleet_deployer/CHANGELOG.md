@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.37.1
+
+- Nasazuje Evora Smart Hub 3.0.37 s jedinou sdílenou předehřívanou MPEG-TS HLS relací kanálu 7 pro Hub i macOS Menu. Odstraňuje samostatnou fMP4 relaci, která na živém Hubu 3.0.36 vracela 502 a neposkytla dekódovaný snímek.
+- Zachovává vratný zdroj Hubu 3.0.36, databázi, šifrované přístupy, `/data` i nativní klienty. Evora Smart Menu 3.0.22 s atomickým ukotvením všech stránek zůstá beze změny.
+
 ## 3.0.36.1
 
 - Nasazuje Evora Smart Hub 3.0.36 se serializovanou půlsekundovou HLS pumpou, atomicky cachovaným playlistem a souběžným webovým i nativním transportem kanálu 7 nad jediným přímým RTSP zdrojem NVR.

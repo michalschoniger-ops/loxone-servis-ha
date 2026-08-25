@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.6"
+$HelperVersion = "3.0.0.7"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -746,6 +746,23 @@ function ConvertTo-SendKeysLiteral([string]$Value) {
   return $builder.ToString()
 }
 
+function Normalize-AutomationLabel([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+  $decomposed = $Value.Normalize([Text.NormalizationForm]::FormD)
+  $builder = New-Object Text.StringBuilder
+  foreach ($character in $decomposed.ToCharArray()) {
+    $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($character)
+    if ($category -notin @(
+      [Globalization.UnicodeCategory]::NonSpacingMark,
+      [Globalization.UnicodeCategory]::SpacingCombiningMark,
+      [Globalization.UnicodeCategory]::EnclosingMark
+    )) {
+      [void]$builder.Append($character)
+    }
+  }
+  return (($builder.ToString().ToLowerInvariant() -replace [char]0x2026, "...") -replace '[\.\s]+$', '').Trim()
+}
+
 function Set-AutomationTextByKeyboard($Element, [string]$Value, [string]$Label) {
   try {
     if ($null -eq $Element -or -not $Element.Current.IsEnabled -or -not $Element.Current.IsKeyboardFocusable) {
@@ -872,7 +889,7 @@ function Find-ConfigMessageDialog([int]$ProcessId) {
   }
 }
 
-function Open-ManualConnectDialog($Process) {
+function Open-ManualConnectDialog($Process, [bool]$OpenHomeFirst = $false) {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
   if ($null -eq ("EvoraWin32" -as [type])) {
@@ -892,8 +909,15 @@ public static class EvoraWin32 {
   [EvoraWin32]::SetForegroundWindow($Process.MainWindowHandle) | Out-Null
   $root = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
   if ($null -eq $root) { throw (New-LauncherFailure "CONFIG_WINDOW_TIMEOUT" "Loxone Config main window was not found.") }
-  $czechManualConnect = "P$([char]0x0159)ipojit manu$([char]0x00E1)ln$([char]0x011B)..."
-  $names = @("Pripojit manualne...", $czechManualConnect, "Connect manually...", "Manuell verbinden...")
+  $manualActionId = "QApplication.MainWindow.CentralWidget.CentralStack.ProjectsPage.CProjectManagementView.MenuScrollArea.qt_scrollarea_viewport.MenuPane.Item"
+  $manualActionNames = @(
+    "pripojit manualne",
+    "pripojit rucne",
+    "manualni pripojeni",
+    "connect manually",
+    "manual connect",
+    "manuell verbinden"
+  )
 
   $findManualAction = {
     param($SearchRoot)
@@ -901,30 +925,69 @@ public static class EvoraWin32 {
     $matches = @()
     for ($index = 0; $index -lt $items.Count; $index++) {
       $item = $items.Item($index)
-      if ($item.Current.AutomationId -eq "QApplication.MainWindow.CentralWidget.CentralStack.ProjectsPage.CProjectManagementView.MenuScrollArea.qt_scrollarea_viewport.MenuPane.Item" -and $names -contains $item.Current.Name -and $item.Current.IsEnabled -and -not $item.Current.IsOffscreen) {
-        $matches += $item
-      }
+      try {
+        $normalizedName = Normalize-AutomationLabel ([string]$item.Current.Name)
+        $controlType = [string]$item.Current.ControlType.ProgrammaticName
+        $bounds = $item.Current.BoundingRectangle
+        $safeType = $controlType -match '\.(Button|ListItem|Hyperlink|Custom)$'
+        if ($manualActionNames -contains $normalizedName -and
+            $safeType -and
+            $item.Current.IsEnabled -and
+            -not $item.Current.IsOffscreen -and
+            $bounds.Width -gt 4 -and
+            $bounds.Height -gt 4) {
+          $matches += $item
+        }
+      } catch { }
     }
+    $exactMatches = @($matches | Where-Object { $_.Current.AutomationId -eq $manualActionId })
+    if ($exactMatches.Count -gt 0) { return $exactMatches[0] }
     if ($matches.Count -eq 1) { return $matches[0] }
     return $null
   }
 
-  Set-LauncherPhase "manual-connect-find-action"
-  $manualAction = & $findManualAction $root
-  if ($null -eq $manualAction) {
+  $openHomeAndFindAction = {
+    param($SearchRoot)
     $homeId = "QApplication.MainWindow.CentralWidget.CLxTitleBar.CTitleBarTabs.CTitleBarTabs::CHomeButton"
-    $homeButton = Get-AutomationElementById $root $homeId
-    if ($null -eq $homeButton -or -not $homeButton.Current.IsEnabled) {
+    $homeButton = Get-AutomationElementById $SearchRoot $homeId
+    if ($null -eq $homeButton -or -not $homeButton.Current.IsEnabled -or $homeButton.Current.IsOffscreen) {
       throw (New-LauncherFailure "CONFIG_HOME_NOT_FOUND" "The verified Home action was not found.")
     }
     Set-LauncherPhase "manual-connect-open-home"
     Invoke-AutomationElement $homeButton
-    $homeDeadline = (Get-Date).AddSeconds(15)
+    $homeDeadline = (Get-Date).AddSeconds(8)
+    $foundAction = $null
     do {
       Start-Sleep -Milliseconds 300
-      $root = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-      if ($null -ne $root) { $manualAction = & $findManualAction $root }
-    } while ($null -eq $manualAction -and (Get-Date) -lt $homeDeadline)
+      $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+      if ($null -ne $currentRoot) { $foundAction = & $findManualAction $currentRoot }
+    } while ($null -eq $foundAction -and (Get-Date) -lt $homeDeadline)
+    if ($null -ne $foundAction) { return $foundAction }
+
+    # Some Qt builds expose InvokePattern on the Home icon but ignore Invoke().
+    # Re-find the same verified button and click only its current UIA bounds.
+    $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+    $homeButton = if ($null -ne $currentRoot) { Get-AutomationElementById $currentRoot $homeId } else { $null }
+    if ($null -ne $homeButton -and $homeButton.Current.IsEnabled -and -not $homeButton.Current.IsOffscreen) {
+      Click-AutomationElementCenter $homeButton
+      $clickDeadline = (Get-Date).AddSeconds(10)
+      do {
+        Start-Sleep -Milliseconds 300
+        $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+        if ($null -ne $currentRoot) { $foundAction = & $findManualAction $currentRoot }
+      } while ($null -eq $foundAction -and (Get-Date) -lt $clickDeadline)
+    }
+    return $foundAction
+  }
+
+  Set-LauncherPhase "manual-connect-find-action"
+  $manualAction = if ($OpenHomeFirst) {
+    & $openHomeAndFindAction $root
+  } else {
+    & $findManualAction $root
+  }
+  if ($null -eq $manualAction -and -not $OpenHomeFirst) {
+    $manualAction = & $openHomeAndFindAction $root
   }
   if ($null -eq $manualAction) {
     throw (New-LauncherFailure "MANUAL_CONNECT_NOT_FOUND" "Manual connect action was not identified uniquely.")
@@ -1078,7 +1141,7 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
   # The job is already in the launching state. Sending the same transition a
   # second time made older Hub builds reject the request before UI automation.
   Set-LauncherPhase "open-manual-connect"
-  $dialog = Open-ManualConnectDialog $process
+  $dialog = Open-ManualConnectDialog $process ($launchMode -eq "existing")
   Set-LauncherPhase "fill-credentials"
   $connectButton = Wait-ForVerifiedCredentials $dialog $Job
   Post-JobStatus $BaseUrl $Token $jobId "connecting" "Credentials entered; connecting to the Miniserver."

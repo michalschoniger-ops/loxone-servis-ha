@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.32.1
+
+- Nasazuje Evora Smart Hub 3.0.32 s jedinou publikovanou kamerou „Parkoviště - Recepce - 2“ jako jednoduchým autentizovaným JPEG snímkem. Hub ani Evora Smart Menu 3.0.16 už v aktivní klientské cestě nespouštějí HLS, WebRTC ani MJPEG video relaci; další snímek načtou až po dokončení předchozího a při chybě zachovají poslední platný obraz.
+- Součástí je Windows Config Launcher 3.0.0.7. V již otevřeném Configu nejdřív ověří a stiskne tlačítko Domů a potom pokračuje přes Ručně připojit, vyplnění údajů a Připojit. Jeho existující automatická aktualizace ověřuje autentizovaný manifest, SHA-256 i čerstvý heartbeat a při selhání vrátí předchozí verzi.
+- Vratným zdrojem je živý Hub 3.0.31. Databáze, šifrovaná připojení, názvy kamer, Excel/Graph stav ani trvalý adresář `/data` se nemění.
+
 ## 3.0.31.1
 
 - Nasazuje Evora Smart Hub 3.0.31 s pořadově adresovatelnými HLS segmenty v checksumem připnutém go2rtc 1.9.14. Jedna interní relace serializuje tvorbu fragmentů a poslední čtyři drží pro opakované či souběžné čtení; Hub nad ní zachovává single-flight cache 12 segmentů.

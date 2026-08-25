@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.32
+
+- Po živém zátěžovém důkazu Hubu 3.0.31, ve kterém 12 z 20 HLS segmentů skončilo HTTP 502, už Hub ani Evora Smart Menu nevydávají problematický proud za spolehlivé video. Dočasně publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2` a oba klienti načítají obyčejný autentizovaný JPEG snímek přímo přes NVR. Další požadavek začíná až po dokončení předchozího, nejdříve po deseti sekundách; při přechodné chybě zůstává poslední platný obraz. Aktivní klientská cesta nepoužívá HLS, WebRTC ani MJPEG stream.
+- Evora Smart Menu 3.0.16 odstraňuje `AVPlayer` a AVFoundation z kamerového náhledu. Globální i Miniserverové hledání vrací odpovídající Miniservery rovnou jako jednotlivé výsledky bez složkového mezikroku a po přímém kliknutí zachová fokus vyhledávacího pole.
+- Windows Config Launcher 3.0.0.7 v režimu již spuštěného Configu nejdřív najde a aktivuje přesný UI Automation prvek tlačítka Domů a teprve potom provede stejný tok jako nové okno: Ručně připojit, vyplnit údaje a Připojit. Pro Qt sestavení, která ignorují `InvokePattern`, znovu ověří tentýž prvek a klikne do jeho aktuálních hranic. Verze se publikuje existujícím autentizovaným atomickým self-updaterem se SHA-256, heartbeat potvrzením a rollbackem.
+
 ## 3.0.31
 
 - Checksumem připnutý go2rtc 1.9.14 nyní skutečně čte pořadové číslo `n`, serializuje vytváření fragmentů jedné HLS relace a drží poslední čtyři hotové segmenty v paměti. Opakovaný nebo souběžný klient tak dostane stejný očíslovaný fragment místo destruktivního odebrání dalšího bufferu.

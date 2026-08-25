@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.27
+
+- Video gateway registruje shodný RTSP zdroj pouze jednou a souběžný neúspěšný klient už nemaže stream používaný Hubem nebo Evora Smart Menu. Publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2`; živý obraz je dál H.264/H.265 přes WebRTC/HLS, nikdy MJPEG.
+- Evora Smart Menu 3.0.14 při hledání zobrazuje odpovídající Miniservery přímo pod sebou bez otevírání složek. Bez aktivního hledání zůstává původní složkové členění.
+- Volba Loxone Configu je pouze v Evora Smart Menu: uživatel zvolí již spuštěnou přesnou verzi nebo nové okno. Windows Launcher 3.0.0.6 režim přenese až do cílové relace a při chybějícím běžícím Configu vrátí pravdivou chybu místo tichého otevření jinam.
+- Schéma databáze 22 ukládá režim spuštění u jednorázové Config úlohy; stávající Hub akce zůstává kompatibilně v režimu nového okna.
+
 ## 3.0.26
 
 - Obě kontejnerové build vrstvy načítají systémové balíky přes HTTPS; minimální runtime před prvním stažením převezme důvěryhodný certifikační svazek z build vrstvy, takže se nevypíná ověřování TLS ani se nepoužívá port 80.

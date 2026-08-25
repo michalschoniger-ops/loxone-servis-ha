@@ -803,7 +803,10 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }
         const serial = serialSchema.parse(request.params.serial);
-        const input = z.object({ action: z.enum(["loxone_app", "loxone_config"]) }).parse(request.body);
+        const input = z.object({
+            action: z.enum(["loxone_app", "loxone_config"]),
+            launchMode: z.enum(["existing", "new_window"]).optional(),
+        }).strict().parse(request.body);
         const server = getMiniserver(db, serial);
         if (!server)
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
@@ -832,11 +835,13 @@ export async function registerApi(app, db, jobs) {
             });
         }
         const release = exactConfigRelease(db, server.currentFirmware);
+        const launchMode = input.launchMode ?? "new_window";
         const job = createConfigLaunchJob(db, {
             serial,
             actorUserId: identity.ownerUserId,
             agentId: agent.id,
             requiredVersion: server.currentFirmware,
+            launchMode,
             connectionUrl: server.connectionUrl ?? `https://dns.loxonecloud.com/${serial}`,
             configUrl: release?.configUrl ?? null,
         });
@@ -845,6 +850,7 @@ export async function registerApi(app, db, jobs) {
             jobId: job.id,
             agentId: agent.id,
             requiredVersion: job.requiredVersion,
+            launchMode: job.launchMode,
         });
         return reply.code(202).send({ action: input.action, job });
     });
@@ -932,6 +938,7 @@ export async function registerApi(app, db, jobs) {
                 id: job.id,
                 serial: job.serial,
                 requiredVersion: job.required_version,
+                launchMode: job.launch_mode,
                 connectionAddress: job.connection_url,
                 configUrl: job.config_url,
                 username: credentials.username,
@@ -2193,6 +2200,7 @@ export async function registerApi(app, db, jobs) {
             actorUserId: user.id,
             agentId: agent.id,
             requiredVersion: server.currentFirmware,
+            launchMode: "new_window",
             connectionUrl: server.connectionUrl ?? `https://dns.loxonecloud.com/${serial}`,
             configUrl: release?.configUrl ?? null,
         });

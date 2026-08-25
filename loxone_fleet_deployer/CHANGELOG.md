@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.27.1
+
+- Nasazuje Evora Smart Hub 3.0.27 s idempotentní registrací stejného RTSP zdroje ve video bráně, aby souběžné náhledy Hubu a Menu vzájemně nemažily aktivní stream kamery „Parkoviště - Recepce - 2“. Aktivní přenos zůstává H.264 přes zabezpečené HLS/WebRTC a nepoužívá MJPEG.
+- Součástí je Evora Smart Menu 3.0.14 s přímými výsledky Miniserverů při hledání a volbou otevření přesné verze Loxone Configu v již spuštěném procesu nebo v novém okně. Windows Config Launcher 3.0.0.6 režim respektuje a starý klient zůstává zpětně kompatibilní.
+- Před výměnou zachová vratný zdroj aktuálního Hubu 3.0.26; databázi, uložené přístupy ani trvalý adresář `/data` nemění.
+
 ## 3.0.26.3
 
 - Před prvním HTTPS stažením přenáší do minimální Node runtime vrstvy důvěryhodný certifikační svazek z build vrstvy. Řeší živě zjištěný bootstrap certifikátů bez vypnutí TLS kontroly; aplikační verze zůstává 3.0.26.

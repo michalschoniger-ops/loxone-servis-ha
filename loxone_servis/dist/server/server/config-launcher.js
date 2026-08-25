@@ -6,7 +6,7 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
 export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
-export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.5";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.6";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);
@@ -99,6 +99,7 @@ function publicJob(row) {
         serial: row.serial,
         agentId: row.agent_id,
         requiredVersion: row.required_version,
+        launchMode: row.launch_mode,
         configUrl: row.config_url,
         state: row.state,
         message: row.message,
@@ -214,8 +215,8 @@ export function createConfigLaunchJob(db, input) {
     const now = new Date();
     const id = randomUUID();
     const expiresAt = new Date(now.getTime() + JOB_TTL_MS).toISOString();
-    db.prepare(`INSERT INTO config_launch_jobs(id,serial,agent_id,actor_user_id,required_version,connection_url,config_url,state,message,created_at,updated_at,expires_at)
-     VALUES(?,?,?,?,?,?,?,'queued','Čeká na Windows Launcher.',?,?,?)`).run(id, input.serial, input.agentId, input.actorUserId, input.requiredVersion, input.connectionUrl, input.configUrl, now.toISOString(), now.toISOString(), expiresAt);
+    db.prepare(`INSERT INTO config_launch_jobs(id,serial,agent_id,actor_user_id,required_version,launch_mode,connection_url,config_url,state,message,created_at,updated_at,expires_at)
+     VALUES(?,?,?,?,?,?,?,?,'queued','Čeká na Windows Launcher.',?,?,?)`).run(id, input.serial, input.agentId, input.actorUserId, input.requiredVersion, input.launchMode, input.connectionUrl, input.configUrl, now.toISOString(), now.toISOString(), expiresAt);
     return getConfigLaunchJob(db, id);
 }
 export function getConfigLaunchJob(db, id) {

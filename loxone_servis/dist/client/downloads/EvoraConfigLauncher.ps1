@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.5"
+$HelperVersion = "3.0.0.6"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -154,6 +154,7 @@ function Get-SafeExceptionFingerprint($ErrorRecord) {
 
 function Get-SafeFailureMessage([string]$Code) {
   switch ($Code) {
+    "CONFIG_NOT_RUNNING" { return "The requested Loxone Config version is not already open." }
     "CONFIG_WINDOW_TIMEOUT" { return "Loxone Config did not finish opening in time." }
     "CONFIG_HOME_NOT_FOUND" { return "Loxone Config Home could not be opened safely." }
     "MANUAL_CONNECT_NOT_FOUND" { return "The verified Manual Connect action was not found." }
@@ -793,7 +794,21 @@ function Invoke-AutomationElement($Element) {
   }
 }
 
-function Find-ReadyConfigProcess([int]$StartedProcessId, [string]$ExecutablePath, [int]$TimeoutSeconds) {
+function Find-ExistingConfigProcess([string]$ExecutablePath) {
+  foreach ($candidateProcess in @(Get-Process "LoxoneConfig" -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending)) {
+    try {
+      $pathMatches = [string]::Equals([string]$candidateProcess.Path, $ExecutablePath, [StringComparison]::OrdinalIgnoreCase)
+      if ($pathMatches -and $candidateProcess.MainWindowHandle -ne 0) {
+        try { $candidateProcess.WaitForInputIdle(1500) | Out-Null } catch { }
+        $candidateProcess.Refresh()
+        if ($candidateProcess.MainWindowHandle -ne 0) { return $candidateProcess }
+      }
+    } catch { }
+  }
+  return $null
+}
+
+function Find-ReadyConfigProcess([int]$StartedProcessId, [string]$ExecutablePath, [DateTime]$NotBefore, [int]$TimeoutSeconds) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   do {
     $candidates = @()
@@ -803,7 +818,8 @@ function Find-ReadyConfigProcess([int]$StartedProcessId, [string]$ExecutablePath
     foreach ($candidateProcess in @($candidates | Select-Object -Unique)) {
       try {
         $pathMatches = [string]::Equals([string]$candidateProcess.Path, $ExecutablePath, [StringComparison]::OrdinalIgnoreCase)
-        if ($pathMatches -and $candidateProcess.MainWindowHandle -ne 0) {
+        $belongsToNewLaunch = $candidateProcess.Id -eq $StartedProcessId -or $candidateProcess.StartTime.ToUniversalTime() -ge $NotBefore.AddSeconds(-2)
+        if ($pathMatches -and $belongsToNewLaunch -and $candidateProcess.MainWindowHandle -ne 0) {
           try { $candidateProcess.WaitForInputIdle(1500) | Out-Null } catch { }
           $candidateProcess.Refresh()
           if ($candidateProcess.MainWindowHandle -ne 0) { return $candidateProcess }
@@ -1040,11 +1056,24 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
     return
   }
 
-  Set-LauncherPhase "start-config"
-  Post-JobStatus $BaseUrl $Token $jobId "launching" "Starting exact Loxone Config $requiredVersion."
-  $started = Start-Process -FilePath $candidate.Path -PassThru
-  Set-LauncherPhase "wait-config-window"
-  $process = Find-ReadyConfigProcess $started.Id ([string]$candidate.Path) 45
+  $launchModeValue = if ($null -ne $Job.PSObject.Properties["launchMode"]) { [string]$Job.launchMode } else { "new_window" }
+  $launchMode = if ($launchModeValue -eq "existing") { "existing" } else { "new_window" }
+  $targetLabel = if ($launchMode -eq "existing") { "the already-open window" } else { "a new window" }
+  if ($launchMode -eq "existing") {
+    Set-LauncherPhase "find-existing-config"
+    $process = Find-ExistingConfigProcess ([string]$candidate.Path)
+    if ($null -eq $process) {
+      throw (New-LauncherFailure "CONFIG_NOT_RUNNING" "The exact requested Loxone Config version is not already open.")
+    }
+    Post-JobStatus $BaseUrl $Token $jobId "launching" "Using already-open Loxone Config $requiredVersion."
+  } else {
+    Set-LauncherPhase "start-config"
+    Post-JobStatus $BaseUrl $Token $jobId "launching" "Starting exact Loxone Config $requiredVersion in a new window."
+    $startedAt = (Get-Date).ToUniversalTime()
+    $started = Start-Process -FilePath $candidate.Path -PassThru
+    Set-LauncherPhase "wait-config-window"
+    $process = Find-ReadyConfigProcess $started.Id ([string]$candidate.Path) $startedAt 45
+  }
 
   # The job is already in the launching state. Sending the same transition a
   # second time made older Hub builds reject the request before UI automation.
@@ -1083,7 +1112,7 @@ function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
       # closes. Require an eight-second error-free window before success.
       if (((Get-Date) - $dialogClosedAt).TotalSeconds -ge 8) {
         Post-JobStatus $BaseUrl $Token $jobId "succeeded" "Loxone Config accepted the Miniserver login."
-        Show-LauncherNotice "Evora Smart Hub" "Loxone Config $requiredVersion was opened and connected."
+        Show-LauncherNotice "Evora Smart Hub" "Loxone Config $requiredVersion was connected in $targetLabel."
         return
       }
     } else {
@@ -1167,7 +1196,8 @@ try {
           Start-ConfigJob $response.job $configuredHubUrl $agentToken $executables
         } catch {
           $failureCode = if ($_.Exception.Data.Contains("EvoraCode")) { [string]$_.Exception.Data["EvoraCode"] } else { "UI_AUTOMATION_FAILED" }
-          $failureMessage = "$(Get-SafeFailureMessage $failureCode) Failed step: $script:LauncherPhase. Config remains open for safe manual connection."
+          $safeRemainder = if ($failureCode -eq "CONFIG_NOT_RUNNING") { "No Config window was changed." } else { "Config remains open for safe manual connection." }
+          $failureMessage = "$(Get-SafeFailureMessage $failureCode) Failed step: $script:LauncherPhase. $safeRemainder"
           Write-SafeLog "Config launch job failed safely ($failureCode; $(Get-SafeExceptionFingerprint $_))."
           try { Post-JobStatus $configuredHubUrl $agentToken ([string]$response.job.id) "failed" $failureMessage $failureCode } catch { }
           Show-LauncherNotice "Evora Smart Hub" "$failureMessage Details are available in the Hub."

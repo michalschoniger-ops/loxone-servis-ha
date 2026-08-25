@@ -740,6 +740,7 @@ function applyMigrations(db) {
       agent_id TEXT NOT NULL,
       actor_user_id TEXT NOT NULL,
       required_version TEXT NOT NULL,
+      launch_mode TEXT NOT NULL DEFAULT 'new_window' CHECK(launch_mode IN ('existing','new_window')),
       connection_url TEXT NOT NULL,
       config_url TEXT,
       state TEXT NOT NULL CHECK(state IN ('queued','delivered','launching','connecting','succeeded','missing_config','failed','expired')),
@@ -969,6 +970,7 @@ function applyMigrations(db) {
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
     addColumn(db, "config_launcher_agents", "diagnostics_json TEXT NOT NULL DEFAULT '{}'");
     addColumn(db, "config_launcher_agents", "diagnostics_at TEXT");
+    addColumn(db, "config_launch_jobs", "launch_mode TEXT NOT NULL DEFAULT 'new_window' CHECK(launch_mode IN ('existing','new_window'))");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
@@ -978,6 +980,7 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(19, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(20, new Date().toISOString());
     migrateServiceTaskExcelWritebackStates(db);
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(22, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

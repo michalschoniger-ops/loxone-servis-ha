@@ -148,6 +148,8 @@ async function automaticWebRtcCandidates() {
 class CameraVideoGateway {
     child = null;
     starting = null;
+    registeredStreams = new Map();
+    registeringStreams = new Map();
     async terminateChild(child, graceMs = 2_000) {
         if (child.exitCode !== null || child.signalCode !== null)
             return;
@@ -193,6 +195,8 @@ class CameraVideoGateway {
     async startProcess() {
         if (await this.gatewayResponds())
             return;
+        this.registeredStreams.clear();
+        this.registeringStreams.clear();
         const candidates = await automaticWebRtcCandidates();
         const inlineConfig = JSON.stringify({
             api: { listen: "127.0.0.1:1984" },
@@ -207,8 +211,11 @@ class CameraVideoGateway {
         });
         this.child = child;
         child.once("exit", () => {
-            if (this.child === child)
+            if (this.child === child) {
                 this.child = null;
+                this.registeredStreams.clear();
+                this.registeringStreams.clear();
+            }
         });
         const spawnError = new Promise((_resolve, reject) => {
             child.once("error", () => reject(new CameraIntegrationError("Interní video brána není v tomto sestavení dostupná.", "CAMERA_STREAM_FAILED")));
@@ -267,22 +274,31 @@ class CameraVideoGateway {
         }
     }
     async registerStream(name, source) {
+        await this.ensureReady();
+        if (this.registeredStreams.get(name) === source)
+            return;
+        const pending = this.registeringStreams.get(name);
+        if (pending) {
+            await pending;
+            if (this.registeredStreams.get(name) === source)
+                return;
+        }
         const query = new URLSearchParams({ name, src: source });
-        await this.request(`/api/streams?${query.toString()}`, { method: "PATCH" }, async (response) => {
+        const registration = this.request(`/api/streams?${query.toString()}`, { method: "PATCH" }, async (response) => {
             await response.body?.cancel();
             if (!response.ok) {
                 throw new CameraIntegrationError("NVR stream nelze připojit k video bráně.", "CAMERA_STREAM_FAILED");
             }
+            this.registeredStreams.set(name, source);
         });
-    }
-    async unregisterStream(name) {
-        const query = new URLSearchParams({ src: name });
-        await this.request(`/api/streams?${query.toString()}`, { method: "DELETE" }, async (response) => {
-            await response.body?.cancel();
-            if (!response.ok && response.status !== 404) {
-                throw new CameraIntegrationError("Video brána neuvolnila nefunkční stream.", "CAMERA_STREAM_FAILED");
-            }
-        }, 3_000);
+        this.registeringStreams.set(name, registration);
+        try {
+            await registration;
+        }
+        finally {
+            if (this.registeringStreams.get(name) === registration)
+                this.registeringStreams.delete(name);
+        }
     }
     async exchangeWebRtc(db, channelId, quality, offer) {
         if (!offer.startsWith("v=0") || Buffer.byteLength(offer, "utf8") > MAX_SDP_BYTES) {
@@ -303,13 +319,11 @@ class CameraVideoGateway {
                     return { ok: response.ok, answer: body.toString("utf8") };
                 });
                 if (!result.ok || !result.answer.startsWith("v=0")) {
-                    await this.unregisterStream(name).catch(() => undefined);
                     continue;
                 }
                 return { answer: result.answer, codec: sdpCodec(result.answer), source: source.source };
             }
             catch (error) {
-                await this.unregisterStream(name).catch(() => undefined);
                 if (error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID")
                     throw error;
             }
@@ -331,7 +345,6 @@ class CameraVideoGateway {
                     return { ok: response.ok, body };
                 });
                 if (!result.ok) {
-                    await this.unregisterStream(name).catch(() => undefined);
                     continue;
                 }
                 const master = rewriteCameraHlsMasterPlaylist(result.body.toString("utf8"));
@@ -342,7 +355,6 @@ class CameraVideoGateway {
                 };
             }
             catch (error) {
-                await this.unregisterStream(name).catch(() => undefined);
                 if (error instanceof CameraIntegrationError && error.code === "CAMERA_CONFIG_INVALID")
                     throw error;
             }
@@ -387,6 +399,8 @@ class CameraVideoGateway {
     async stop() {
         const child = this.child;
         this.child = null;
+        this.registeredStreams.clear();
+        this.registeringStreams.clear();
         if (!child)
             return;
         await this.terminateChild(child);

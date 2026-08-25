@@ -153,6 +153,28 @@ export function cameraHlsSessionId(input) {
     }
     return parseHlsRelativeUrl(playlistLine, "playlist.m3u8").searchParams.get("id") ?? "";
 }
+export function cameraHlsLatestSegment(input, expectedSessionId) {
+    if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
+        throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
+    }
+    const lines = input.trim().split(/\r?\n/).reverse();
+    for (const line of lines) {
+        const resource = line.startsWith("segment.m4s?")
+            ? "segment.m4s"
+            : line.startsWith("segment.ts?")
+                ? "segment.ts"
+                : null;
+        if (!resource)
+            continue;
+        const parsed = parseHlsRelativeUrl(line, resource);
+        const sequence = parsed.searchParams.get("n") ?? "";
+        if (parsed.searchParams.get("id") !== expectedSessionId || !/^\d{1,12}$/.test(sequence)) {
+            throw new CameraIntegrationError("HLS segment nepatří do očekávané relace.", "CAMERA_STREAM_FAILED");
+        }
+        return { resource, sequence };
+    }
+    return null;
+}
 export function rewriteCameraHlsMediaPlaylist(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
         throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
@@ -219,6 +241,7 @@ class CameraVideoGateway {
     hlsSessionsByKey = new Map();
     hlsSessionsById = new Map();
     hlsMasterRequests = new Map();
+    keepWarmState = null;
     clearGatewayState() {
         this.registeredStreams.clear();
         this.registeringStreams.clear();
@@ -544,7 +567,47 @@ class CameraVideoGateway {
             throw error;
         }
     }
+    startKeepWarm(db, channelId, quality = "preview") {
+        if (this.keepWarmState)
+            return;
+        const state = { stopped: false, timer: null };
+        this.keepWarmState = state;
+        let failures = 0;
+        const schedule = (delayMs) => {
+            if (state.stopped)
+                return;
+            state.timer = setTimeout(() => {
+                state.timer = null;
+                void (async () => {
+                    try {
+                        const master = await this.hlsMaster(db, channelId, quality, "h264");
+                        const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
+                        const playlist = await this.hlsResource("playlist.m3u8", sessionId);
+                        const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), sessionId);
+                        if (latest)
+                            await this.hlsResource(latest.resource, sessionId, latest.sequence);
+                        failures = 0;
+                        schedule(4_000);
+                    }
+                    catch {
+                        failures += 1;
+                        schedule(Math.min(30_000, 1_000 * (2 ** Math.min(failures - 1, 5))));
+                    }
+                })();
+            }, delayMs);
+            state.timer.unref();
+        };
+        schedule(250);
+    }
     async stop() {
+        const keepWarm = this.keepWarmState;
+        this.keepWarmState = null;
+        if (keepWarm) {
+            keepWarm.stopped = true;
+            if (keepWarm.timer)
+                clearTimeout(keepWarm.timer);
+            keepWarm.timer = null;
+        }
         const child = this.child;
         this.child = null;
         this.clearGatewayState();
@@ -554,6 +617,9 @@ class CameraVideoGateway {
     }
 }
 export const cameraVideoGateway = new CameraVideoGateway();
+export function startCameraVideoGatewayKeepWarm(db, channelId) {
+    cameraVideoGateway.startKeepWarm(db, channelId, "preview");
+}
 export async function stopCameraVideoGateway() {
     await cameraVideoGateway.stop();
 }

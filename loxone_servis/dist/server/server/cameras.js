@@ -4,9 +4,11 @@ import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 const CAMERA_INTEGRATION_ID = "primary";
 export const PUBLISHED_CAMERA_CHANNEL_ID = 7;
-const SNAPSHOT_CACHE_MS = 4_000;
+export const PUBLISHED_CAMERA_NAME = "Parkoviště a brána";
+const SNAPSHOT_REFRESH_MS = 10_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 const MAX_JPEG_BYTES = 4 * 1024 * 1024;
+const CAMERA_MONITOR_INTERVAL_MS = 60_000;
 export class CameraIntegrationError extends Error {
     code;
     constructor(message, code) {
@@ -368,6 +370,55 @@ function cameraRow(db) {
 export function getCameraOverview(db) {
     return rowToOverview(cameraRow(db));
 }
+export const MILESIGHT_P2P_SDK_REQUIREMENT = "Čeká se na oficiální Milesight NVR P2P SDK a licenci: serverové API pro přihlášení, relaci podle MAC/P2P, diagnostiku zařízení a kanálů, live transport, podporované platformy a právo redistribuce.";
+/**
+ * Provider-facing fleet read model. The current LAN provider uses the public
+ * NVR SDK endpoint on a private address. The P2P provider is deliberately a
+ * capability boundary only; no proprietary cloud protocol is guessed or
+ * reverse engineered.
+ */
+export function getCameraFleetOverview(db) {
+    const rows = db.prepare("SELECT * FROM camera_integrations ORDER BY created_at,id").all();
+    return {
+        recorders: rows.map((row) => {
+            const overview = rowToOverview(row);
+            const onlineCount = overview.channels.filter((channel) => channel.online).length;
+            return {
+                id: row.id,
+                name: overview.name,
+                providerId: "milesight_lan",
+                transport: "local_ip",
+                connectionState: overview.connectionState,
+                lastCheckedAt: overview.lastCheckedAt,
+                lastSuccessAt: overview.lastSuccessAt,
+                lastError: overview.lastError,
+                cameraCount: overview.channels.length,
+                onlineCount,
+                offlineCount: overview.channels.length - onlineCount,
+            };
+        }),
+        providers: [
+            {
+                id: "milesight_lan",
+                label: "Milesight NVR · privátní LAN",
+                transport: "local_ip",
+                state: "available",
+                diagnostics: true,
+                liveVideo: true,
+                message: "Přímé lokální SDK a RTSP; NVR nesmí být vystavené do veřejného internetu.",
+            },
+            {
+                id: "milesight_p2p",
+                label: "Milesight NVR · P2P podle MAC",
+                transport: "milesight_p2p",
+                state: "sdk_required",
+                diagnostics: false,
+                liveVideo: false,
+                message: MILESIGHT_P2P_SDK_REQUIREMENT,
+            },
+        ],
+    };
+}
 /**
  * Temporary, non-destructive publication scope requested for Hub and Menu.
  * The complete NVR inventory remains stored so all channels can be restored
@@ -376,7 +427,13 @@ export function getCameraOverview(db) {
 export function publishCameraOverview(overview) {
     return {
         ...overview,
-        channels: overview.channels.filter((channel) => channel.id === PUBLISHED_CAMERA_CHANNEL_ID),
+        channels: overview.channels
+            .filter((channel) => channel.id === PUBLISHED_CAMERA_CHANNEL_ID)
+            .map((channel) => ({
+            ...channel,
+            name: PUBLISHED_CAMERA_NAME,
+            sourceName: channel.sourceName ?? channel.name,
+        })),
     };
 }
 export function getPublishedCameraOverview(db) {
@@ -414,7 +471,9 @@ export async function saveCameraIntegration(db, input) {
     clearSnapshotCache();
     return getCameraOverview(db);
 }
-export async function refreshCameraIntegration(db) {
+const cameraRefreshInFlight = new WeakMap();
+const cameraMonitors = new WeakMap();
+async function performCameraIntegrationRefresh(db) {
     const row = cameraRow(db);
     if (!row)
         throw new CameraIntegrationError("NVR zatím není nastavené.", "CAMERA_CONFIG_INVALID");
@@ -424,7 +483,6 @@ export async function refreshCameraIntegration(db) {
         const channels = preserveCustomCameraNames(rowToOverview(row).channels, discovery.channels);
         db.prepare(`UPDATE camera_integrations SET vendor=?,model=?,firmware=?,connection_state='online',channels_json=?,
        last_checked_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE id=?`).run(discovery.vendor, discovery.model, discovery.firmware, JSON.stringify(channels), now, now, now, row.id);
-        clearSnapshotCache();
     }
     catch (error) {
         const state = error instanceof CameraIntegrationError && error.code === "CAMERA_AUTH_FAILED"
@@ -435,6 +493,51 @@ export async function refreshCameraIntegration(db) {
         throw error;
     }
     return getCameraOverview(db);
+}
+/**
+ * Manual and scheduled checks share one promise. The NVR never receives two
+ * overlapping camera-list requests from this Hub process.
+ */
+export function refreshCameraIntegration(db) {
+    const existing = cameraRefreshInFlight.get(db);
+    if (existing)
+        return existing;
+    const pending = performCameraIntegrationRefresh(db).finally(() => {
+        if (cameraRefreshInFlight.get(db) === pending)
+            cameraRefreshInFlight.delete(db);
+    });
+    cameraRefreshInFlight.set(db, pending);
+    return pending;
+}
+export function stopCameraIntegrationMonitor(db) {
+    const monitor = cameraMonitors.get(db);
+    if (!monitor)
+        return;
+    monitor.stopped = true;
+    if (monitor.timer)
+        clearTimeout(monitor.timer);
+    monitor.timer = null;
+    cameraMonitors.delete(db);
+}
+export function startCameraIntegrationMonitor(db, intervalMs = CAMERA_MONITOR_INTERVAL_MS) {
+    if (cameraMonitors.has(db))
+        return;
+    const monitor = { timer: null, stopped: false };
+    cameraMonitors.set(db, monitor);
+    const schedule = (delayMs) => {
+        if (monitor.stopped)
+            return;
+        monitor.timer = setTimeout(() => {
+            monitor.timer = null;
+            void (async () => {
+                if (cameraRow(db))
+                    await refreshCameraIntegration(db).catch(() => undefined);
+                schedule(intervalMs);
+            })();
+        }, delayMs);
+        monitor.timer.unref();
+    };
+    schedule(1_000);
 }
 export function renameCameraChannel(db, channelId, requestedName) {
     const row = cameraRow(db);
@@ -1013,6 +1116,19 @@ function runSnapshotQueued(operation) {
 function clearSnapshotCache() {
     snapshotCache.clear();
 }
+function refreshCameraSnapshot(row, channel) {
+    const existing = snapshotInFlight.get(channel.id);
+    if (existing)
+        return existing;
+    const pending = runSnapshotQueued(() => uncachedSnapshot(storedCameraAccess(row), channel.streamPath))
+        .then((jpeg) => {
+        snapshotCache.set(channel.id, { createdAt: Date.now(), jpeg });
+        return jpeg;
+    })
+        .finally(() => snapshotInFlight.delete(channel.id));
+    snapshotInFlight.set(channel.id, pending);
+    return pending;
+}
 export async function getCameraSnapshot(db, channelId) {
     const row = cameraRow(db);
     if (!row)
@@ -1022,17 +1138,17 @@ export async function getCameraSnapshot(db, channelId) {
     if (!channel)
         throw new CameraIntegrationError("Kamera nebyla nalezena nebo není připojená.", "CAMERA_CONFIG_INVALID");
     const cached = snapshotCache.get(channelId);
-    if (cached && Date.now() - cached.createdAt < SNAPSHOT_CACHE_MS)
+    if (cached) {
+        if (Date.now() - cached.createdAt >= SNAPSHOT_REFRESH_MS && !snapshotInFlight.has(channelId)) {
+            // The last verified frame remains immediately available while the NVR
+            // produces its next JPEG. A transient RTSP failure must not blank Hub or
+            // Menu after they have already shown a valid direct-NVR image.
+            void refreshCameraSnapshot(row, channel).catch(() => undefined);
+        }
         return cached.jpeg;
-    const existing = snapshotInFlight.get(channelId);
-    if (existing)
-        return existing;
-    const pending = runSnapshotQueued(() => uncachedSnapshot(storedCameraAccess(row), channel.streamPath))
-        .then((jpeg) => {
-        snapshotCache.set(channelId, { createdAt: Date.now(), jpeg });
-        return jpeg;
-    })
-        .finally(() => snapshotInFlight.delete(channelId));
-    snapshotInFlight.set(channelId, pending);
-    return pending;
+    }
+    return refreshCameraSnapshot(row, channel);
+}
+export async function prewarmPublishedCameraSnapshot(db) {
+    await getCameraSnapshot(db, PUBLISHED_CAMERA_CHANNEL_ID);
 }

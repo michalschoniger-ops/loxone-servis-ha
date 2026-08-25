@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.33.1
+
+- Nasazuje Evora Smart Hub 3.0.33 s jediným publikovaným kanálem 7 „Parkoviště a brána“. Přímý RTSP zdroj zůstává uvnitř Hubu, checksumem připnutý go2rtc jej převádí na autentizované HLS a server úspornou preview relaci průběžně předehřívá bez MJPEG.
+- Součástí jsou Evora Smart Menu 3.0.17 pro macOS, nové nativní Windows Menu 3.0.17 s DPAPI a ověřovaným self-updatem a Windows Config Launcher 3.0.0.8. Hub i obě Menu zobrazují stav NVR, poslední kontroly a úplný inventář všech kamer; obraz zůstává omezený na kanál 7.
+- Ruční Excel synchronizace opravuje HTTP 415 a privátní SharePoint čte pouze přes podporovanou Microsoft Graph device-code relaci. Vratným zdrojem je živý Hub 3.0.32; databáze, šifrovaná připojení, vlastní názvy, DPAPI párování ani trvalý adresář `/data` se nemění.
+
 ## 3.0.32.1
 
 - Nasazuje Evora Smart Hub 3.0.32 s jedinou publikovanou kamerou „Parkoviště - Recepce - 2“ jako jednoduchým autentizovaným JPEG snímkem. Hub ani Evora Smart Menu 3.0.16 už v aktivní klientské cestě nespouštějí HLS, WebRTC ani MJPEG video relaci; další snímek načtou až po dokončení předchozího a při chybě zachovají poslední platný obraz.

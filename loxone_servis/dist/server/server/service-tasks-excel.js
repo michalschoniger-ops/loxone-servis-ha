@@ -7,7 +7,6 @@ import { downloadServiceTaskWorkbookViaGraph, getServiceTaskExcelGraphStatus, se
 const TARGET_SHEET = "PROGRAMOVÁNÍ - DOKONČOVÁNÍ";
 const SYNC_INTERVAL_MS = 60 * 60_000;
 const ERROR_RETRY_MS = 5 * 60_000;
-const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;
 const MAX_XML_BYTES = 32 * 1024 * 1024;
 const RECENT_DUPLICATE_MAX_AGE_MS = 24 * 60 * 60_000;
 const READ_ONLY_MESSAGE = "Excel se synchronizuje pouze směrem do Hubu; zápis zpět je nyní vypnutý.";
@@ -418,40 +417,20 @@ async function downloadWorkbook(db) {
     if (!config.serviceTasksExcelShareUrl)
         throw new ServiceTaskExcelError("Zdrojový Excel zatím není v nastavení Hubu připojen.", "NOT_CONFIGURED");
     const graph = getServiceTaskExcelGraphStatus(db);
-    if (graph.configured) {
-        if (!serviceTaskExcelGraphReady(db)) {
-            throw new ServiceTaskExcelError("Automatická synchronizace čeká na připojení Microsoft 365.", "GRAPH_AUTH_REQUIRED");
-        }
-        try {
-            return await downloadServiceTaskWorkbookViaGraph(db);
-        }
-        catch (error) {
-            if (error instanceof ServiceTaskExcelGraphError)
-                throw new ServiceTaskExcelError(error.message, error.code);
-            throw new ServiceTaskExcelError("Microsoft Graph nedokázal načíst zdrojový Excel.", "GRAPH_SYNC_FAILED");
-        }
+    if (!graph.configured) {
+        throw new ServiceTaskExcelError("Microsoft Graph není nastavený; privátní SharePoint nelze ze serveru bezpečně číst anonymně.", "GRAPH_NOT_CONFIGURED");
     }
-    let response;
+    if (!serviceTaskExcelGraphReady(db)) {
+        throw new ServiceTaskExcelError("Automatická synchronizace čeká na připojení Microsoft 365.", "GRAPH_AUTH_REQUIRED");
+    }
     try {
-        response = await fetch(config.serviceTasksExcelShareUrl, {
-            signal: AbortSignal.timeout(30_000),
-            redirect: "follow",
-            cache: "no-store",
-            headers: { accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-        });
+        return await downloadServiceTaskWorkbookViaGraph(db);
     }
-    catch {
-        throw new ServiceTaskExcelError("SharePoint s Excelem není právě dostupný.", "DOWNLOAD_FAILED");
+    catch (error) {
+        if (error instanceof ServiceTaskExcelGraphError)
+            throw new ServiceTaskExcelError(error.message, error.code);
+        throw new ServiceTaskExcelError("Microsoft Graph nedokázal načíst zdrojový Excel.", "GRAPH_SYNC_FAILED");
     }
-    if (!response.ok)
-        throw new ServiceTaskExcelError(`SharePoint odmítl načtení Excelu (HTTP ${response.status}).`, "DOWNLOAD_REJECTED");
-    const declaredSize = Number(response.headers.get("content-length") ?? 0);
-    if (declaredSize > MAX_WORKBOOK_BYTES)
-        throw new ServiceTaskExcelError("Zdrojový Excel překračuje bezpečný limit 25 MB.", "WORKBOOK_TOO_LARGE");
-    const workbook = Buffer.from(await response.arrayBuffer());
-    if (workbook.length > MAX_WORKBOOK_BYTES)
-        throw new ServiceTaskExcelError("Zdrojový Excel překračuje bezpečný limit 25 MB.", "WORKBOOK_TOO_LARGE");
-    return workbook;
 }
 function storedNumber(db, key) {
     const value = Number(getSetting(db, key) ?? 0);
@@ -460,7 +439,7 @@ function storedNumber(db, key) {
 export function serviceTasksExcelSyncDue(db, now = Date.now()) {
     if (!config.serviceTasksExcelShareUrl)
         return false;
-    if (getServiceTaskExcelGraphStatus(db).configured && !serviceTaskExcelGraphReady(db))
+    if (!serviceTaskExcelGraphReady(db))
         return false;
     const lastAttemptAt = getSetting(db, "service_tasks_excel_last_attempt_at");
     if (!lastAttemptAt)
@@ -477,7 +456,7 @@ export function getServiceTaskExcelSyncStatus(db, options = {}) {
     const remoteConfigured = Boolean(config.serviceTasksExcelShareUrl);
     const graphStatus = getServiceTaskExcelGraphStatus(db);
     const graph = options.includeGraphVerification ? graphStatus : { ...graphStatus, verification: null };
-    const remoteReady = remoteConfigured && (!graph.configured || serviceTaskExcelGraphReady(db));
+    const remoteReady = remoteConfigured && serviceTaskExcelGraphReady(db);
     const configured = remoteConfigured || Boolean(lastSuccessAt);
     const lastError = getSetting(db, "service_tasks_excel_last_error") || null;
     const interval = lastError ? ERROR_RETRY_MS : SYNC_INTERVAL_MS;

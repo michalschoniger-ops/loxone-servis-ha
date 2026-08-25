@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.33
+
+- Publikuje jedinou hlavní kameru `Parkoviště a brána` na kanálu 7. Přímý RTSP zdroj zůstává pouze na serveru a checksumem připnutý go2rtc jej převádí na autentizované HLS; Hub drží úspornou předehřátou relaci, browser používá native HLS nebo přesně připnutý hls.js fallback a za úspěch považuje až postupující dekódovaný obraz. Aktivní cesta nepoužívá MJPEG.
+- NVR diagnostika dostává pravidelnou nepřekrývající se kontrolu, stav posledního pokusu, úspěchu a chyby a úplný inventář názvů, kanálů, online/offline stavů, modelů a firmware, pokud je zařízení vrátí. Stejný přehled používají Hub, macOS Menu 3.0.17 a nativní Windows Menu 3.0.17. Datový model podporuje více rekordérů a oddělené providery; Milesight P2P zůstává pravdivě označeno jako čekající na oficiální licencované NVR SDK.
+- Evora Smart Menu 3.0.17 obnovuje jediný AVFoundation/HLS přehrávač pro publikovaný kanál 7 s hlídaným startem, omezeným reconnectem a čistým ukončením. Jediný výsledek globálního i lokálního hledání Miniserveru otevře rovnou úplný detail s akcemi.
+- Přidává nativní bezkonzolové Evora Smart Menu 3.0.17 pro Windows. Tray aplikace zachovává pořadí LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení, používá stávající párování Hubu, ukládá tajemství přes DPAPI a přijímá jen HMAC/SHA-256 ověřený aktualizační balíček s rollbackem.
+- Windows Config Launcher 3.0.0.8 při použití již běžící přesné verze znovu získá `MainWindowHandle` po Qt navigaci, prioritně fyzicky aktivuje Domů a rozpozná přesné české varianty `Ručně připojit` i `Manuálně připojit`. Tok nového okna a bezpečné ponechání Configu při chybě zůstávají zachované.
+- Ruční synchronizace Excelu odesílá platné prázdné JSON tělo místo HTTP 415. Hodinový import se spustí jen s platnou Microsoft Graph relací, bez nepodporovaného anonymního SharePoint fallbacku; při chybě zůstane viditelná poslední lokální sada úkolů. Párování přesunutých a drobně změněných řádků dál aktualizuje stávající úkol místo duplikace a writeback zůstává vypnutý.
+
 ## 3.0.32
 
 - Po živém zátěžovém důkazu Hubu 3.0.31, ve kterém 12 z 20 HLS segmentů skončilo HTTP 502, už Hub ani Evora Smart Menu nevydávají problematický proud za spolehlivé video. Dočasně publikovaná zůstává pouze kamera `Parkoviště - Recepce - 2` a oba klienti načítají obyčejný autentizovaný JPEG snímek přímo přes NVR. Další požadavek začíná až po dokončení předchozího, nejdříve po deseti sekundách; při přechodné chybě zůstává poslední platný obraz. Aktivní klientská cesta nepoužívá HLS, WebRTC ani MJPEG stream.

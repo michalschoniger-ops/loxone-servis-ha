@@ -16,7 +16,8 @@ import { registerCanonicalProxy } from "./proxy.js";
 import { registerApplicationErrorHandler } from "./error-handler.js";
 import { cacheControlForStaticPath, isSpaNavigationRequest } from "./static-assets.js";
 import { requestLogSerializer } from "./logging.js";
-import { stopCameraVideoGateway } from "./camera-video-gateway.js";
+import { startCameraVideoGatewayKeepWarm, stopCameraVideoGateway } from "./camera-video-gateway.js";
+import { PUBLISHED_CAMERA_CHANNEL_ID, prewarmPublishedCameraSnapshot, startCameraIntegrationMonitor, stopCameraIntegrationMonitor, } from "./cameras.js";
 const app = Fastify({
     logger: {
         level: config.logLevel,
@@ -126,11 +127,18 @@ else {
     }
 }
 await app.listen({ host: config.host, port: config.port });
+if (database) {
+    startCameraIntegrationMonitor(database);
+    startCameraVideoGatewayKeepWarm(database, PUBLISHED_CAMERA_CHANNEL_ID);
+    void prewarmPublishedCameraSnapshot(database).catch(() => undefined);
+}
 if (config.schedulerEnabled)
     jobs?.start();
 async function shutdown(signal) {
     app.log.info({ signal }, "shutting down");
     jobs?.stop();
+    if (database)
+        stopCameraIntegrationMonitor(database);
     await stopCameraVideoGateway();
     await app.close();
     database?.close();

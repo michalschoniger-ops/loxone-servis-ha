@@ -24,9 +24,10 @@ import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksF
 import { disconnectServiceTaskExcelGraph, pollServiceTaskExcelGraphConnection, ServiceTaskExcelGraphError, startServiceTaskExcelGraphConnection, } from "./service-tasks-excel-graph.js";
 import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents, updateIncident } from "./incidents.js";
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
-import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraHttpNotifications, getPublishedCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
+import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraFleetOverview, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, PUBLISHED_CAMERA_CHANNEL_ID, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
 import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
+import { windowsMenuPackage, windowsMenuUpdateManifest } from "./windows-menu.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
 const configLaunchJobIdSchema = z.string().uuid();
@@ -609,6 +610,33 @@ export async function registerApi(app, db, jobs) {
         audit(db, "worklog.token_revoked", user.id, null, { integrationId: id });
         return { ok: true };
     });
+    app.get("/api/integrations/worklog/v1/windows-menu/manifest", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const token = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+        const manifest = windowsMenuUpdateManifest(token);
+        if (!manifest)
+            return reply.code(503).send({ error: "Balíček Windows Menu není v tomto sestavení dostupný.", code: "WINDOWS_MENU_PACKAGE_MISSING" });
+        reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
+        return manifest;
+    });
+    app.get("/api/integrations/worklog/v1/windows-menu/package", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const content = windowsMenuPackage();
+        if (!content)
+            return reply.code(503).send({ error: "Balíček Windows Menu není v tomto sestavení dostupný.", code: "WINDOWS_MENU_PACKAGE_MISSING" });
+        audit(db, "worklog.windows_menu_downloaded", identity.ownerUserId, null, { integrationId: identity.tokenId });
+        return reply
+            .header("Cache-Control", "private, no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Disposition", 'attachment; filename="EvoraSmartMenu-Windows.zip"')
+            .type("application/zip")
+            .send(content);
+    });
     app.get("/api/integrations/worklog/v1/portal-tickets", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
@@ -698,6 +726,8 @@ export async function registerApi(app, db, jobs) {
         }
         const agent = preferredLauncherAgent(db, identity.ownerUserId);
         const folderColors = new Map(listProjectFolders(db).map((folder) => [folder.id, folder.color]));
+        const cameraOverview = getCameraOverview(db);
+        const intranet = await getIntranetSnapshot(db);
         const items = listMiniservers(db).map((server) => {
             const release = exactConfigRelease(db, server.currentFirmware);
             return {
@@ -730,7 +760,67 @@ export async function registerApi(app, db, jobs) {
             appVersion: config.appVersion,
             user: { email: identity.email },
             launcherAgent: agent,
-            cameras: getPublishedCameraOverview(db).channels,
+            nvr: {
+                configured: cameraOverview.configured,
+                name: cameraOverview.name,
+                vendor: cameraOverview.vendor,
+                model: cameraOverview.model,
+                firmware: cameraOverview.firmware,
+                connectionState: cameraOverview.connectionState,
+                lastCheckedAt: cameraOverview.lastCheckedAt,
+                lastSuccessAt: cameraOverview.lastSuccessAt,
+                lastError: cameraOverview.lastError,
+                onlineCount: cameraOverview.channels.filter((camera) => camera.online).length,
+                offlineCount: cameraOverview.channels.filter((camera) => !camera.online).length,
+                cameras: cameraOverview.channels,
+            },
+            cameras: publishCameraOverview(cameraOverview).channels,
+            homeAssistant: listHomeAssistantInstances(db).map((instance) => ({
+                id: instance.id,
+                name: instance.name,
+                connectionState: instance.connectionState,
+                authState: instance.authState,
+                version: instance.version,
+                locationName: instance.locationName,
+                lastCheckedAt: instance.lastCheckedAt,
+                lastSuccessAt: instance.lastSuccessAt,
+                lastErrorCode: instance.lastErrorCode,
+                pendingUpdates: instance.pendingUpdates,
+            })),
+            intranet: {
+                configured: intranet.configured,
+                dataState: intranet.dataState,
+                currentState: intranet.currentState,
+                currentSince: intranet.currentSince,
+                todayWorkedSeconds: intranet.todayWorkedSeconds,
+                lastArrival: intranet.lastArrival,
+                lastDeparture: intranet.lastDeparture,
+                greeting: intranet.greeting,
+                errorCode: intranet.errorCode,
+                errorMessage: intranet.errorMessage,
+            },
+            incidents: listIncidents(db).map((incident) => ({
+                id: incident.id,
+                title: incident.title,
+                summary: incident.summary,
+                severity: incident.severity,
+                status: incident.status,
+                project: incident.project,
+                slaDueAt: incident.slaDueAt,
+                updatedAt: incident.updatedAt,
+            })),
+            tasks: listServiceTasks(db).map((task) => ({
+                id: task.id,
+                publicId: task.publicId,
+                title: task.title,
+                status: task.status,
+                priority: task.priority,
+                assigneeName: task.assigneeName,
+                project: task.project,
+                dueAt: task.dueAt,
+                source: task.source,
+                updatedAt: task.updatedAt,
+            })),
             items,
         };
     });
@@ -739,6 +829,9 @@ export async function registerApi(app, db, jobs) {
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         try {
             const jpeg = await getCameraSnapshot(db, channelId);
             return reply.header("Cache-Control", "private, no-store, max-age=0").type("image/jpeg").send(jpeg);
@@ -754,6 +847,9 @@ export async function registerApi(app, db, jobs) {
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         const { quality } = cameraStreamQuerySchema.parse(request.query);
         return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
     });
@@ -761,7 +857,10 @@ export async function registerApi(app, db, jobs) {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
-        z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         const resource = z.enum(["playlist.m3u8", "init.mp4", "segment.m4s", "segment.ts"])
             .parse(request.params.resource);
         const { id, n } = cameraHlsSessionSchema.parse(request.query);
@@ -1361,7 +1460,13 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return getPublishedCameraOverview(db);
+        return getCameraOverview(db);
+    });
+    app.get("/api/cameras/fleet", async (request, reply) => {
+        if (!requireUser(request, reply))
+            return;
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return getCameraFleetOverview(db);
     });
     app.put("/api/cameras/config", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -1382,7 +1487,7 @@ export async function registerApi(app, db, jobs) {
                 model: overview.model,
                 channels: overview.channels.length,
             });
-            return { item: publishCameraOverview(overview) };
+            return { item: overview };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1399,7 +1504,7 @@ export async function registerApi(app, db, jobs) {
         try {
             const overview = await refreshCameraIntegration(db);
             audit(db, "cameras.refreshed", user.id, null, { channels: overview.channels.length });
-            return { item: publishCameraOverview(overview) };
+            return { item: overview };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1413,6 +1518,9 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         try {
             const jpeg = await getCameraSnapshot(db, channelId);
             return reply.header("Cache-Control", "private, no-store, max-age=0").type("image/jpeg").send(jpeg);
@@ -1427,6 +1535,9 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         const { quality, offer } = cameraWebRtcSchema.parse(request.body);
         return sendCameraWebRtc(reply, db, channelId, quality, offer);
     });
@@ -1434,6 +1545,9 @@ export async function registerApi(app, db, jobs) {
         if (!requireUser(request, reply))
             return;
         const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         const { quality, hevc } = cameraStreamQuerySchema.parse(request.query);
         const codecs = quality === "preview" ? "h264" : hevc === "1" ? "h264,h265" : "h264";
         return sendCameraHlsMaster(reply, db, channelId, quality, codecs);
@@ -1441,7 +1555,10 @@ export async function registerApi(app, db, jobs) {
     app.get("/api/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         if (!requireUser(request, reply))
             return;
-        z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        const channelId = z.coerce.number().int().min(0).max(99).parse(request.params.channelId);
+        if (channelId !== PUBLISHED_CAMERA_CHANNEL_ID) {
+            return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
+        }
         const resource = z.enum(["playlist.m3u8", "init.mp4", "segment.m4s", "segment.ts"])
             .parse(request.params.resource);
         const { id, n } = cameraHlsSessionSchema.parse(request.query);
@@ -1478,7 +1595,7 @@ export async function registerApi(app, db, jobs) {
                 height: capabilities.thirdStream.current?.height,
                 frameRate: capabilities.thirdStream.current?.frameRate,
             });
-            return { item: capabilities, overview: getPublishedCameraOverview(db) };
+            return { item: capabilities, overview: getCameraOverview(db) };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {
@@ -1550,7 +1667,7 @@ export async function registerApi(app, db, jobs) {
         try {
             const overview = renameCameraChannel(db, channelId, input.name);
             audit(db, "cameras.renamed", user.id, null, { channelId });
-            return { item: publishCameraOverview(overview) };
+            return { item: overview };
         }
         catch (error) {
             if (error instanceof CameraIntegrationError) {

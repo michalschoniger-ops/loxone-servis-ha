@@ -3,6 +3,10 @@ import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 import { getSetting, setSetting } from "./database.js";
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
+// Microsoft Graph documents Files.ReadWrite as the least-privileged delegated
+// permission for resolving an existing sharing URL through /shares/{token}.
+// The released 3.0.33 workflow nevertheless performs GET/download operations
+// only; writeback is not connected to any API route or scheduler.
 const GRAPH_SCOPES = "offline_access Files.ReadWrite";
 const REFRESH_TOKEN_AAD = "service-tasks-excel-graph-refresh-v1";
 const MAX_WORKBOOK_BYTES = 25 * 1024 * 1024;

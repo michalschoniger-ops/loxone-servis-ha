@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.7"
+$HelperVersion = "3.0.0.8"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -701,6 +701,17 @@ function Get-AutomationElementById($Root, [string]$AutomationId) {
   return $Root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Get-ConfigAutomationRoot($Process) {
+  try {
+    $currentProcess = Get-Process -Id $Process.Id -ErrorAction Stop
+    $currentProcess.Refresh()
+    if ($currentProcess.MainWindowHandle -eq 0) { return $null }
+    return [Windows.Automation.AutomationElement]::FromHandle($currentProcess.MainWindowHandle)
+  } catch {
+    return $null
+  }
+}
+
 function Get-AutomationValue($Element, [string]$Label) {
   try {
     if ($null -eq $Element -or -not $Element.Current.IsEnabled) {
@@ -913,9 +924,12 @@ public static class EvoraWin32 {
   $manualActionNames = @(
     "pripojit manualne",
     "pripojit rucne",
+    "manualne pripojit",
+    "rucne pripojit",
     "manualni pripojeni",
     "connect manually",
     "manual connect",
+    "manually connect",
     "manuell verbinden"
   )
 
@@ -928,9 +942,11 @@ public static class EvoraWin32 {
       try {
         $normalizedName = Normalize-AutomationLabel ([string]$item.Current.Name)
         $controlType = [string]$item.Current.ControlType.ProgrammaticName
+        $automationId = [string]$item.Current.AutomationId
         $bounds = $item.Current.BoundingRectangle
         $safeType = $controlType -match '\.(Button|ListItem|Hyperlink|Custom)$'
-        if ($manualActionNames -contains $normalizedName -and
+        $verifiedIdentity = $automationId -eq $manualActionId -or $manualActionNames -contains $normalizedName
+        if ($verifiedIdentity -and
             $safeType -and
             $item.Current.IsEnabled -and
             -not $item.Current.IsOffscreen -and
@@ -948,32 +964,37 @@ public static class EvoraWin32 {
 
   $openHomeAndFindAction = {
     param($SearchRoot)
+    $alreadyAvailable = & $findManualAction $SearchRoot
+    if ($null -ne $alreadyAvailable) { return $alreadyAvailable }
     $homeId = "QApplication.MainWindow.CentralWidget.CLxTitleBar.CTitleBarTabs.CTitleBarTabs::CHomeButton"
     $homeButton = Get-AutomationElementById $SearchRoot $homeId
     if ($null -eq $homeButton -or -not $homeButton.Current.IsEnabled -or $homeButton.Current.IsOffscreen) {
       throw (New-LauncherFailure "CONFIG_HOME_NOT_FOUND" "The verified Home action was not found.")
     }
     Set-LauncherPhase "manual-connect-open-home"
-    Invoke-AutomationElement $homeButton
-    $homeDeadline = (Get-Date).AddSeconds(8)
+    # A real element-center click is the primary action for Qt. Several Config
+    # builds advertise InvokePattern but acknowledge Invoke() without changing
+    # the page. The click still targets only the exact verified Home UIA item.
+    Click-AutomationElementCenter $homeButton
+    $homeDeadline = (Get-Date).AddSeconds(6)
     $foundAction = $null
     do {
       Start-Sleep -Milliseconds 300
-      $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+      $currentRoot = Get-ConfigAutomationRoot $Process
       if ($null -ne $currentRoot) { $foundAction = & $findManualAction $currentRoot }
     } while ($null -eq $foundAction -and (Get-Date) -lt $homeDeadline)
     if ($null -ne $foundAction) { return $foundAction }
 
-    # Some Qt builds expose InvokePattern on the Home icon but ignore Invoke().
-    # Re-find the same verified button and click only its current UIA bounds.
-    $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+    # Re-read the current main-window handle after navigation. Qt can replace
+    # the top-level automation tree while keeping the same Config process.
+    $currentRoot = Get-ConfigAutomationRoot $Process
     $homeButton = if ($null -ne $currentRoot) { Get-AutomationElementById $currentRoot $homeId } else { $null }
     if ($null -ne $homeButton -and $homeButton.Current.IsEnabled -and -not $homeButton.Current.IsOffscreen) {
-      Click-AutomationElementCenter $homeButton
-      $clickDeadline = (Get-Date).AddSeconds(10)
+      Invoke-AutomationElement $homeButton
+      $clickDeadline = (Get-Date).AddSeconds(6)
       do {
         Start-Sleep -Milliseconds 300
-        $currentRoot = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+        $currentRoot = Get-ConfigAutomationRoot $Process
         if ($null -ne $currentRoot) { $foundAction = & $findManualAction $currentRoot }
       } while ($null -eq $foundAction -and (Get-Date) -lt $clickDeadline)
     }

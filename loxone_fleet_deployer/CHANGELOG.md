@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.34.1
+
+- Nasazuje Evora Smart Hub 3.0.34 s bezpečnými webovými odkazy a capability-gated kopírováním hesel Miniserverů, nativním H.264/fMP4 HLS pro macOS Menu a přímým serverovým HTTP ovládáním brány přes šifrovanou konfiguraci.
+- Součástí je Evora Smart Menu 3.0.21 s jednopanelovou navigací, pevným osmibodovým ukotvením při přesunu i změně velikosti, plynulým otevřením, souvislým hledáním a adaptivními akcemi Miniserveru. Windows Menu zůstává 3.0.23.
+- Před výměnou zachová vratný zdroj živého Hubu 3.0.33 a nemění databázi, šifrované přístupy, `/data` ani uživatelská nastavení.
+
 ## 3.0.33.5
 
 - Opravný payload stejné aplikační verze 3.0.33 publikuje bezpečné webové akce Miniserverů, Windows Menu 3.0.21 a macOS Menu 3.0.17 s neblokujícím snapshotem `Systémy`, spolehlivějším fokusem hledání a jednořádkovými tickety.

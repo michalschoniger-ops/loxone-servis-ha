@@ -595,13 +595,13 @@ export async function registerApi(app, db, jobs) {
             .send(attachment.content);
     });
     app.get("/api/integrations/worklog/tokens", async (request, reply) => {
-        const user = requireRole(request, reply, ["admin"]);
+        const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
         return { items: listWorkLogTokens(db, user.id) };
     });
     app.post("/api/integrations/worklog/tokens", async (request, reply) => {
-        const user = requireRole(request, reply, ["admin"]);
+        const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
         if (activeWorkLogTokenCount(db, user.id) >= 5) {
@@ -619,7 +619,7 @@ export async function registerApi(app, db, jobs) {
         return created;
     });
     app.delete("/api/integrations/worklog/tokens/:id", async (request, reply) => {
-        const user = requireRole(request, reply, ["admin"]);
+        const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
             return;
         const id = z.string().uuid().parse(request.params.id);
@@ -630,7 +630,7 @@ export async function registerApi(app, db, jobs) {
         return { ok: true };
     });
     app.get("/api/integrations/worklog/v1/windows-menu/manifest", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const token = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
@@ -641,7 +641,7 @@ export async function registerApi(app, db, jobs) {
         return manifest;
     });
     app.get("/api/integrations/worklog/v1/windows-menu/package", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const content = windowsMenuPackage();
@@ -738,6 +738,23 @@ export async function registerApi(app, db, jobs) {
         });
         return result;
     });
+    app.get("/api/integrations/worklog/v1/profile/avatar", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const row = db.prepare("SELECT avatar_mime AS mime,avatar_data AS data FROM users WHERE id=? AND active=1").get(identity.ownerUserId);
+        if (!row?.mime || !row.data)
+            return reply.code(404).send({ error: "Profilová fotografie není nastavená.", code: "NOT_FOUND" });
+        const content = Buffer.from(row.data, "base64");
+        if (!content.length)
+            return reply.code(404).send({ error: "Profilová fotografie není dostupná.", code: "NOT_FOUND" });
+        return reply
+            .header("Cache-Control", "private, no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Content-Type-Options", "nosniff")
+            .type(row.mime)
+            .send(content);
+    });
     app.get("/api/integrations/worklog/v1/miniservers", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
         if (!identity) {
@@ -745,7 +762,6 @@ export async function registerApi(app, db, jobs) {
         }
         const agent = preferredLauncherAgent(db, identity.ownerUserId);
         const folderColors = new Map(listProjectFolders(db).map((folder) => [folder.id, folder.color]));
-        const cameraOverview = getCameraOverview(db);
         // This endpoint feeds native menus. It must be a pure cached read so
         // opening "Systémy" never waits for an unrelated Intranet refresh.
         const intranet = getCachedIntranetSnapshot(db);
@@ -777,13 +793,30 @@ export async function registerApi(app, db, jobs) {
             };
         });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return {
+        const menuProfile = identity.role === "technician" ? "technician" : "full";
+        const common = {
             appVersion: config.appVersion,
+            menuProfile,
             capabilities: {
                 miniserverWebInterface: true,
+                miniserverPasswordCopy: true,
             },
-            user: { email: identity.email },
+            user: {
+                id: identity.ownerUserId,
+                email: identity.email,
+                displayName: identity.displayName,
+                role: identity.role,
+                hasAvatar: identity.hasAvatar,
+                avatarUpdatedAt: identity.avatarUpdatedAt,
+            },
             launcherAgent: agent,
+            items,
+        };
+        if (identity.role === "technician")
+            return common;
+        const cameraOverview = getCameraOverview(db);
+        return {
+            ...common,
             gate: gateControlStatus(db),
             nvr: {
                 configured: cameraOverview.configured,
@@ -846,11 +879,10 @@ export async function registerApi(app, db, jobs) {
                 source: task.source,
                 updatedAt: task.updatedAt,
             })),
-            items,
         };
     });
     app.put("/api/integrations/worklog/v1/gate/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         z.object({}).strict().parse(request.body ?? {});
@@ -864,7 +896,7 @@ export async function registerApi(app, db, jobs) {
         }
     });
     app.post("/api/integrations/worklog/v1/gate/:command", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const command = z.enum(["open", "close"]).parse(request.params.command);
@@ -904,7 +936,10 @@ export async function registerApi(app, db, jobs) {
             return reply.code(404).send({ error: "Tento kanál není publikovaný.", code: "CAMERA_NOT_PUBLISHED" });
         }
         const { quality } = cameraStreamQuerySchema.parse(request.query);
-        return sendCameraHlsMaster(reply, db, channelId, quality, "mpegts");
+        // Native macOS AVPlayer is most reliable with fragmented MP4 HLS. The
+        // source remains the direct NVR RTSP stream; go2rtc only repackages the
+        // H.264 video for the authenticated WorkLog transport.
+        return sendCameraHlsMaster(reply, db, channelId, quality, "h264");
     });
     app.get("/api/integrations/worklog/v1/cameras/:channelId/hls/:resource", { config: { rateLimit: { max: 3_600, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -956,7 +991,7 @@ export async function registerApi(app, db, jobs) {
         }
         const serial = serialSchema.parse(request.params.serial);
         const input = z.object({
-            action: z.enum(["loxone_app", "loxone_config", "web_interface"]),
+            action: z.enum(["loxone_app", "loxone_config", "web_interface", "copy_password"]),
             launchMode: z.enum(["existing", "new_window"]).optional(),
         }).strict().parse(request.body);
         const server = getMiniserver(db, serial);
@@ -982,6 +1017,10 @@ export async function registerApi(app, db, jobs) {
         if (input.action === "loxone_app") {
             audit(db, "worklog.loxone_app_opened", identity.ownerUserId, serial, { integrationId: identity.tokenId });
             return { action: input.action, url: workLogLoxoneAppUrl(serial, credentials.username, credentials.password) };
+        }
+        if (input.action === "copy_password") {
+            audit(db, "worklog.password_copied", identity.ownerUserId, serial, { integrationId: identity.tokenId });
+            return { action: input.action, password: credentials.password };
         }
         if (!server.currentFirmware) {
             return reply.code(409).send({ error: "Nejdřív je potřeba zjistit firmware Miniserveru.", code: "FIRMWARE_UNKNOWN" });
@@ -1154,13 +1193,17 @@ export async function registerApi(app, db, jobs) {
         if (!user)
             return;
         const serial = serialSchema.parse(request.params.serial);
+        const query = z.object({ response: z.enum(["redirect", "json"]).default("redirect") }).parse(request.query);
         const server = getMiniserver(db, serial);
         if (!server)
             return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
         try {
             const url = await miniserverWebInterfaceUrl(server);
             audit(db, "miniserver.web_interface_opened", user.id, serial, {});
-            return reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache").redirect(url);
+            reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+            if (query.response === "json")
+                return { url };
+            return reply.redirect(url);
         }
         catch (error) {
             if (error instanceof LoxoneError)

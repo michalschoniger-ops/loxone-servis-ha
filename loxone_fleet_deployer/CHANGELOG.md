@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.33.2
+
+- Opravuje produkční Dockerfile Hubu 3.0.33 na runtime-only sestavení z již otestovaného katalogového `dist`. První build přes helper 3.0.33.1 skončil ještě před zastavením nebo nahrazením živého Hubu 3.0.32, protože distribuční add-on kontext záměrně neobsahuje TypeScript zdroje.
+- Opakovaná vratná výměna stejného zdroje 3.0.33 zachovává původní rollback na 3.0.32 a nemění databázi ani trvalý adresář `/data`.
+
 ## 3.0.33.1
 
 - Nasazuje Evora Smart Hub 3.0.33 s jediným publikovaným kanálem 7 „Parkoviště a brána“. Přímý RTSP zdroj zůstává uvnitř Hubu, checksumem připnutý go2rtc jej převádí na autentizované HLS a server úspornou preview relaci průběžně předehřívá bez MJPEG.

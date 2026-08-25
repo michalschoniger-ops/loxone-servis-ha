@@ -8,6 +8,7 @@
 - Přidává nativní bezkonzolové Evora Smart Menu 3.0.17 pro Windows. Tray aplikace zachovává pořadí LOXONE, Home Assistant, Milesight, Intranet, Incidenty, Úkoly a Nastavení, používá stávající párování Hubu, ukládá tajemství přes DPAPI a přijímá jen HMAC/SHA-256 ověřený aktualizační balíček s rollbackem.
 - Windows Config Launcher 3.0.0.8 při použití již běžící přesné verze znovu získá `MainWindowHandle` po Qt navigaci, prioritně fyzicky aktivuje Domů a rozpozná přesné české varianty `Ručně připojit` i `Manuálně připojit`. Tok nového okna a bezpečné ponechání Configu při chybě zůstávají zachované.
 - Ruční synchronizace Excelu odesílá platné prázdné JSON tělo místo HTTP 415. Hodinový import se spustí jen s platnou Microsoft Graph relací, bez nepodporovaného anonymního SharePoint fallbacku; při chybě zůstane viditelná poslední lokální sada úkolů. Párování přesunutých a drobně změněných řádků dál aktualizuje stávající úkol místo duplikace a writeback zůstává vypnutý.
+- Produkční Home Assistant image používá již kompletně otestovaný katalogový `dist`; build proto nevyžaduje TypeScript zdroje, které nejsou součástí distribučního add-on kontextu.
 
 ## 3.0.32
 

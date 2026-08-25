@@ -1,12 +1,3 @@
-FROM node:22-bookworm-slim AS build
-
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json tsconfig.server.json vite.config.ts ./
-COPY src ./src
-RUN npm run build
-
 FROM golang:1.24-bookworm AS go2rtc-build
 
 ARG GO2RTC_VERSION=1.9.14
@@ -60,7 +51,7 @@ COPY --from=go2rtc-build /out/go2rtc /usr/local/bin/go2rtc
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/dist ./dist
+COPY dist ./dist
 COPY THIRD_PARTY_NOTICES.md ./
 COPY docker-entrypoint.sh /usr/local/bin/loxone-servis
 RUN chmod 0755 /usr/local/bin/loxone-servis && mkdir -p /data && chmod 0700 /data

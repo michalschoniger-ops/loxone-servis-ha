@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.27.2
+
+- Opravuje katalogový payload 3.0.27 na runtime-only Dockerfile, který sestavuje obraz z již otestovaného `dist` a nevyžaduje nezveřejněné TypeScript zdroje. Neúspěšný build helperu 3.0.27.1 nezastavil ani nenahradil živý Hub 3.0.26.
+- Opravná výměna stejného zdroje 3.0.27 zachová ukazatel rollbacku na původní 3.0.26 a nemění databázi ani trvalý adresář `/data`.
+
 ## 3.0.27.1
 
 - Nasazuje Evora Smart Hub 3.0.27 s idempotentní registrací stejného RTSP zdroje ve video bráně, aby souběžné náhledy Hubu a Menu vzájemně nemažily aktivní stream kamery „Parkoviště - Recepce - 2“. Aktivní přenos zůstává H.264 přes zabezpečené HLS/WebRTC a nepoužívá MJPEG.

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-PAYLOAD_SHA256="c7a8bcf48638b9087faef77130cc62a77f4c807b5ecce61538040bd76f0e6d8a"
+PAYLOAD_SHA256="fd86f6664b05e2a88ac0223bd37a81607250b67ad701b8d4ac0271f27d1f52d7"
 ROLLBACK_PAYLOAD_SHA256="52ea6fc2bbe085cd429e6a78ecf1f51109f8b4e4514a7f0cd9496d8e27556e6d"
 EXPECTED_SLUG="loxone_fleet"
 EXPECTED_VERSION="3.0.27"
@@ -149,6 +149,7 @@ esac
 CURRENT_VERSION="$(awk -F: '/^version:/ {gsub(/[[:space:]\"]/, "", $2); print $2; exit}' "$TARGET_CONFIG")"
 case "$CURRENT_VERSION" in
   0.4.8|0.4.9|0.4.10|0.4.11|0.4.12|0.4.13|0.4.14|0.4.15|0.5.0|0.5.1|0.5.2|1.0.0|1.0.1|1.0.2|1.0.3|2.0.0|2.0.1|2.0.2|2.0.3|2.0.4|2.0.5|2.0.6|2.0.7|2.0.8|2.0.9|2.0.10|2.1.0|2.1.1|2.1.2|2.2.0|2.2.1|2.2.2|2.2.3|2.2.4|2.2.5|3.0.0|3.0.1|3.0.2|3.0.3|3.0.4|3.0.5|3.0.6|3.0.7|3.0.8|3.0.9|3.0.10|3.0.11|3.0.12|3.0.13|3.0.14|3.0.15|3.0.16|3.0.17|3.0.18|3.0.19|3.0.20|3.0.21|3.0.22|3.0.23|3.0.24|3.0.25|3.0.26) ;;
+  3.0.27) ;;
   *) fail "Neočekávaná cílová verze: ${CURRENT_VERSION:-neznámá}. Nic nebylo změněno." ;;
 esac
 

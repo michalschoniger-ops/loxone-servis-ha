@@ -1,5 +1,92 @@
 --- a/internal/hls/hls.go
 +++ b/internal/hls/hls.go
-@@ -34 +34 @@
+@@ -4,0 +5 @@
++	"strconv"
+@@ -36 +37 @@
 -const keepalive = 5 * time.Second
 +const keepalive = 30 * time.Second
+@@ -132 +133,8 @@
+-	sid := r.URL.Query().Get("id")
++	query := r.URL.Query()
++	sequence, err := strconv.Atoi(query.Get("n"))
++	if err != nil || sequence < 0 {
++		http.Error(w, "invalid segment", http.StatusBadRequest)
++		return
++	}
++
++	sid := query.Get("id")
+@@ -143 +151 @@
+-	data := session.Segment()
++	data := session.Segment(sequence)
+@@ -194,0 +203,5 @@
++	sequence, err := strconv.Atoi(query.Get("n"))
++	if err != nil || sequence < 0 {
++		http.Error(w, "invalid segment", http.StatusBadRequest)
++		return
++	}
+@@ -207 +220 @@
+-	data := session.Segment()
++	data := session.Segment(sequence)
+--- a/internal/hls/session.go
++++ b/internal/hls/session.go
+@@ -15,8 +15,10 @@
+-	cons     core.Consumer
+-	id       string
+-	template string
+-	init     []byte
+-	buffer   []byte
+-	seq      int
+-	alive    *time.Timer
+-	mu       sync.Mutex
++	cons      core.Consumer
++	id        string
++	template  string
++	init      []byte
++	buffer    []byte
++	seq       int
++	segments  map[int][]byte
++	alive     *time.Timer
++	mu        sync.Mutex
++	segmentMu sync.Mutex
+@@ -27,2 +29,3 @@
+-		id:   core.RandString(8, 62),
+-		cons: cons,
++		id:       core.RandString(8, 62),
++		cons:     cons,
++		segments: make(map[int][]byte),
+@@ -86 +89,4 @@
+-	return []byte(fmt.Sprintf(s.template, s.seq, s.seq, s.seq+1))
++	s.segmentMu.Lock()
++	sequence := s.seq
++	s.segmentMu.Unlock()
++	return []byte(fmt.Sprintf(s.template, sequence, sequence, sequence+1))
+@@ -106 +112 @@
+-func (s *Session) Segment() (segment []byte) {
++func (s *Session) nextSegment() (segment []byte) {
+@@ -121 +126,0 @@
+-			s.seq++
+@@ -127,0 +133,24 @@
++
++func (s *Session) Segment(sequence int) []byte {
++	s.segmentMu.Lock()
++	defer s.segmentMu.Unlock()
++
++	if segment := s.segments[sequence]; segment != nil {
++		return segment
++	}
++	if sequence < s.seq || sequence > s.seq+1 {
++		return nil
++	}
++
++	for s.seq <= sequence {
++		segment := s.nextSegment()
++		if segment == nil {
++			return nil
++		}
++		s.segments[s.seq] = segment
++		delete(s.segments, s.seq-4)
++		s.seq++
++	}
++
++	return s.segments[sequence]
++}

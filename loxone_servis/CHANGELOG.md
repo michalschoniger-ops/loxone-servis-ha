@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.31
+
+- Checksumem připnutý go2rtc 1.9.14 nyní skutečně čte pořadové číslo `n`, serializuje vytváření fragmentů jedné HLS relace a drží poslední čtyři hotové segmenty v paměti. Opakovaný nebo souběžný klient tak dostane stejný očíslovaný fragment místo destruktivního odebrání dalšího bufferu.
+- Hub nad touto malou interní cache dál používá jednu sdílenou H.264 relaci a vlastní omezenou cache 12 fragmentů. Interní čtení se už předčasně neruší, protože zrušený HTTP požadavek mohl v původním go2rtc později spotřebovat segment, aniž by jej Hub obdržel.
+- Evora Smart Menu zůstává 3.0.15 s opraveným fokusem hledání a přímými výsledky Miniserverů. Publikovaná je pouze kamera `Parkoviště - Recepce - 2`; přenos zůstává H.264/HLS/fMP4 z RTSP bez MJPEG.
+
 ## 3.0.30
 
 - HLS brána kromě rychlé HTTP 502 zachytí také zavěšené interní čtení právě vznikajícího segmentu. Jednotlivý loopback pokus má limit 1,5 sekundy a následné časově omezené pokusy zůstávají single-flight, takže všichni klienti stále používají jedinou RTSP/HLS relaci.

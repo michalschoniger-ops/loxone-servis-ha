@@ -21,11 +21,13 @@ COPY patches/go2rtc-hls-session-timeout.patch /tmp/go2rtc-hls-session-timeout.pa
 RUN set -eu; \
     patch --batch --forward -p1 < /tmp/go2rtc-hls-session-timeout.patch; \
     test "$(grep -c 'const keepalive = 30 \* time.Second' internal/hls/hls.go)" -eq 1; \
+    test "$(grep -c 'data := session.Segment(sequence)' internal/hls/hls.go)" -eq 2; \
+    test "$(grep -c 'func (s \*Session) Segment(sequence int)' internal/hls/session.go)" -eq 1; \
     CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o /out/go2rtc .
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG BUILD_VERSION=3.0.30
+ARG BUILD_VERSION=3.0.31
 ARG BUILD_ARCH
 ENV NODE_ENV=production \
     PORT=8099 \
@@ -42,10 +44,10 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.
     && rm -rf /var/lib/apt/lists/*
 
 # Browsers cannot consume RTSP directly. This checksum-pinned go2rtc build
-# remuxes H.264/H.265 without JPEG transcoding. The only local patch extends
-# its fixed five-second HLS session deadline so a slow encrypted proxy transfer
-# cannot tear down an otherwise healthy camera. Management and RTSP listeners
-# remain loopback-only at runtime.
+# remuxes H.264/H.265 without JPEG transcoding. The audited local patch extends
+# the HLS deadline and makes numbered segments repeatable for multiple clients
+# through a four-fragment in-memory cache. Management and RTSP listeners remain
+# loopback-only at runtime.
 COPY --from=go2rtc-build /out/go2rtc /usr/local/bin/go2rtc
 
 WORKDIR /app

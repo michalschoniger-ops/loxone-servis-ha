@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.31.1
+
+- Nasazuje Evora Smart Hub 3.0.31 s pořadově adresovatelnými HLS segmenty v checksumem připnutém go2rtc 1.9.14. Jedna interní relace serializuje tvorbu fragmentů a poslední čtyři drží pro opakované či souběžné čtení; Hub nad ní zachovává single-flight cache 12 segmentů.
+- Publikovaná zůstává pouze kamera „Parkoviště - Recepce - 2“ jako H.264/HLS/fMP4 z RTSP bez MJPEG. Součástí je Evora Smart Menu 3.0.15 s opraveným fokusem hledání; vratným zdrojem je živý Hub 3.0.30 a databáze ani `/data` se nemění.
+
 ## 3.0.30.1
 
 - Nasazuje Evora Smart Hub 3.0.30 s krátkým interním timeoutem každého čtení právě vznikajícího HLS segmentu a s omezeným single-flight opakováním rychlé 502 i zavěšeného loopback požadavku.

@@ -15,8 +15,7 @@ const HLS_SESSION_PATTERN = /^[A-Za-z0-9]{8}$/;
 const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
 const HLS_PLAYLIST_CACHE_MS = 350;
 const HLS_MAX_CACHED_SEGMENTS = 12;
-const HLS_SEGMENT_ATTEMPT_TIMEOUT_MS = 1_500;
-const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [250, 400, 600, 800];
+const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [250, 500];
 export async function waitForCameraHlsSegment(loader, delaysMs = HLS_SEGMENT_READY_RETRY_DELAYS_MS, pause = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))) {
     let lastResult;
     let lastError;
@@ -434,7 +433,7 @@ class CameraVideoGateway {
         const load = () => this.request(`/api/hls/${resource}?${query.toString()}`, { method: "GET" }, async (response) => ({
             ok: response.ok,
             body: await readLimited(response, maximum),
-        }), isSegment ? HLS_SEGMENT_ATTEMPT_TIMEOUT_MS : GATEWAY_REQUEST_TIMEOUT_MS);
+        }));
         const result = isSegment
             ? await waitForCameraHlsSegment(load)
             : await load();

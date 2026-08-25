@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.35
+
+- Předehřívání kanálu 7 nyní udržuje současně webovou MPEG-TS relaci i nativní H.264/fMP4 relaci používanou macOS Menu. Oba klienti sdílejí stále jediný přímý RTSP zdroj z NVR; dočasná chyba jednoho HLS transportu už nepřeruší průběžné zahřívání druhého.
+
 ## 3.0.34
 
 - Evora Smart Menu 3.0.21 nahrazuje strom kaskádových podnabídek jediným větším panelem ukotveným přímo pod ikonou v horní liště. Levý i pravý klik používá stejnou nabídku; samostatné aplikační okno se v běžném provozu nevytváří. `Systémy → Miniservery → složka → detail` se proklikávají na místě se šipkou zpět, jemným přechodem, zaoblenými kartami, významovými ikonami a nativním průsvitným materiálem.

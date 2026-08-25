@@ -626,17 +626,27 @@ class CameraVideoGateway {
             state.timer = setTimeout(() => {
                 state.timer = null;
                 void (async () => {
-                    try {
-                        const master = await this.hlsMaster(db, channelId, quality, "mpegts");
-                        const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
-                        const playlist = await this.hlsResource("playlist.m3u8", sessionId);
-                        const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), sessionId);
-                        if (latest)
-                            await this.hlsResource(latest.resource, sessionId, latest.sequence);
+                    let warmed = 0;
+                    for (const mode of ["h264", "mpegts"]) {
+                        try {
+                            const master = await this.hlsMaster(db, channelId, quality, mode);
+                            const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
+                            const playlist = await this.hlsResource("playlist.m3u8", sessionId);
+                            const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), sessionId);
+                            if (latest)
+                                await this.hlsResource(latest.resource, sessionId, latest.sequence);
+                            warmed += 1;
+                        }
+                        catch {
+                            // Každý transport má vlastní relaci. Dočasná chyba jednoho nesmí
+                            // shodit druhý; další čtyřsekundové kolo jej zkusí znovu.
+                        }
+                    }
+                    if (warmed > 0) {
                         failures = 0;
                         schedule(4_000);
                     }
-                    catch {
+                    else {
                         failures += 1;
                         schedule(Math.min(30_000, 1_000 * (2 ** Math.min(failures - 1, 5))));
                     }

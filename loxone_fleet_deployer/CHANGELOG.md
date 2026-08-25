@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.35.1
+
+- Nasazuje Evora Smart Hub 3.0.35, který průběžně předehřívá webový MPEG-TS i nativní H.264/fMP4 transport kanálu 7 nad jediným přímým RTSP zdrojem NVR.
+- Zachovává vratný zdroj živého Hubu 3.0.34, databázi, šifrované přístupy, `/data` i již nasazené nativní klienty.
+
 ## 3.0.34.1
 
 - Nasazuje Evora Smart Hub 3.0.34 s bezpečnými webovými odkazy a capability-gated kopírováním hesel Miniserverů, nativním H.264/fMP4 HLS pro macOS Menu a přímým serverovým HTTP ovládáním brány přes šifrovanou konfiguraci.

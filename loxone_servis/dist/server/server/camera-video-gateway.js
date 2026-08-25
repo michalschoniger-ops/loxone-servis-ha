@@ -14,7 +14,9 @@ const MAX_HLS_SEGMENT_BYTES = 12 * 1024 * 1024;
 const HLS_SESSION_PATTERN = /^[A-Za-z0-9]{8}$/;
 const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
 const HLS_PLAYLIST_CACHE_MS = 350;
+const HLS_PLAYLIST_CACHE_KEY = "playlist.m3u8:";
 const HLS_MAX_CACHED_SEGMENTS = 12;
+const HLS_SEGMENT_MIN_PULL_INTERVAL_MS = 500;
 const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [250, 500];
 const HLS_INITIAL_READY_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 3_000];
 export async function waitForCameraHlsSegment(loader, delaysMs = HLS_SEGMENT_READY_RETRY_DELAYS_MS, pause = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))) {
@@ -77,6 +79,33 @@ export class CameraHlsResourceCache {
         this.values.clear();
         this.pending.clear();
         this.segmentOrder.splice(0);
+    }
+}
+export class CameraHlsSegmentPullQueue {
+    minimumIntervalMs;
+    pause;
+    now;
+    tail = Promise.resolve();
+    lastPullAt = 0;
+    constructor(minimumIntervalMs = HLS_SEGMENT_MIN_PULL_INTERVAL_MS, pause = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)), now = Date.now) {
+        this.minimumIntervalMs = minimumIntervalMs;
+        this.pause = pause;
+        this.now = now;
+    }
+    run(loader) {
+        let result;
+        const pull = this.tail
+            .catch(() => undefined)
+            .then(async () => {
+            const elapsed = this.now() - this.lastPullAt;
+            const remaining = this.minimumIntervalMs - elapsed;
+            if (this.lastPullAt > 0 && remaining > 0)
+                await this.pause(remaining);
+            result = await loader();
+            this.lastPullAt = this.now();
+        });
+        this.tail = pull.then(() => undefined, () => undefined);
+        return pull.then(() => result);
     }
 }
 function streamName(channelId, quality, candidateIndex) {
@@ -488,7 +517,7 @@ class CameraVideoGateway {
             if (Date.now() - cached.lastResourceAt < HLS_SESSION_VALIDATE_AFTER_MS)
                 return cached.master;
             try {
-                await cached.resources.load("playlist.m3u8", () => this.fetchHlsResource("playlist.m3u8", cached.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                await cached.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", cached.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
                 cached.lastResourceAt = Date.now();
                 return cached.master;
             }
@@ -521,6 +550,7 @@ class CameraVideoGateway {
                 contentType: "application/vnd.apple.mpegurl",
             },
             lastResourceAt: Date.now(),
+            segmentPullQueue: new CameraHlsSegmentPullQueue(),
             resources: new CameraHlsResourceCache(),
         };
         this.rememberHlsSession(session);
@@ -533,6 +563,24 @@ class CameraVideoGateway {
         }
         return session.master;
     }
+    async loadHlsSegment(session, segment) {
+        const key = `${segment.resource}:${segment.sequence}`;
+        return session.resources.load(key, () => session.segmentPullQueue.run(() => this.fetchHlsResource(segment.resource, session.id, segment.sequence)), { segment: true });
+    }
+    async warmHlsPlaylistResources(session, playlist) {
+        const playlistText = playlist.body.toString("utf8");
+        const segments = cameraHlsSegments(playlistText, session.id);
+        if (!segments.length) {
+            throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
+        }
+        if (playlistText.includes("#EXT-X-MAP:")) {
+            await session.resources.load("init.mp4:", () => this.fetchHlsResource("init.mp4", session.id));
+        }
+        for (const segment of segments) {
+            await this.loadHlsSegment(session, segment);
+        }
+        session.lastResourceAt = Date.now();
+    }
     async warmHlsSession(session) {
         let lastError;
         for (let attempt = 0; attempt <= HLS_INITIAL_READY_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -540,19 +588,8 @@ class CameraVideoGateway {
                 await new Promise((resolve) => setTimeout(resolve, HLS_INITIAL_READY_RETRY_DELAYS_MS[attempt - 1]));
             }
             try {
-                const playlist = await session.resources.load("playlist.m3u8", () => this.fetchHlsResource("playlist.m3u8", session.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
-                const playlistText = playlist.body.toString("utf8");
-                const segments = cameraHlsSegments(playlistText, session.id);
-                if (!segments.length) {
-                    throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
-                }
-                if (playlistText.includes("#EXT-X-MAP:")) {
-                    await session.resources.load("init.mp4:", () => this.fetchHlsResource("init.mp4", session.id));
-                }
-                for (const segment of segments) {
-                    await session.resources.load(`${segment.resource}:${segment.sequence}`, () => this.fetchHlsResource(segment.resource, session.id, segment.sequence), { segment: true });
-                }
-                session.lastResourceAt = Date.now();
+                const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", session.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                await this.warmHlsPlaylistResources(session, playlist);
                 return;
             }
             catch (error) {
@@ -600,19 +637,29 @@ class CameraVideoGateway {
         const session = this.hlsSessionsById.get(sessionId);
         if (!session)
             return this.fetchHlsResource(resource, sessionId, sequence);
-        const resourceKey = `${resource}:${sequence ?? ""}`;
-        try {
-            const response = await session.resources.load(resourceKey, () => this.fetchHlsResource(resource, sessionId, sequence), resource === "playlist.m3u8"
-                ? { ttlMs: HLS_PLAYLIST_CACHE_MS }
-                : { segment: resource === "segment.m4s" || resource === "segment.ts" });
+        if (resource === "playlist.m3u8") {
+            try {
+                const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", sessionId), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                await this.warmHlsPlaylistResources(session, playlist);
+                return playlist;
+            }
+            catch (error) {
+                this.forgetHlsSession(session);
+                throw error;
+            }
+        }
+        if (resource === "segment.m4s" || resource === "segment.ts") {
+            const response = await this.loadHlsSegment(session, {
+                resource,
+                sequence: sequence,
+            });
             session.lastResourceAt = Date.now();
             return response;
         }
-        catch (error) {
-            if (resource === "playlist.m3u8")
-                this.forgetHlsSession(session);
-            throw error;
-        }
+        const resourceKey = `${resource}:${sequence ?? ""}`;
+        const response = await session.resources.load(resourceKey, () => this.fetchHlsResource(resource, sessionId, sequence));
+        session.lastResourceAt = Date.now();
+        return response;
     }
     startKeepWarm(db, channelId, quality = "preview") {
         if (this.keepWarmState)
@@ -626,25 +673,23 @@ class CameraVideoGateway {
             state.timer = setTimeout(() => {
                 state.timer = null;
                 void (async () => {
-                    let warmed = 0;
-                    for (const mode of ["h264", "mpegts"]) {
+                    const results = await Promise.all(["h264", "mpegts"].map(async (mode) => {
                         try {
                             const master = await this.hlsMaster(db, channelId, quality, mode);
                             const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
-                            const playlist = await this.hlsResource("playlist.m3u8", sessionId);
-                            const latest = cameraHlsLatestSegment(playlist.body.toString("utf8"), sessionId);
-                            if (latest)
-                                await this.hlsResource(latest.resource, sessionId, latest.sequence);
-                            warmed += 1;
+                            await this.hlsResource("playlist.m3u8", sessionId);
+                            return true;
                         }
                         catch {
                             // Každý transport má vlastní relaci. Dočasná chyba jednoho nesmí
-                            // shodit druhý; další čtyřsekundové kolo jej zkusí znovu.
+                            // shodit druhý; další omezené kolo jej zkusí znovu.
+                            return false;
                         }
-                    }
+                    }));
+                    const warmed = results.filter(Boolean).length;
                     if (warmed > 0) {
                         failures = 0;
-                        schedule(4_000);
+                        schedule(250);
                     }
                     else {
                         failures += 1;

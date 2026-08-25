@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.36
+
+- HLS pumpa kanálu 7 serializuje každý nový segment konkrétní relace a dodržuje jeho deklarovaný půlsekundový rytmus. Playlist se klientovi vrátí až poté, co jsou inicializace i všechny právě odkazované segmenty v omezené sdílené cache; souběžný browser, macOS Menu a keep-warm proto nespotřebují stejný pull segment dvakrát ani nevytvoří několikamilisekundový fragment.
+- Webová MPEG-TS a nativní H.264/fMP4 relace se předehřívají souběžně. Obě dál sdílejí jediný přímý RTSP zdroj z NVR a žádné přihlašovací údaje ani RTSP adresa neopouštějí server.
+- Evora Smart Menu 3.0.22 při změně stránky nejprve dokončí nový layout a teprve potom jedním neanimovaným `setFrame` nastaví celou výšku i ukotvení interního AppKit okna. Osmibodový odstup od horní i pravé hrany tak nezávisí na opožděném resize callbacku; zámek pohybu a velikosti zůstává jako druhá pojistka.
+
 ## 3.0.35
 
 - Předehřívání kanálu 7 nyní udržuje současně webovou MPEG-TS relaci i nativní H.264/fMP4 relaci používanou macOS Menu. Oba klienti sdílejí stále jediný přímý RTSP zdroj z NVR; dočasná chyba jednoho HLS transportu už nepřeruší průběžné zahřívání druhého.

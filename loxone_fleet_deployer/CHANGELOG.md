@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.36.1
+
+- Nasazuje Evora Smart Hub 3.0.36 se serializovanou půlsekundovou HLS pumpou, atomicky cachovaným playlistem a souběžným webovým i nativním transportem kanálu 7 nad jediným přímým RTSP zdrojem NVR.
+- Součástí je Evora Smart Menu 3.0.22 s atomickým ukotvením každé stránky osm bodů od horní i pravé hrany. Zachovává vratný zdroj živého Hubu 3.0.35, databázi, šifrované přístupy, `/data` i nativní klienty.
+
 ## 3.0.35.1
 
 - Nasazuje Evora Smart Hub 3.0.35, který průběžně předehřívá webový MPEG-TS i nativní H.264/fMP4 transport kanálu 7 nad jediným přímým RTSP zdrojem NVR.

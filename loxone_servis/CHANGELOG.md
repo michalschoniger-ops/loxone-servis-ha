@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.48
+
+- Evora Smart Menu 3.0.31 ztmavuje skutečný podklad dočasného nativního `NSMenu` okna, nejen vlastní profilovou kartu. Největší veřejný `NSVisualEffectView` používá tmavý HUD materiál s mícháním uvnitř vlastního téměř černého podkladu, takže bílý obsah Safari pod nabídkou už celý systémový povrch nezesvětluje.
+- Oprava zachovává běžné nativní řádky, hover, klávesnici i kaskády a neaktivuje Evora aplikaci. `Parkoviště a brána`, Milesight a Loxone Builder zůstávají skryté; Hub zachovává schéma 23 a H.264/fMP4 HLS cestu z 3.0.46.
+
 ## 3.0.47
 
 - Evora Smart Menu 3.0.30 na výslovné přání odstraňuje z kořene celou položku `Parkoviště a brána`; živé menu nevytváří kamerový AVPlayer, neotevírá podnabídku brány a při otevření nepředehřívá HLS. Serverová kamera i brána zůstávají beze změny dostupné v Evora Smart Hubu.

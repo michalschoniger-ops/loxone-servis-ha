@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.48.1
+
+- Nasazuje Evora Smart Hub 3.0.48 se schématem 23 a distribučním Evora Smart Menu 3.0.31 s tmavým podkladem celého nativního `NSMenu`, nejen vlastní profilové karty.
+- Zachovává serverovou kameru, bránu, H.264/fMP4 HLS cestu 3.0.46, data, šifrované přístupy, `/data` i vratný zdroj živého Hubu 3.0.47.
+
 ## 3.0.47.1
 
 - Nasazuje Evora Smart Hub 3.0.47 se schématem 23 a distribučním Evora Smart Menu 3.0.30 bez položky `Parkoviště a brána`, kamerového AVPlayeru a HLS prewarmu v macOS nabídce.

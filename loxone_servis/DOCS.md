@@ -71,7 +71,7 @@ Evora Smart Menu načítá názvy, složky, SN, stav, firmware, ověřený pomě
 
 Fleet odpověď zůstává v paměti Menu. Minutová obnova nepřestaví otevřený strom; časovače neběží během AppKit trackingu a síťové výsledky se sloučí až po zavření. Detail konkrétního Miniserveru se přepočítá až při jeho dalším otevření a složka proto nevytváří karty ani nenačítá databázi pro všechny Miniservery najednou.
 
-Hub publikuje pouze kanál 7 `Parkoviště a brána`. V macOS Menu je kamera přímo v kořeni a položka Milesight se nezobrazuje. Hub z přímého RTSP zdroje vytváří autentizované HLS; RTSP adresa ani přístupy se do browseru nebo Menu neposílají. Browser použije native HLS nebo připnutý hls.js fallback a macOS Menu jediný AVFoundation přehrávač. Stav `ŽIVĚ` vyžaduje opakovaný postup dekódovaného času; při zastavení zůstane poslední snapshot, zobrazí se chyba a spustí omezený reconnect. Aktivní přehrávání nepoužívá MJPEG.
+Hub publikuje pouze kanál 7 `Parkoviště a brána`. V macOS Menu je kamera přímo v kořeni a položka Milesight se nezobrazuje. Hub z přímého RTSP zdroje vytváří autentizované HLS; RTSP adresa ani přístupy se do browseru nebo Menu neposílají. Klientský playlist obsahuje jen souvislé segmenty, které Hub už celé načetl a drží v omezené paměti; právě vznikající segment se dokončí na pozadí a zveřejní teprve potom. Browser použije native HLS nebo připnutý hls.js fallback a macOS Menu jediný AVFoundation přehrávač. Stav `ŽIVĚ` vyžaduje opakovaný postup dekódovaného času; při zastavení zůstane poslední snapshot, zobrazí se chyba a spustí omezený reconnect. Aktivní přehrávání nepoužívá MJPEG.
 
 ## Evora Intranet a docházka
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.45
+
+- HLS playlist kanálu 7 už klientům neoznamuje právě vznikající segment, který interní brána ještě vrací jako nedostupný. Hub vede omezený souvislý seznam pouze plně načtených segmentů ve vlastní paměti, okamžitě jej vrací klientům a nový segment zařadí až po dokončení na pozadí.
+- Oprava navazuje na živý tříminutový VLC důkaz Hubu 3.0.44: NVR bylo 10/10 online, ale jediný předčasně publikovaný segment vrátil 502, VLC ukončilo další čtení a nedekódovalo žádný snímek. Menu zůstává 3.0.29 s opravou problikávání; databázové schéma zůstává 23.
+
 ## 3.0.44
 
 - Evora Smart Menu 3.0.29 odstraňuje tři zdroje problikávání nativní nabídky: vlastní povrchy jsou tmavé už před připojením do dočasného AppKit okna, profilová karta se nepřebarvuje při každém `viewWillDraw` a její změny CALayeru probíhají bez implicitní animace. Zároveň je odstraněné úmyslné pulzování celé stavové ikony během synchronizace.

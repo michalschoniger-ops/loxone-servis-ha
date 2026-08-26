@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.45.1
+
+- Nasazuje Evora Smart Hub 3.0.45 se schématem 23 a HLS playlistem, který klientům zveřejňuje pouze už celé načtené souvislé segmenty z omezené paměti Hubu.
+- Právě vznikající segment se dokončí na pozadí a do playlistu se zařadí až potom; oprava reaguje na živý VLC důkaz 3.0.44 s jedním předčasným HTTP 502 a nulou dekódovaných snímků. Zachovává data, šifrované přístupy, `/data`, Menu 3.0.29 i vratný zdroj živého Hubu 3.0.44.
+
 ## 3.0.44.1
 
 - Nasazuje Evora Smart Hub 3.0.44 se schématem 23 a opravuje dříve zastaralé hlášení `databaseSchema` ve zdravotním endpointu.

@@ -122,7 +122,7 @@ export const config = {
     checkConcurrency: Math.max(1, Math.min(10, Number(process.env.CHECK_CONCURRENCY ?? 2))),
     fullCheckIntervalMinutes: Math.max(30, Number(process.env.FULL_CHECK_INTERVAL_MINUTES ?? 120)),
     requestTimeoutMs: Math.max(3_000, Number(process.env.LOXONE_REQUEST_TIMEOUT_MS ?? 18_000)),
-    appVersion: process.env.APP_VERSION ?? "3.0.44",
+    appVersion: process.env.APP_VERSION ?? "3.0.45",
     appUuid: process.env.LOXONE_APP_UUID ?? "1bfb0d5e-3d6e-4e77-9ed4-fc2b2f0682ba",
     appInfo: process.env.LOXONE_APP_INFO ?? "Evora Smart Hub",
     schedulerEnabled: (process.env.SCHEDULER_ENABLED ?? "true").toLowerCase() === "true",

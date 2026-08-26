@@ -16,6 +16,7 @@ const HLS_SESSION_VALIDATE_AFTER_MS = 20_000;
 const HLS_PLAYLIST_CACHE_MS = 350;
 const HLS_PLAYLIST_CACHE_KEY = "playlist.m3u8:";
 const HLS_MAX_CACHED_SEGMENTS = 12;
+const HLS_MAX_PUBLISHED_SEGMENTS = 6;
 const HLS_SEGMENT_MIN_PULL_INTERVAL_MS = 500;
 const HLS_SEGMENT_READY_RETRY_DELAYS_MS = [250, 500];
 const HLS_INITIAL_READY_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 3_000];
@@ -183,13 +184,20 @@ export function cameraHlsSessionId(input) {
     }
     return parseHlsRelativeUrl(playlistLine, "playlist.m3u8").searchParams.get("id") ?? "";
 }
-export function cameraHlsSegments(input, expectedSessionId) {
+export function cameraHlsPlaylistEntries(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
         throw new CameraIntegrationError("HLS relace není platná.", "CAMERA_CONFIG_INVALID");
     }
-    const references = [];
-    const lines = input.trim().split(/\r?\n/);
-    for (const line of lines) {
+    const entries = [];
+    let durationLine = null;
+    for (const line of input.trim().split(/\r?\n/)) {
+        if (line.startsWith("#EXTINF:")) {
+            if (!/^#EXTINF:\d+(?:\.\d+)?,?$/.test(line)) {
+                throw new CameraIntegrationError("HLS segment má neplatnou délku.", "CAMERA_STREAM_FAILED");
+            }
+            durationLine = line;
+            continue;
+        }
         const resource = line.startsWith("segment.m4s?")
             ? "segment.m4s"
             : line.startsWith("segment.ts?")
@@ -202,12 +210,45 @@ export function cameraHlsSegments(input, expectedSessionId) {
         if (parsed.searchParams.get("id") !== expectedSessionId || !/^\d{1,12}$/.test(sequence)) {
             throw new CameraIntegrationError("HLS segment nepatří do očekávané relace.", "CAMERA_STREAM_FAILED");
         }
-        references.push({ resource, sequence });
+        if (!durationLine) {
+            throw new CameraIntegrationError("HLS segment nemá deklarovanou délku.", "CAMERA_STREAM_FAILED");
+        }
+        entries.push({ resource, sequence, durationLine });
+        durationLine = null;
     }
-    return references;
+    return entries;
+}
+export function cameraHlsSegments(input, expectedSessionId) {
+    return cameraHlsPlaylistEntries(input, expectedSessionId).map(({ resource, sequence }) => ({ resource, sequence }));
 }
 export function cameraHlsLatestSegment(input, expectedSessionId) {
     return cameraHlsSegments(input, expectedSessionId).at(-1) ?? null;
+}
+export function buildCameraHlsPublishedPlaylist(input, expectedSessionId, readySegments) {
+    if (!readySegments.length) {
+        throw new CameraIntegrationError("HLS nemá připravený video segment.", "CAMERA_STREAM_FAILED");
+    }
+    cameraHlsPlaylistEntries(input, expectedSessionId);
+    for (let index = 0; index < readySegments.length; index += 1) {
+        const current = readySegments[index];
+        if (!/^\d{1,12}$/.test(current.sequence) || !/^#EXTINF:\d+(?:\.\d+)?,?$/.test(current.durationLine)) {
+            throw new CameraIntegrationError("Připravený HLS segment není platný.", "CAMERA_STREAM_FAILED");
+        }
+        if (index > 0 && BigInt(current.sequence) !== BigInt(readySegments[index - 1].sequence) + 1n) {
+            throw new CameraIntegrationError("Připravené HLS segmenty nenavazují.", "CAMERA_STREAM_FAILED");
+        }
+    }
+    const lines = input.trim().split(/\r?\n/);
+    const firstSegmentTag = lines.findIndex((line) => line.startsWith("#EXTINF:"));
+    if (firstSegmentTag < 0 || lines[0] !== "#EXTM3U") {
+        throw new CameraIntegrationError("Video brána nevrátila HLS playlist.", "CAMERA_STREAM_FAILED");
+    }
+    const header = lines.slice(0, firstSegmentTag).filter((line) => !line.startsWith("#EXT-X-MEDIA-SEQUENCE:"));
+    header.push(`#EXT-X-MEDIA-SEQUENCE:${readySegments[0].sequence}`);
+    for (const segment of readySegments) {
+        header.push(segment.durationLine, `${segment.resource}?id=${expectedSessionId}&n=${segment.sequence}`);
+    }
+    return `${header.join("\n")}\n`;
 }
 export function rewriteCameraHlsMediaPlaylist(input, expectedSessionId) {
     if (!HLS_SESSION_PATTERN.test(expectedSessionId)) {
@@ -550,6 +591,8 @@ class CameraVideoGateway {
                 contentType: "application/vnd.apple.mpegurl",
             },
             lastResourceAt: Date.now(),
+            publishedPlaylist: null,
+            publishedSegments: [],
             segmentPullQueue: new CameraHlsSegmentPullQueue(),
             resources: new CameraHlsResourceCache(),
         };
@@ -569,17 +612,33 @@ class CameraVideoGateway {
     }
     async warmLatestHlsPlaylistResource(session, playlist) {
         const playlistText = playlist.body.toString("utf8");
-        const latestSegment = cameraHlsLatestSegment(playlistText, session.id);
+        const latestSegment = cameraHlsPlaylistEntries(playlistText, session.id).at(-1);
         if (!latestSegment) {
             throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
         }
         if (playlistText.includes("#EXT-X-MAP:")) {
             await session.resources.load("init.mp4:", () => this.fetchHlsResource("init.mp4", session.id));
         }
-        // Starší segmenty v živém playlistu mohou v go2rtc mezitím expirovat.
-        // Pro plynulý start stačí držet připravený právě nejnovější segment;
-        // prohlížeč si zbývající platné segmenty vyžádá podle playlistu sám.
+        // Starší segmenty v živém upstream playlistu mohou v go2rtc mezitím
+        // expirovat. Každý nový segment proto zveřejníme až poté, co je celý
+        // uložený ve vlastní omezené cache Hubu.
         await this.loadHlsSegment(session, latestSegment);
+        const previous = session.publishedSegments.at(-1);
+        if (!previous || previous.resource !== latestSegment.resource
+            || BigInt(latestSegment.sequence) !== BigInt(previous.sequence) + 1n) {
+            if (previous?.resource !== latestSegment.resource || previous?.sequence !== latestSegment.sequence) {
+                session.publishedSegments.splice(0, session.publishedSegments.length, latestSegment);
+            }
+        }
+        else {
+            session.publishedSegments.push(latestSegment);
+        }
+        while (session.publishedSegments.length > HLS_MAX_PUBLISHED_SEGMENTS)
+            session.publishedSegments.shift();
+        session.publishedPlaylist = {
+            body: Buffer.from(buildCameraHlsPublishedPlaylist(playlistText, session.id, session.publishedSegments), "utf8"),
+            contentType: "application/vnd.apple.mpegurl",
+        };
         session.lastResourceAt = Date.now();
     }
     async warmHlsSession(session) {
@@ -641,10 +700,11 @@ class CameraVideoGateway {
         if (resource === "playlist.m3u8") {
             const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", sessionId), { ttlMs: HLS_PLAYLIST_CACHE_MS });
             session.lastResourceAt = Date.now();
-            // Playlist nesmí čekat na segmenty. Případné krátké zaváhání jednoho
-            // segmentu nesmí zneplatnit celou sdílenou relaci pro všechny klienty.
+            // Playlist nesmí čekat na právě vznikající segment. Klient dostane jen
+            // souvislou sadu segmentů, které už server ověřil a drží v paměti;
+            // nejnovější upstream segment se do ní zařadí až po dokončení na pozadí.
             void this.warmLatestHlsPlaylistResource(session, playlist).catch(() => undefined);
-            return playlist;
+            return session.publishedPlaylist ?? playlist;
         }
         if (resource === "segment.m4s" || resource === "segment.ts") {
             const response = await this.loadHlsSegment(session, {

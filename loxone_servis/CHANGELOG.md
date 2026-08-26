@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.47
+
+- Evora Smart Menu 3.0.30 na výslovné přání odstraňuje z kořene celou položku `Parkoviště a brána`; živé menu nevytváří kamerový AVPlayer, neotevírá podnabídku brány a při otevření nepředehřívá HLS. Serverová kamera i brána zůstávají beze změny dostupné v Evora Smart Hubu.
+- Skryté stavy kamery, NVR, brány a Builderu už nejsou součástí strukturálního podpisu macOS Menu, takže jejich obnova nemůže sama přestavět celý strom. Vlastní karty mají tmavší neutrální povrch a významovou barvu dál používají pouze ikony. Hub zachovává schéma 23 a H.264/fMP4 HLS cestu z 3.0.46.
+
 ## 3.0.46
 
 - Jediný publikovaný kanál 7 přechází ze sdíleného MPEG-TS výřezu na jedinou sdílenou H.264/fMP4 HLS relaci. Připnutý `init.mp4` dává každému novému browseru, VLC i AVPlayeru kodekovou inicializaci nezávisle na stáří relace; hotové fragmenty se dál zveřejňují až po úplném načtení do omezené cache Hubu.

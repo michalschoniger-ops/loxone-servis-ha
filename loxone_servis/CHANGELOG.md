@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.44
+
+- Evora Smart Menu 3.0.29 odstraňuje tři zdroje problikávání nativní nabídky: vlastní povrchy jsou tmavé už před připojením do dočasného AppKit okna, profilová karta se nepřebarvuje při každém `viewWillDraw` a její změny CALayeru probíhají bez implicitní animace. Zároveň je odstraněné úmyslné pulzování celé stavové ikony během synchronizace.
+- Sekundový časovač během AppKit trackingu dál neběží; mimo otevřenou nabídku zapisuje pouze text, tooltip nebo obraz, který se skutečně změnil. Stavový vzhled karty se přepočítá jen při změně datového či docházkového stavu.
+- `/healthz` hlásí databázové schéma 23 odpovídající už existující migraci kontaktů Intranetu. Hub 3.0.43 migraci obsahoval, ale v health odpovědi ponechal historickou konstantu 22.
+
 ## 3.0.43
 
 - Evora Smart Menu 3.0.28 znovu používá skutečné systémové `NSMenu`. AppKit řídí otevření, zavření, umístění, klávesnici i kaskádové podnabídky bez vlastního 440px panelu, ručního přemisťování a snímkové animace. Nabídka při pouhém otevření neaktivuje Evora aplikaci, takže dosavadní okno Safari nemá přejít do neaktivního šedého vzhledu; dialogy se aktivují až po výslovné akci. Tickety, nový ticket a volné jméno spolucestujícího mají nativní dialogovou cestu nezávislou na odstraněném panelovém navigátoru.

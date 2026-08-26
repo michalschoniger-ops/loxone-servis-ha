@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.44.1
+
+- Nasazuje Evora Smart Hub 3.0.44 se schématem 23 a opravuje dříve zastaralé hlášení `databaseSchema` ve zdravotním endpointu.
+- Součástí je Evora Smart Menu 3.0.29 bez opakovaného přebarvování vrstev, implicitních animací a pulzování stavové ikony; hodnoty zapisuje do otevřeného menu pouze při skutečné změně. Zachovává data, šifrované přístupy, `/data` i vratný zdroj živého Hubu 3.0.43.
+
 ## 3.0.43.1
 
 - Nasazuje Evora Smart Hub 3.0.43 se schématem 23 a se serverovými funkcemi 3.0.42: kontakty Intranetu, synchronním webovým redirectem, neblokujícím HLS playlistem a dvěma šifrovanými povely brány.

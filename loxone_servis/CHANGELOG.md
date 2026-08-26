@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.42
+
+- Databázové schéma 23 dovoluje správci ručně doplnit nebo opravit telefon kontaktu z Evora Intranetu. Ruční číslo zůstává na serveru, API jej validuje a auditovaný zápis je dostupný pouze správci; kontakt bez čísla se v Hubu i macOS Menu dál zobrazí jako běžná karta bez telefonní ikony.
+- Otevření webového rozhraní Miniserveru používá skutečný synchronní odkaz na interní autentizovanou route Hubu. Server čerstvě rozliší bezpečnou adresu bez přihlašovacích údajů, dotazu a fragmentu a provede redirect, takže browser nemusí povolovat vyskakovací `about:blank` okno.
+- HLS playlist už nečeká na postupné stažení všech oznámených segmentů. Hub zahřeje pouze potřebnou inicializaci a nejnovější segment, zachová sdílenou relaci i při krátkém zaváhání a klient při připojování ponechá viditelný poslední platný snapshot.
+- Ovládání brány používá dva explicitní serverové HTTP(S) příkazy pro otevření a zavření místo odhadu Loxone virtuálního vstupu. Adresy se ukládají šifrovaně pomocí AES-256-GCM, klient je nikdy nedostane a server vynucuje shodný origin, zákaz credentials, query, fragmentu a redirectu, omezenou metodu GET/POST, sedmisekundový timeout a jediný souběžný povel.
+- Evora Smart Menu 3.0.27 sjednocuje všech šest akcí Miniserveru na výšku 58 bodů, vystřeďuje popisky přes celou kartu nezávisle na ikoně a při jediném nalezeném Miniserveru skryje nesouvisející kořenové položky.
+
 ## 3.0.41
 
 - Volitelná adresa Loxone Builderu už nemá ve výchozích add-on options prázdný řetězec. Dokud není samostatná HTTPS služba skutečně nastavená, klíč zůstává nepřítomný a Supervisor může Hub bezpečně spustit; server i UI dál pravdivě zobrazují stav `Nenastaveno`.

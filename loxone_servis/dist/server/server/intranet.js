@@ -160,7 +160,7 @@ function loadSnapshot(db) {
  * background job remain responsible for refreshing stale data.
  */
 export function getCachedIntranetSnapshot(db) {
-    return loadSnapshot(db);
+    return applyIntranetContactOverrides(db, loadSnapshot(db));
 }
 function persistSnapshot(db, snapshot) {
     writeEncrypted(db, SETTINGS.snapshot, JSON.stringify(snapshot));
@@ -581,6 +581,52 @@ function normalizedPersonName(value) {
 function comparablePersonName(value) {
     return normalizedPersonName(value).split(" ").filter(Boolean).sort((left, right) => left.localeCompare(right, "cs")).join(" ");
 }
+function intranetContactOverrides(db) {
+    try {
+        const rows = db.prepare("SELECT person_key,person_name,phone FROM intranet_contact_overrides ORDER BY person_name COLLATE NOCASE").all();
+        return new Map(rows.map((row) => [row.person_key, row]));
+    }
+    catch {
+        // Isolated parser tests may intentionally construct only the settings
+        // table; a production database always creates this table in migration 23.
+        return new Map();
+    }
+}
+function applyIntranetContactOverrides(db, snapshot) {
+    const overrides = intranetContactOverrides(db);
+    if (!overrides.size || !snapshot.people.length)
+        return snapshot;
+    return {
+        ...snapshot,
+        people: snapshot.people.map((person) => {
+            const override = overrides.get(comparablePersonName(person.name));
+            return override ? { ...person, phone: override.phone } : person;
+        }),
+    };
+}
+export function setIntranetContactOverride(db, personName, phoneInput, actorUserId) {
+    const name = personName.replace(/\s+/g, " ").trim();
+    const snapshot = loadSnapshot(db);
+    const person = snapshot.people.find((candidate) => comparablePersonName(candidate.name) === comparablePersonName(name));
+    if (!person)
+        throw new IntranetError("not_provided", "Kontakt už není v aktuálním seznamu Evora Intranetu.");
+    const key = comparablePersonName(person.name);
+    const compactPhone = (phoneInput ?? "").replace(/[\s().-]+/g, "");
+    if (!compactPhone) {
+        db.prepare("DELETE FROM intranet_contact_overrides WHERE person_key=?").run(key);
+        return applyIntranetContactOverrides(db, loadSnapshot(db));
+    }
+    if (!/^\+?[0-9]{6,15}$/.test(compactPhone)) {
+        throw new IntranetError("internal_error", "Telefonní číslo musí obsahovat 6 až 15 číslic a volitelnou mezinárodní předvolbu.");
+    }
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO intranet_contact_overrides(person_key,person_name,phone,updated_by_user_id,created_at,updated_at)
+     VALUES(?,?,?,?,?,?)
+     ON CONFLICT(person_key) DO UPDATE SET
+       person_name=excluded.person_name,phone=excluded.phone,
+       updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at`).run(key, person.name, compactPhone, actorUserId, now, now);
+    return applyIntranetContactOverrides(db, loadSnapshot(db));
+}
 export function parseIntranetTeamPhones(html) {
     const phones = new Map();
     const walk = (value) => {
@@ -931,7 +977,7 @@ async function performRefresh(db, forceAll) {
         }
         snapshot = snapshotWithHistory(snapshot, historyEvents);
         persistSnapshot(db, snapshot);
-        return snapshot;
+        return applyIntranetContactOverrides(db, snapshot);
     }
     catch (error) {
         const serviceError = error instanceof IntranetError
@@ -941,7 +987,7 @@ async function performRefresh(db, forceAll) {
         snapshot.errorCode = serviceError.code;
         snapshot.errorMessage = serviceError.message;
         persistSnapshot(db, snapshot);
-        return snapshot;
+        return applyIntranetContactOverrides(db, snapshot);
     }
 }
 export async function refreshIntranet(db, forceAll = false) {
@@ -956,9 +1002,9 @@ export async function refreshIntranet(db, forceAll = false) {
 export async function getIntranetSnapshot(db) {
     const snapshot = loadSnapshot(db);
     if (!snapshot.configured)
-        return snapshot;
+        return applyIntranetContactOverrides(db, snapshot);
     const age = snapshot.fetchedAt ? Date.now() - Date.parse(snapshot.fetchedAt) : Number.POSITIVE_INFINITY;
-    return age > STATUS_MAX_AGE_MS ? refreshIntranet(db, false) : snapshot;
+    return age > STATUS_MAX_AGE_MS ? refreshIntranet(db, false) : applyIntranetContactOverrides(db, snapshot);
 }
 export async function connectIntranet(db, email, password) {
     ensureEncryption();

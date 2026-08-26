@@ -954,6 +954,17 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_service_task_excel_row ON service_task_excel_links(sheet_name,row_number);
     CREATE INDEX IF NOT EXISTS idx_service_task_excel_fingerprint ON service_task_excel_links(source_fingerprint);
+    CREATE TABLE IF NOT EXISTS intranet_contact_overrides (
+      person_key TEXT PRIMARY KEY,
+      person_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      updated_by_user_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_intranet_contact_overrides_name
+      ON intranet_contact_overrides(person_name COLLATE NOCASE);
     CREATE TABLE IF NOT EXISTS connection_test_runs (
       id TEXT PRIMARY KEY,
       serial TEXT NOT NULL,
@@ -981,6 +992,7 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(20, new Date().toISOString());
     migrateServiceTaskExcelWritebackStates(db);
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(22, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(23, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

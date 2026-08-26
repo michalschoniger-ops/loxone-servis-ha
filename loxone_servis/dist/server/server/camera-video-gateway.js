@@ -567,18 +567,19 @@ class CameraVideoGateway {
         const key = `${segment.resource}:${segment.sequence}`;
         return session.resources.load(key, () => session.segmentPullQueue.run(() => this.fetchHlsResource(segment.resource, session.id, segment.sequence)), { segment: true });
     }
-    async warmHlsPlaylistResources(session, playlist) {
+    async warmLatestHlsPlaylistResource(session, playlist) {
         const playlistText = playlist.body.toString("utf8");
-        const segments = cameraHlsSegments(playlistText, session.id);
-        if (!segments.length) {
+        const latestSegment = cameraHlsLatestSegment(playlistText, session.id);
+        if (!latestSegment) {
             throw new CameraIntegrationError("HLS zatím neoznámilo první video segment.", "CAMERA_STREAM_FAILED");
         }
         if (playlistText.includes("#EXT-X-MAP:")) {
             await session.resources.load("init.mp4:", () => this.fetchHlsResource("init.mp4", session.id));
         }
-        for (const segment of segments) {
-            await this.loadHlsSegment(session, segment);
-        }
+        // Starší segmenty v živém playlistu mohou v go2rtc mezitím expirovat.
+        // Pro plynulý start stačí držet připravený právě nejnovější segment;
+        // prohlížeč si zbývající platné segmenty vyžádá podle playlistu sám.
+        await this.loadHlsSegment(session, latestSegment);
         session.lastResourceAt = Date.now();
     }
     async warmHlsSession(session) {
@@ -589,7 +590,7 @@ class CameraVideoGateway {
             }
             try {
                 const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", session.id), { ttlMs: HLS_PLAYLIST_CACHE_MS });
-                await this.warmHlsPlaylistResources(session, playlist);
+                await this.warmLatestHlsPlaylistResource(session, playlist);
                 return;
             }
             catch (error) {
@@ -638,15 +639,12 @@ class CameraVideoGateway {
         if (!session)
             return this.fetchHlsResource(resource, sessionId, sequence);
         if (resource === "playlist.m3u8") {
-            try {
-                const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", sessionId), { ttlMs: HLS_PLAYLIST_CACHE_MS });
-                await this.warmHlsPlaylistResources(session, playlist);
-                return playlist;
-            }
-            catch (error) {
-                this.forgetHlsSession(session);
-                throw error;
-            }
+            const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", sessionId), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+            session.lastResourceAt = Date.now();
+            // Playlist nesmí čekat na segmenty. Případné krátké zaváhání jednoho
+            // segmentu nesmí zneplatnit celou sdílenou relaci pro všechny klienty.
+            void this.warmLatestHlsPlaylistResource(session, playlist).catch(() => undefined);
+            return playlist;
         }
         if (resource === "segment.m4s" || resource === "segment.ts") {
             const response = await this.loadHlsSegment(session, {
@@ -677,7 +675,11 @@ class CameraVideoGateway {
                     try {
                         const master = await this.hlsMaster(db, channelId, quality, "mpegts");
                         const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
-                        await this.hlsResource("playlist.m3u8", sessionId);
+                        const session = this.hlsSessionsById.get(sessionId);
+                        if (!session)
+                            throw new CameraIntegrationError("HLS relace není připravená.", "CAMERA_STREAM_FAILED");
+                        const playlist = await session.resources.load(HLS_PLAYLIST_CACHE_KEY, () => this.fetchHlsResource("playlist.m3u8", sessionId), { ttlMs: HLS_PLAYLIST_CACHE_MS });
+                        await this.warmLatestHlsPlaylistResource(session, playlist);
                         warmed = true;
                     }
                     catch {
@@ -685,7 +687,7 @@ class CameraVideoGateway {
                     }
                     if (warmed) {
                         failures = 0;
-                        schedule(250);
+                        schedule(750);
                     }
                     else {
                         failures += 1;

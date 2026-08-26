@@ -27,8 +27,8 @@ import { getIncident, listIncidents, recordOperationalAttempt, refreshIncidents,
 import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraFleetOverview, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, PUBLISHED_CAMERA_CHANNEL_ID, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
-import { discoverGateControl, executeGateControl, gateControlStatus, GateControlError } from "./gate-control.js";
-import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getCachedIntranetSnapshot, getIntranetSnapshot, IntranetError, mutateIntranetTrip, punchIntranet, refreshIntranet, } from "./intranet.js";
+import { configureGateControl, executeGateControl, gateControlStatus, GateControlError } from "./gate-control.js";
+import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getCachedIntranetSnapshot, getIntranetSnapshot, IntranetError, mutateIntranetTrip, punchIntranet, refreshIntranet, setIntranetContactOverride, } from "./intranet.js";
 import { windowsMenuPackage, windowsMenuUpdateManifest } from "./windows-menu.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -227,11 +227,13 @@ function sendGateError(reply, error) {
         const status = error.code === "UNAVAILABLE" ? 503 : 409;
         return reply.code(status).send({ error: error.message, code: `GATE_${error.code}` });
     }
-    if (error instanceof LoxoneError) {
-        return reply.code(502).send({ error: error.message, code: `GATE_${error.code.toUpperCase()}` });
-    }
     return reply.code(500).send({ error: "Příkaz brány skončil interní chybou Hubu.", code: "GATE_INTERNAL_ERROR" });
 }
+const gateConfigurationSchema = z.object({
+    openUrl: z.string().trim().min(8).max(2_048),
+    closeUrl: z.string().trim().min(8).max(2_048),
+    method: z.enum(["GET", "POST"]).default("GET"),
+}).strict();
 const cameraStreamQuerySchema = z.object({
     quality: z.enum(["preview", "main"]).default("preview"),
     hevc: z.enum(["0", "1"]).default("0"),
@@ -455,6 +457,27 @@ export async function registerApi(app, db, jobs) {
         try {
             const snapshot = await refreshIntranet(db, true);
             audit(db, "intranet.refreshed", user.id, null, { state: snapshot.dataState });
+            return snapshot;
+        }
+        catch (error) {
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.put("/api/intranet/contacts/phone", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = z.object({
+            name: z.string().trim().min(1).max(160),
+            phone: z.string().trim().max(40).nullable(),
+        }).strict().parse(request.body);
+        try {
+            const snapshot = setIntranetContactOverride(db, input.name, input.phone, user.id);
+            audit(db, "intranet.contact_phone_updated", user.id, null, {
+                contactName: input.name,
+                removed: !input.phone,
+            });
+            reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
             return snapshot;
         }
         catch (error) {
@@ -926,12 +949,12 @@ export async function registerApi(app, db, jobs) {
         };
     });
     app.put("/api/integrations/worklog/v1/gate/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
-        z.object({}).strict().parse(request.body ?? {});
+        const input = gateConfigurationSchema.parse(request.body);
         try {
-            const item = await discoverGateControl(db);
+            const item = configureGateControl(db, input);
             audit(db, "worklog.gate_configured", identity.ownerUserId, null, { integrationId: identity.tokenId, project: item.project });
             return { item };
         }
@@ -1649,9 +1672,9 @@ export async function registerApi(app, db, jobs) {
         const user = requireRole(request, reply, ["admin"]);
         if (!user)
             return;
-        z.object({}).strict().parse(request.body ?? {});
+        const input = gateConfigurationSchema.parse(request.body);
         try {
-            const item = await discoverGateControl(db);
+            const item = configureGateControl(db, input);
             audit(db, "cameras.gate_configured", user.id, null, { project: item.project });
             return { item };
         }

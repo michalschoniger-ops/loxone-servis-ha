@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.42.1
+
+- Nasazuje Evora Smart Hub 3.0.42 se schématem 23, ručním doplněním telefonů Intranetu, synchronním serverovým web redirectem, neblokujícím HLS playlistem a dvěma explicitními šifrovanými HTTP(S) povely brány.
+- Zachovává vratný zdroj Hubu 3.0.41, databázi, šifrované přístupy, `/data` i nativní klienty. Součástí distribuce je Evora Smart Menu 3.0.27.
+
 ## 3.0.41.1
 
 - Nasazuje Evora Smart Hub 3.0.41 bez neplatného prázdného URL defaultu pro volitelné napojení Loxone Builderu.

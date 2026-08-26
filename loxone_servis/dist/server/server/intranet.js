@@ -12,6 +12,7 @@ const SUMMARY_MAX_AGE_MS = 10 * 60_000;
 const ROSTER_MAX_AGE_MS = 5 * 60_000;
 const CONTACTS_MAX_AGE_MS = 10 * 60_000;
 const LEAVES_MAX_AGE_MS = 10 * 60_000;
+const TRIPS_MAX_AGE_MS = 10 * 60_000;
 const HISTORY_MAX_AGE_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 18_000;
 const SETTINGS = {
@@ -103,6 +104,14 @@ function emptySnapshot(configured = false, email = null) {
         cards: {},
         people: [],
         leaves: [],
+        tripBook: {
+            fetchedAt: null,
+            canEdit: false,
+            trips: [],
+            projects: [],
+            people: [],
+            passengers: [],
+        },
         notificationsUnread: 0,
         history: {
             currentMonth: monthKey(),
@@ -126,6 +135,14 @@ function loadSnapshot(db) {
         const parsed = JSON.parse(encoded);
         const snapshot = { ...emptySnapshot(configured, email), ...parsed, configured, email };
         snapshot.people = snapshot.people.map((person) => ({ ...person, phone: person.phone ?? null }));
+        snapshot.tripBook = {
+            ...emptySnapshot(configured, email).tripBook,
+            ...(snapshot.tripBook ?? {}),
+            trips: Array.isArray(snapshot.tripBook?.trips) ? snapshot.tripBook.trips : [],
+            projects: Array.isArray(snapshot.tripBook?.projects) ? snapshot.tripBook.projects : [],
+            people: Array.isArray(snapshot.tripBook?.people) ? snapshot.tripBook.people : [],
+            passengers: Array.isArray(snapshot.tripBook?.passengers) ? snapshot.tripBook.passengers : [],
+        };
         const age = snapshot.fetchedAt ? Date.now() - Date.parse(snapshot.fetchedAt) : Number.POSITIVE_INFINITY;
         if (configured && snapshot.dataState === "current" && age > 150_000)
             snapshot.dataState = "stale";
@@ -590,6 +607,119 @@ export function parseIntranetTeamPhones(html) {
     return phones;
 }
 const INTRANET_LEAVE_TYPES = new Set(["vacation", "sick", "sickday", "doctor"]);
+const INTRANET_TRIP_PURPOSES = new Set(["sluzebni", "soukroma", "pronajem", "pauza", "nezarazeno"]);
+function textValue(value, maxLength = 2_000) {
+    if (typeof value !== "string")
+        return null;
+    const normalized = value.trim();
+    return normalized && normalized.length <= maxLength ? normalized : null;
+}
+function numberValue(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+function tripProject(raw) {
+    if (!raw || typeof raw !== "object")
+        return null;
+    const object = raw;
+    const id = textValue(object.id, 128);
+    const name = textValue(object.name, 300);
+    if (!id || !name)
+        return null;
+    return { id, code: textValue(object.code, 100) ?? "", name };
+}
+function tripPerson(raw) {
+    if (!raw || typeof raw !== "object")
+        return null;
+    const object = raw;
+    const id = textValue(object.id, 128);
+    const name = textValue(object.name, 300);
+    return id && name ? { id, name } : null;
+}
+/**
+ * Parses only the personal Kniha jízd payload embedded by the authenticated
+ * employee detail page. Coordinates are intentionally omitted from the Hub
+ * snapshot; the UI needs route labels, times and totals, not a second GPS log.
+ */
+export function parseIntranetTripBook(html, fetchedAt = new Date().toISOString()) {
+    let root = null;
+    for (const object of nextFlightObjects(html)) {
+        root = findDictionary(object, ["trips", "projects", "people", "canEdit"]);
+        if (root)
+            break;
+    }
+    if (!root || !Array.isArray(root.trips) || !Array.isArray(root.projects) || !Array.isArray(root.people))
+        return null;
+    const trips = root.trips.flatMap((raw) => {
+        if (!raw || typeof raw !== "object")
+            return [];
+        const object = raw;
+        const id = textValue(object.id, 128);
+        const startedAt = textValue(object.started_at, 80);
+        const vehicleId = textValue(object.vehicle_id, 128);
+        const vehicleObject = object.vehicle && typeof object.vehicle === "object"
+            ? object.vehicle
+            : {};
+        const vehicleSpz = textValue(object.vehicle_spz, 40) ?? textValue(vehicleObject.spz, 40);
+        const vehicleName = textValue(object.vehicle_name, 300) ?? textValue(vehicleObject.name, 300) ?? vehicleSpz;
+        if (!id || !startedAt || Number.isNaN(Date.parse(startedAt)) || !vehicleId || !vehicleSpz || !vehicleName)
+            return [];
+        const purposeValue = textValue(object.purpose, 40);
+        const purpose = purposeValue && INTRANET_TRIP_PURPOSES.has(purposeValue)
+            ? purposeValue
+            : "nezarazeno";
+        const projectObject = object.project && typeof object.project === "object"
+            ? object.project
+            : {};
+        const driverProfileId = textValue(object.hr_profile_id, 128) ?? textValue(object.vehicle_owner_id, 128);
+        return [{
+                id,
+                startedAt,
+                endedAt: textValue(object.ended_at, 80),
+                fromAddress: textValue(object.from_address, 1_000) ?? "—",
+                toAddress: textValue(object.to_address, 1_000) ?? "—",
+                km: numberValue(object.km),
+                odoStart: numberValue(object.odo_start),
+                odoEnd: numberValue(object.odo_end),
+                fuelLitres: numberValue(object.fuel_l),
+                averageSpeed: numberValue(object.avg_speed),
+                maximumSpeed: numberValue(object.max_speed),
+                standingMinutes: numberValue(object.standing_min),
+                vehicleId,
+                vehicleName,
+                vehicleSpz,
+                vehicleBody: textValue(object.vehicle_body, 80) ?? textValue(vehicleObject.body_type, 80),
+                purpose,
+                purposeSource: textValue(object.purpose_source, 80),
+                projectId: textValue(object.project_id, 128),
+                projectCode: textValue(object.project_code, 100) ?? textValue(projectObject.code, 100),
+                projectName: textValue(object.project_name, 300) ?? textValue(projectObject.name, 300),
+                projectMatch: textValue(object.project_match, 80),
+                inTravelOrder: object.in_travel_order === true,
+                driverProfileId,
+                driverName: textValue(object.driver_name, 300) ?? textValue(object.driver_raw, 300),
+                note: textValue(object.note, 2_000),
+                outsideWork: typeof object.outside_work === "boolean" ? object.outside_work : null,
+            }];
+    }).sort((left, right) => right.startedAt.localeCompare(left.startedAt)).slice(0, 500);
+    const projects = root.projects.map(tripProject).filter((value) => Boolean(value)).slice(0, 1_500);
+    const people = root.people.map(tripPerson).filter((value) => Boolean(value)).slice(0, 500);
+    const passengers = (Array.isArray(root.spolucestujici) ? root.spolucestujici : []).flatMap((raw) => {
+        if (!raw || typeof raw !== "object")
+            return [];
+        const object = raw;
+        const id = textValue(object.id, 128);
+        const tripId = textValue(object.trip_id, 128);
+        if (!id || !tripId)
+            return [];
+        return [{
+                id,
+                tripId,
+                profileId: textValue(object.hr_profile_id, 128),
+                name: textValue(object.name, 300),
+            }];
+    }).slice(0, 2_000);
+    return { fetchedAt, canEdit: root.canEdit === true, trips, projects, people, passengers };
+}
 export function parseIntranetLeaves(html) {
     let root = null;
     for (const object of nextFlightObjects(html)) {
@@ -780,6 +910,17 @@ async function performRefresh(db, forceAll) {
                 // Leave requests are secondary to the signed-in employee status.
             }
         }
+        if (due(snapshot.tripBook.fetchedAt, TRIPS_MAX_AGE_MS)) {
+            try {
+                const html = await (await intranetRequest(db, `/zamestnanci/${encodeURIComponent(response.hrProfileId)}`)).text();
+                const tripBook = parseIntranetTripBook(html, now.toISOString());
+                if (tripBook)
+                    snapshot.tripBook = tripBook;
+            }
+            catch {
+                // The personal trip book is independent from attendance availability.
+            }
+        }
         try {
             const notifications = await (await intranetRequest(db, "/api/notifications")).json();
             if (typeof notifications.unread === "number")
@@ -889,5 +1030,63 @@ export async function cancelIntranetLeave(db, id) {
         method: "POST",
         body: JSON.stringify({ action: "cancel", id }),
     });
+    return refreshIntranet(db, true);
+}
+async function editableTripBook(db) {
+    const snapshot = await refreshIntranet(db, false);
+    if (!snapshot.tripBook.fetchedAt) {
+        throw new IntranetError("not_provided", "Evora Intranet osobní Knihu jízd neposkytl.");
+    }
+    if (!snapshot.tripBook.canEdit) {
+        throw new IntranetError("permission_denied", "Účet nemá oprávnění upravovat osobní Knihu jízd.");
+    }
+    return snapshot.tripBook;
+}
+export async function mutateIntranetTrip(db, mutation) {
+    const tripBook = await editableTripBook(db);
+    let body;
+    if (mutation.action === "removePassenger") {
+        if (!tripBook.passengers.some((passenger) => passenger.id === mutation.id)) {
+            throw new IntranetError("permission_denied", "Spolucestující nepatří do načtené osobní Knihy jízd.");
+        }
+        body = { action: "removePassenger", id: mutation.id };
+    }
+    else {
+        const tripId = mutation.action === "addPassenger" ? mutation.tripId : mutation.id;
+        if (!tripBook.trips.some((trip) => trip.id === tripId)) {
+            throw new IntranetError("permission_denied", "Jízda nepatří do načtené osobní Knihy jízd.");
+        }
+        if (mutation.action === "setPurpose") {
+            if (!INTRANET_TRIP_PURPOSES.has(mutation.purpose))
+                throw new IntranetError("internal_error", "Neplatný účel jízdy.");
+            body = { action: "save", id: mutation.id, purpose: mutation.purpose };
+        }
+        else if (mutation.action === "setProject") {
+            if (mutation.projectId && !tripBook.projects.some((project) => project.id === mutation.projectId)) {
+                throw new IntranetError("permission_denied", "Zakázka není dostupná v osobní Knize jízd.");
+            }
+            body = { action: "save", id: mutation.id, project_id: mutation.projectId, project_match: "rucne" };
+        }
+        else if (mutation.action === "setTravelOrder") {
+            body = { action: "save", id: mutation.id, in_travel_order: mutation.value };
+        }
+        else if (mutation.action === "setDriver") {
+            if (mutation.profileId && !tripBook.people.some((person) => person.id === mutation.profileId)) {
+                throw new IntranetError("permission_denied", "Řidič není dostupný v osobní Knize jízd.");
+            }
+            body = { action: "save", id: mutation.id, hr_profile_id: mutation.profileId };
+        }
+        else {
+            const name = mutation.name?.trim() || null;
+            if (mutation.profileId && !tripBook.people.some((person) => person.id === mutation.profileId)) {
+                throw new IntranetError("permission_denied", "Spolucestující není dostupný v osobní Knize jízd.");
+            }
+            if ((mutation.profileId ? 1 : 0) + (name ? 1 : 0) !== 1) {
+                throw new IntranetError("internal_error", "Vyberte zaměstnance nebo zadejte jméno spolucestujícího.");
+            }
+            body = { action: "addPassenger", trip_id: mutation.tripId, hr_profile_id: mutation.profileId, name };
+        }
+    }
+    await intranetRequest(db, "/api/vozidla/jizdy", { method: "POST", body: JSON.stringify(body) });
     return refreshIntranet(db, true);
 }

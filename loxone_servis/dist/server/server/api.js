@@ -18,6 +18,7 @@ import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, d
 import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
+import { cachedLoxoneBuilderStatus, loxoneBuilderStatus } from "./loxone-builder.js";
 import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
 import { addServiceTaskAttachment, addServiceTaskComment, createServiceTask, getServiceTask, listServiceTasks, processServiceTaskReminders, readServiceTaskAttachment, updateServiceTask, } from "./service-tasks.js";
 import { getServiceTaskExcelSyncStatus, ServiceTaskExcelError, syncServiceTasksFromExcel, } from "./service-tasks-excel.js";
@@ -27,7 +28,7 @@ import { lastConnectionTest, runConnectionTest } from "./connection-test.js";
 import { CAMERA_HTTP_EVENTS, CameraIntegrationError, deleteCameraIntegration, getCameraChannelCapabilities, getCameraFleetOverview, getCameraHttpNotifications, getCameraOverview, getCameraSnapshot, optimizeCameraThirdMjpegStream, publishCameraOverview, PUBLISHED_CAMERA_CHANNEL_ID, renameCameraChannel, refreshCameraIntegration, saveCameraIntegration, saveCameraHttpNotifications, } from "./cameras.js";
 import { cameraVideoGateway } from "./camera-video-gateway.js";
 import { discoverGateControl, executeGateControl, gateControlStatus, GateControlError } from "./gate-control.js";
-import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getCachedIntranetSnapshot, getIntranetSnapshot, IntranetError, punchIntranet, refreshIntranet, } from "./intranet.js";
+import { cancelIntranetLeave, connectIntranet, createIntranetLeave, disconnectIntranet, getCachedIntranetSnapshot, getIntranetSnapshot, IntranetError, mutateIntranetTrip, punchIntranet, refreshIntranet, } from "./intranet.js";
 import { windowsMenuPackage, windowsMenuUpdateManifest } from "./windows-menu.js";
 const serialSchema = z.string().regex(/^[A-Fa-f0-9]{12}$/).transform((value) => value.toUpperCase());
 const homeAssistantIdSchema = z.string().uuid();
@@ -79,6 +80,15 @@ const intranetLeaveSchema = z.discriminatedUnion("action", [
         action: z.literal("cancel"),
         id: z.string().trim().min(1).max(128),
     }).strict(),
+]);
+const intranetRecordIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const intranetTripMutationSchema = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("setPurpose"), id: intranetRecordIdSchema, purpose: z.enum(["sluzebni", "soukroma", "pronajem", "pauza", "nezarazeno"]) }).strict(),
+    z.object({ action: z.literal("setProject"), id: intranetRecordIdSchema, projectId: intranetRecordIdSchema.nullable() }).strict(),
+    z.object({ action: z.literal("setTravelOrder"), id: intranetRecordIdSchema, value: z.boolean() }).strict(),
+    z.object({ action: z.literal("setDriver"), id: intranetRecordIdSchema, profileId: intranetRecordIdSchema.nullable() }).strict(),
+    z.object({ action: z.literal("addPassenger"), tripId: intranetRecordIdSchema, profileId: intranetRecordIdSchema.nullable(), name: z.string().trim().min(1).max(160).nullable() }).strict(),
+    z.object({ action: z.literal("removePassenger"), id: intranetRecordIdSchema }).strict(),
 ]);
 function normalizeAppSearch(value) {
     return String(value ?? "")
@@ -313,10 +323,18 @@ function recordOperationalResult(db, input) {
     }
 }
 export async function registerApi(app, db, jobs) {
+    void loxoneBuilderStatus();
     app.get("/api/overview", async (request, reply) => {
         if (!requireUser(request, reply))
             return;
         return fleetOverview(db);
+    });
+    app.get("/api/loxone-builder", async (request, reply) => {
+        if (!requireRole(request, reply, ["admin", "technician"]))
+            return;
+        const { refresh } = z.object({ refresh: z.literal("1").optional() }).strict().parse(request.query);
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return loxoneBuilderStatus({ force: refresh === "1" });
     });
     app.get("/api/search", { config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (request, reply) => {
         const user = requireUser(request, reply);
@@ -482,6 +500,28 @@ export async function registerApi(app, db, jobs) {
         }
         catch (error) {
             audit(db, "intranet.leave_failed", user.id, null, {
+                action: input.action,
+                code: error instanceof IntranetError ? error.code : "internal_error",
+            });
+            return sendIntranetError(reply, error);
+        }
+    });
+    app.post("/api/intranet/trips", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const input = intranetTripMutationSchema.parse(request.body);
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        try {
+            const snapshot = await mutateIntranetTrip(db, input);
+            audit(db, "intranet.trip_book_updated", user.id, null, {
+                action: input.action,
+                tripId: "tripId" in input ? input.tripId : "id" in input ? input.id : null,
+            });
+            return snapshot;
+        }
+        catch (error) {
+            audit(db, "intranet.trip_book_update_failed", user.id, null, {
                 action: input.action,
                 code: error instanceof IntranetError ? error.code : "internal_error",
             });
@@ -794,9 +834,13 @@ export async function registerApi(app, db, jobs) {
         });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         const menuProfile = identity.role === "technician" ? "technician" : "full";
+        // Native menu responses remain a cached read. Expired Builder health is
+        // refreshed asynchronously for a later polling cycle.
+        void loxoneBuilderStatus();
         const common = {
             appVersion: config.appVersion,
             menuProfile,
+            loxoneBuilder: cachedLoxoneBuilderStatus(),
             capabilities: {
                 miniserverWebInterface: true,
                 miniserverPasswordCopy: true,

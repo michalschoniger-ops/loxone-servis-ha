@@ -15,6 +15,12 @@ Na HA Domov vyplňte `canonical_base_url` veřejnou HTTPS adresou hlavní instal
 
 Port 8099 je určený pro přímý přístup přes důvěryhodný HTTPS reverse proxy nebo Tailscale Funnel. Nevystavujte jej na internet bez TLS.
 
+## Loxone Builder
+
+Na hlavní instalaci lze volbou `loxone_builder_url` nastavit HTTPS kořen samostatně nasazeného Loxone Builderu. Hub potom zobrazí jeho stav v sekci **LOXONE → Builder** a stejný bezpečný souhrn zpřístupní macOS Menu pod **Systémy**. Kontroluje pouze pevnou cestu `/healthz`; zákaznické ZIPy, PDF, projektový model, UUID registr ani výsledný `.Loxone` soubor přes Hub neprocházejí.
+
+Automatická validace Builderu nenahrazuje skutečný externí test ve Windows Loxone Configu. Dokud neproběhne průchod `open → save as → reopen`, Hub i menu jej označují jako čekající a nevydávají kompatibilitu za živě ověřenou.
+
 ## Monitoring dalších Home Assistantů
 
 V záložce **Home Assistant** přidejte název a kořenovou adresu instalace. Povolené jsou adresy `*.ts.net`, `*.ui.nabu.casa` a privátní LAN IP na portech 443, 8123 nebo 8443. Hlavní instalace každé dvě hodiny ověří dostupnost a odezvu.

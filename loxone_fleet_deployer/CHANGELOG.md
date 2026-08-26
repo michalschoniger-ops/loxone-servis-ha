@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.40.1
+
+- Nasazuje Evora Smart Hub 3.0.40 s členěným Intranetem, osobní Knihou jízd a odděleným stavovým napojením Loxone Builderu.
+- Zachovává vratný zdroj Hubu 3.0.39, databázi, šifrované přístupy, `/data` i nativní klienty. Součástí distribuce je Evora Smart Menu 3.0.26.
+
 ## 3.0.39.1
 
 - Nasazuje Evora Smart Hub 3.0.39 se zjednodušeným patchem go2rtc: číslování a omezenou cache segmentů vlastní Hub, zatímco go2rtc pouze prodlužuje životnost relace a nevrátí samotnou 376B PAT/PMT hlavičku jako video.

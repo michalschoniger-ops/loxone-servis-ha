@@ -8,6 +8,16 @@ const PASSWORD_AAD = "portal-sync:password";
 const SYNC_INTERVAL_MS = 24 * 60 * 60_000;
 const ERROR_BACKOFF_MS = 30 * 60_000;
 const PORTAL_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
+const PORTAL_MINISERVER_TYPES = Object.freeze({
+    // These are the stable product_type keys used by the current Loxone Portal.
+    // Do not infer the generation from a project name: `miniserver` is Gen. 1,
+    // while `miniserver_v2` is the current second-generation Miniserver.
+    miniserver: "Miniserver Gen. 1",
+    miniserver_go: "Miniserver Go Gen. 1",
+    miniserver_v2: "Miniserver",
+    miniserver_v2_go: "Miniserver Go",
+    miniserver_compact: "Miniserver Compact",
+});
 function form(values) {
     const body = new URLSearchParams();
     for (const [key, value] of Object.entries(values))
@@ -112,6 +122,31 @@ function portalBoolean(record, keys) {
     }
     return null;
 }
+export function normalizePortalMiniserverType(rawType) {
+    const source = rawType.trim();
+    // The Portal currently returns lowercase identifiers. Preserve the old
+    // title-style fallback for previously cached/test payloads, where the plain
+    // display label "Miniserver" meant the current model rather than the key.
+    const exactKey = source === source.toLocaleLowerCase("en-US") || source.includes("_")
+        ? source.toLocaleLowerCase("en-US")
+        : "";
+    if (exactKey && PORTAL_MINISERVER_TYPES[exactKey]) {
+        return PORTAL_MINISERVER_TYPES[exactKey];
+    }
+    const normalized = source.toLocaleLowerCase("en-US");
+    if (!normalized.includes("miniserver"))
+        return null;
+    if (normalized.includes("compact"))
+        return "Miniserver Compact";
+    const firstGeneration = normalized.includes("gen. 1")
+        || normalized.includes("gen 1")
+        || normalized.includes("gen1")
+        || normalized.includes("1. generace");
+    if (normalized.includes("go")) {
+        return firstGeneration ? "Miniserver Go Gen. 1" : "Miniserver Go";
+    }
+    return firstGeneration ? "Miniserver Gen. 1" : "Miniserver";
+}
 function normalizeProduct(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return null;
@@ -121,16 +156,9 @@ function normalizeProduct(value) {
     if (!/^[A-F0-9]{12}$/.test(serial))
         return null;
     const rawType = first(record, ["product_type", "productType", "type"]);
-    if (!rawType.toLocaleLowerCase("en-US").includes("miniserver"))
+    const type = normalizePortalMiniserverType(rawType);
+    if (!type)
         return null;
-    const normalizedType = rawType.toLocaleLowerCase("en-US");
-    const type = normalizedType.includes("compact")
-        ? "Miniserver Compact"
-        : normalizedType.includes(" go") || normalizedType.endsWith("go")
-            ? "Miniserver Go"
-            : normalizedType.includes("gen. 1") || normalizedType.includes("gen 1") || normalizedType.includes("gen1")
-                ? "Miniserver Gen. 1"
-                : "Miniserver";
     const weatherServiceActive = portalBoolean(record, ["active_weather_service", "activeWeatherService"]);
     return {
         serial,

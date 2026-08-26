@@ -1,8 +1,15 @@
 # Changelog
 
+## 3.0.40
+
+- Evora Smart Menu 3.0.26 a Hub 3.0.40 přidávají osobní Knihu jízd pod `Intranet`. Data se čtou z přihlášené zaměstnanecké stránky Evora Intranetu a úpravy používají jen akce skutečně deklarované jejím Next.js kódem: účel, zakázku, řidiče, cestovní příkaz a spolucestující. Server znovu ověřuje osobní `canEdit` i všechny identifikátory; GPS souřadnice se do snapshotu Menu ani Hubu neukládají.
+- Hub rozděluje Intranet na samostatně volitelné části `Přehled`, `Docházka`, `Dovolené`, `Kniha jízd` a `Lidé`. Desktop používá přehledné záložky a telefon kompaktní volbu; vykreslí se vždy jen vybraná část, takže uživatel nemusí procházet jeden dlouhý sloupec všech záznamů.
+- Samostatný Loxone Builder je v Hubu dostupný pod `LOXONE → Builder` a v macOS Menu pod `Systémy`. Hub čte pouze pevný veřejný `/healthz`, používá omezenou cache a přes sebe nepřenáší ZIP, PDF, model ani výsledný `.Loxone` soubor.
+
 ## 3.0.39
 
 - Lokální patch go2rtc ponechává číslování a opakované vydávání segmentů v omezené sdílené cache Hubu. Uvnitř go2rtc mění pouze dvě nutné vlastnosti: delší životnost HLS relace a zákaz vrátit MPEG-TS segment tvořený jen 376B PAT/PMT hlavičkou. Odstraňuje se živě doložené zablokování Hubu 3.0.38, který s interní sequence-cache sice vydal první 322kB H.264 segment, ale hned následující playlist skončil po 11 sekundách HTTP 502 a další master po 35 sekundách timeoutem.
+- Evora Smart Menu 3.0.24 už při přechodu mezi stránkami otevřené nabídky nevolá `NSMenu.update()`. Výšku i origin interního panelu mění jediným neanimovaným rámem, po layoutu ukotví jeho skutečnou výslednou velikost přesně osm bodů pod horní a od pravé hrany a teprve potom vykreslí obsah. Odstraňuje se tak druhý AppKit přepočet, který dokázal na jeden snímek přisunout nabídku k systémové liště a následně ji vrátit.
 
 ## 3.0.38
 

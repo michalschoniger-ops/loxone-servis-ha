@@ -17,6 +17,7 @@ const optionsSchema = z.object({
     service_tasks_excel_share_url: z.string().optional(),
     service_tasks_excel_graph_tenant_id: z.string().optional(),
     service_tasks_excel_graph_client_id: z.string().optional(),
+    loxone_builder_url: z.string().optional(),
 });
 function optionalUuid(value, name) {
     const normalized = value?.trim() ?? "";
@@ -78,6 +79,7 @@ const options = readOptions(optionsPath);
 mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
 const canonicalBaseUrl = optionalHttpsUrl(process.env.CANONICAL_BASE_URL ?? options.canonical_base_url, "CANONICAL_BASE_URL");
 const publicBaseUrl = optionalHttpsUrl(process.env.PUBLIC_BASE_URL ?? options.public_base_url, "PUBLIC_BASE_URL");
+const loxoneBuilderUrl = optionalHttpsUrl(process.env.LOXONE_BUILDER_URL ?? options.loxone_builder_url, "LOXONE_BUILDER_URL");
 const serviceTasksExcelShareUrl = normalizeServiceTasksExcelShareUrl(process.env.SERVICE_TASKS_EXCEL_SHARE_URL ?? options.service_tasks_excel_share_url);
 const serviceTasksExcelGraphTenantId = optionalUuid(process.env.SERVICE_TASKS_EXCEL_GRAPH_TENANT_ID ?? options.service_tasks_excel_graph_tenant_id, "SERVICE_TASKS_EXCEL_GRAPH_TENANT_ID");
 const serviceTasksExcelGraphClientId = optionalUuid(process.env.SERVICE_TASKS_EXCEL_GRAPH_CLIENT_ID ?? options.service_tasks_excel_graph_client_id, "SERVICE_TASKS_EXCEL_GRAPH_CLIENT_ID");
@@ -120,12 +122,13 @@ export const config = {
     checkConcurrency: Math.max(1, Math.min(10, Number(process.env.CHECK_CONCURRENCY ?? 2))),
     fullCheckIntervalMinutes: Math.max(30, Number(process.env.FULL_CHECK_INTERVAL_MINUTES ?? 120)),
     requestTimeoutMs: Math.max(3_000, Number(process.env.LOXONE_REQUEST_TIMEOUT_MS ?? 18_000)),
-    appVersion: process.env.APP_VERSION ?? "3.0.39",
+    appVersion: process.env.APP_VERSION ?? "3.0.40",
     appUuid: process.env.LOXONE_APP_UUID ?? "1bfb0d5e-3d6e-4e77-9ed4-fc2b2f0682ba",
     appInfo: process.env.LOXONE_APP_INFO ?? "Evora Smart Hub",
     schedulerEnabled: (process.env.SCHEDULER_ENABLED ?? "true").toLowerCase() === "true",
     haNotifyService: process.env.HA_NOTIFY_SERVICE ?? options.ha_notify_service ?? "",
     publicBaseUrl,
+    loxoneBuilderUrl,
     canonicalBaseUrl,
     installationRole: canonicalBaseUrl ? "client" : "main",
     backupEncryptionKey,

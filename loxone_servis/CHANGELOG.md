@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.39
+
+- Lokální patch go2rtc ponechává číslování a opakované vydávání segmentů v omezené sdílené cache Hubu. Uvnitř go2rtc mění pouze dvě nutné vlastnosti: delší životnost HLS relace a zákaz vrátit MPEG-TS segment tvořený jen 376B PAT/PMT hlavičkou. Odstraňuje se živě doložené zablokování Hubu 3.0.38, který s interní sequence-cache sice vydal první 322kB H.264 segment, ale hned následující playlist skončil po 11 sekundách HTTP 502 a další master po 35 sekundách timeoutem.
+
 ## 3.0.38
 
 - Lokální patch go2rtc při vytváření MPEG-TS HLS segmentu už nepovažuje samotný 376B PAT/PMT základ za hotové video. Druhý a každý další segment počká na skutečná TS obrazová data; číslovaná cache přitom dál vrací stejný segment všem klientům. Opravuje se živě doložený stav Hubu 3.0.37, kdy všechny požadavky vracely HTTP 200, ale AVPlayer i VLC dostaly jen hlavičku bez dekódovatelného snímku.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.39.1
+
+- Nasazuje Evora Smart Hub 3.0.39 se zjednodušeným patchem go2rtc: číslování a omezenou cache segmentů vlastní Hub, zatímco go2rtc pouze prodlužuje životnost relace a nevrátí samotnou 376B PAT/PMT hlavičku jako video.
+- Zachovává vratný zdroj živého Hubu 3.0.38, databázi, šifrované přístupy, `/data` i nativní klienty. Evora Smart Menu 3.0.23 s atomickým ukotvením všech stránek zůstává beze změny.
+
 ## 3.0.38.1
 
 - Nasazuje Evora Smart Hub 3.0.38 s opravenou připraveností MPEG-TS segmentů: 376B PAT/PMT základ už není považován za hotové video a segment čeká na skutečná obrazová TS data.

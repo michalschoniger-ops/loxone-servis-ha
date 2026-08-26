@@ -1,6 +1,6 @@
 # Instalace a aktualizace
 
-Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Evora Smart Menu 3.0.27 používá místo problematického vícesloupcového `NSMenu` moderní panel s vlastním stabilním hledáním. Shodný Miniserver se zobrazí rovnou jako jednotlivý výsledek s úplným detailem a akcemi, zatímco nesouvisející kořenové položky se skryjí; složky zůstávají jen při běžném procházení.
+Hlavní navigace obsahuje pole **Hledat všude…**. Vyhledává bez ohledu na diakritiku v celé aplikaci: ve všech obrazovkách, podsekcích a dostupných datových záznamech; výsledek otevře přímo. Evora Smart Menu 3.0.28 používá skutečné systémové macOS `NSMenu`, takže otevření, zavření, umístění a podnabídky řídí AppKit bez vlastního panelu a bez zneaktivnění dosavadního okna při pouhém otevření. Nabídka je výhradně tmavá, barevné má pouze ikony a zachovává standardní řádky zleva doprava; AppKit otevře kaskádu na straně s dostupným místem. Klik do hledání obnoví jeho field editor bez aktivace celé aplikace. Shodný Miniserver se zobrazí rovnou jako jednotlivý výsledek s jednou informační kartou a klasickými akčními řádky, zatímco nesouvisející kořenové položky se skryjí; složky zůstávají jen při běžném procházení.
 
 1. Přidejte tento GitHub repozitář do obchodu s aplikacemi Home Assistantu.
 2. Nainstalujte **Evora Smart Hub**.
@@ -17,7 +17,7 @@ Port 8099 je určený pro přímý přístup přes důvěryhodný HTTPS reverse 
 
 ## Loxone Builder
 
-Na hlavní instalaci lze volbou `loxone_builder_url` nastavit HTTPS kořen samostatně nasazeného Loxone Builderu. Hub potom zobrazí jeho stav v sekci **LOXONE → Builder** a stejný bezpečný souhrn zpřístupní macOS Menu pod **Systémy**. Kontroluje pouze pevnou cestu `/healthz`; zákaznické ZIPy, PDF, projektový model, UUID registr ani výsledný `.Loxone` soubor přes Hub neprocházejí.
+Na hlavní instalaci lze volbou `loxone_builder_url` nastavit HTTPS kořen samostatně nasazeného Loxone Builderu. Hub potom zobrazí jeho stav v sekci **LOXONE → Builder**; v macOS Menu je Builder na výslovné přání skrytý. Kontroluje se pouze pevná cesta `/healthz`; zákaznické ZIPy, PDF, projektový model, UUID registr ani výsledný `.Loxone` soubor přes Hub neprocházejí.
 
 Automatická validace Builderu nenahrazuje skutečný externí test ve Windows Loxone Configu. Dokud neproběhne průchod `open → save as → reopen`, Hub i menu jej označují jako čekající a nevydávají kompatibilitu za živě ověřenou.
 
@@ -69,13 +69,15 @@ Integrace je dostupná výhradně správci. Technik ani uživatel pouze pro čte
 
 Evora Smart Menu načítá názvy, složky, SN, stav, firmware, ověřený poměr prvků online/celkem, počet offline prvků, Health verdict, čas poslední kontroly a odezvu. Neznámé hodnoty výslovně označí jako neověřené; hesla seznam neobsahuje. Po konkrétním kliknutí na Loxone App vrátí Hub přístup jen v jednorázové odpovědi s `Cache-Control: no-store`, kterou menu ihned předá schématu `loxone://` a nezapisuje ji do konfigurace ani logu. Volba Loxone Config vytvoří úlohu pouze pro Windows agenta správce a menu průběžně zobrazí výsledek nebo nabídne stažení chybějící verze.
 
-V sekci Milesight je publikovaný pouze kanál 7 `Parkoviště a brána`. Hub z přímého RTSP zdroje vytváří autentizované HLS a jednu úspornou náhledovou relaci průběžně předehřívá i bez otevřeného klienta; RTSP adresa ani přístupy se do browseru nebo Menu neposílají. Browser použije native HLS nebo připnutý hls.js fallback a macOS Menu jediný AVFoundation přehrávač; oba hlídají skutečně postupující obraz, mají omezený reconnect a po zavření relaci uklidí. Aktivní přehrávání nepoužívá MJPEG. Karta NVR navíc uvádí poslední kontrolu, úspěch a chybu, souhrn online/offline a úplný inventář kamer s modelem a firmwarem, pokud je zařízení vrátí.
+Fleet odpověď zůstává v paměti Menu. Minutová obnova nepřestaví otevřený strom; časovače neběží během AppKit trackingu a síťové výsledky se sloučí až po zavření. Detail konkrétního Miniserveru se přepočítá až při jeho dalším otevření a složka proto nevytváří karty ani nenačítá databázi pro všechny Miniservery najednou.
+
+Hub publikuje pouze kanál 7 `Parkoviště a brána`. V macOS Menu je kamera přímo v kořeni a položka Milesight se nezobrazuje. Hub z přímého RTSP zdroje vytváří autentizované HLS; RTSP adresa ani přístupy se do browseru nebo Menu neposílají. Browser použije native HLS nebo připnutý hls.js fallback a macOS Menu jediný AVFoundation přehrávač. Stav `ŽIVĚ` vyžaduje opakovaný postup dekódovaného času; při zastavení zůstane poslední snapshot, zobrazí se chyba a spustí omezený reconnect. Aktivní přehrávání nepoužívá MJPEG.
 
 ## Evora Intranet a docházka
 
 Položka **Intranet** je dostupná pouze správci a používá firemní bílé `e` na zeleném podkladu. Stránka **Docházka** zobrazuje aktuální stav a běžící čas `HH:MM:SS`, příchod, odchod, Home office, služební cestu, saldo, přesčas, dovolenou, historii aktuálního a předchozího měsíce, stav kolegů a jejich dostupné telefonní kontakty. Chybějící číslo lze ručně doplnit správcovským auditovaným zápisem; kontakt bez čísla zůstane zobrazený bez telefonní ikony. V samostatném panelu lze podat žádost o dovolenou, nemoc, sickday nebo lékaře a zobrazit či zrušit vlastní žádosti.
 
-Přístup se zadává jednou v Hubu. Heslo a obnovovací token jsou odděleně šifrované pomocí AES-256-GCM a automaticky se obnovují. Každá informace rozlišuje načítání, aktuální a zastaralá data, nedostupnost zdroje, odmítnuté přihlášení, chybějící přístup, neposkytnutý údaj a interní chybu Hubu. Docházkové změny vyžadují potvrzení a neobsahují GPS.
+Přístup se zadává jednou v Hubu. Heslo a obnovovací token jsou odděleně šifrované pomocí AES-256-GCM a automaticky se obnovují. Každá informace rozlišuje načítání, aktuální a zastaralá data, nedostupnost zdroje, odmítnuté přihlášení, chybějící přístup, neposkytnutý údaj a interní chybu Hubu. Kniha jízd uchová validované GPS pouze u konkrétní jízdy; Hub ani Menu průběžně nesledují zařízení a docházkové změny GPS neposílají.
 
 ## Denní synchronizace Loxone Partner Portalu
 

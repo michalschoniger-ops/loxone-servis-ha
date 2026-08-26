@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.43
+
+- Evora Smart Menu 3.0.28 znovu používá skutečné systémové `NSMenu`. AppKit řídí otevření, zavření, umístění, klávesnici i kaskádové podnabídky bez vlastního 440px panelu, ručního přemisťování a snímkové animace. Nabídka při pouhém otevření neaktivuje Evora aplikaci, takže dosavadní okno Safari nemá přejít do neaktivního šedého vzhledu; dialogy se aktivují až po výslovné akci. Tickety, nový ticket a volné jméno spolucestujícího mají nativní dialogovou cestu nezávislou na odstraněném panelovém navigátoru.
+- Živá nabídka je výhradně tmavá, používá neutrální text a povrchy a barevně odlišuje pouze ikony. Řádky zachovávají běžný směr zleva doprava s indikátorem podnabídky vpravo; AppKit vybírá stranu kaskády podle volného místa. Klik do globálního i Miniserverového hledání přijme první myš a vrátí field editor až po nativním zpracování kliknutí, takže lze pokračovat v psaní bez aktivace celé aplikace.
+- Fleet snapshot zůstává v paměti. Časovače neběží během AppKit trackingu, pomocné procesy a zápis Intranet snapshotu jsou mimo hlavní vlákno a síťové výsledky, profil, úkoly i stavové změny se při otevřené nabídce pouze odloží a sloučí po zavření. Složky vytvářejí lehké řádky až při otevření a karta konkrétního Miniserveru se sestaví teprve při vstupu do jeho podnabídky. Pod jedinou kartou jsou všechny akce klasické řádky `NSMenu`.
+- `Parkoviště a brána` je přímo v kořeni Menu. Značková položka Milesight i Loxone Builder jsou na výslovné přání skryté, takže kamera s bránou potřebuje jedinou levou podnabídku místo několika střídajících se kaskád.
+- Kamera označí stav `ŽIVĚ` až po dekódovaném snímku a opakovaném postupu přehrávacího času. Ongoing watchdog při zastavení vrátí poslední snapshot, ukáže pravdivý stav `BEZ VIDEA` a provede omezený reconnect.
+- Detail Knihy jízd zobrazuje dlouhou trasu, vozidlo, tachometr a validované počáteční i koncové GPS konkrétní jízdy ve více řádcích. Hub ani Menu tím nezavádějí průběžné sledování zařízení a docházkové akce GPS dál neposílají.
+- Obsah Hubu 3.0.42 přechází beze změny databázového schématu do 3.0.43, aby nová distribuční verze Menu neměnila již publikovaný artefakt pod stejným číslem.
+
 ## 3.0.42
 
 - Databázové schéma 23 dovoluje správci ručně doplnit nebo opravit telefon kontaktu z Evora Intranetu. Ruční číslo zůstává na serveru, API jej validuje a auditovaný zápis je dostupný pouze správci; kontakt bez čísla se v Hubu i macOS Menu dál zobrazí jako běžná karta bez telefonní ikony.

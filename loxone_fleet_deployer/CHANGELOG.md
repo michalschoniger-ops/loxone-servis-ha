@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.43.1
+
+- Nasazuje Evora Smart Hub 3.0.43 se schématem 23 a se serverovými funkcemi 3.0.42: kontakty Intranetu, synchronním webovým redirectem, neblokujícím HLS playlistem a dvěma šifrovanými povely brány.
+- Součástí je Evora Smart Menu 3.0.28 s tmavým nativním `NSMenu`, odloženými obnovami, pravdivým stavem videa, přímou položkou kamery bez Milesightu a Builderu a s validovanými GPS jednotlivých jízd. Databázi, šifrované přístupy ani `/data` helper nemění.
+
 ## 3.0.42.1
 
 - Nasazuje Evora Smart Hub 3.0.42 se schématem 23, ručním doplněním telefonů Intranetu, synchronním serverovým web redirectem, neblokujícím HLS playlistem a dvěma explicitními šifrovanými HTTP(S) povely brány.

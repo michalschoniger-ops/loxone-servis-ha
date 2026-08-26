@@ -663,6 +663,10 @@ function textValue(value, maxLength = 2_000) {
 function numberValue(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
+function coordinateValue(value, minimum, maximum) {
+    const coordinate = numberValue(value);
+    return coordinate !== null && coordinate >= minimum && coordinate <= maximum ? coordinate : null;
+}
 function tripProject(raw) {
     if (!raw || typeof raw !== "object")
         return null;
@@ -683,8 +687,8 @@ function tripPerson(raw) {
 }
 /**
  * Parses only the personal Kniha jízd payload embedded by the authenticated
- * employee detail page. Coordinates are intentionally omitted from the Hub
- * snapshot; the UI needs route labels, times and totals, not a second GPS log.
+ * employee detail page. Coordinates belong to the individual trip record;
+ * this snapshot never collects or infers continuous device location.
  */
 export function parseIntranetTripBook(html, fetchedAt = new Date().toISOString()) {
     let root = null;
@@ -723,6 +727,10 @@ export function parseIntranetTripBook(html, fetchedAt = new Date().toISOString()
                 endedAt: textValue(object.ended_at, 80),
                 fromAddress: textValue(object.from_address, 1_000) ?? "—",
                 toAddress: textValue(object.to_address, 1_000) ?? "—",
+                fromLatitude: coordinateValue(object.from_lat, -90, 90),
+                fromLongitude: coordinateValue(object.from_lng, -180, 180),
+                toLatitude: coordinateValue(object.to_lat, -90, 90),
+                toLongitude: coordinateValue(object.to_lng, -180, 180),
                 km: numberValue(object.km),
                 odoStart: numberValue(object.odo_start),
                 odoEnd: numberValue(object.odo_end),

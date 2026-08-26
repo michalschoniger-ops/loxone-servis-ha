@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.41.1
+
+- Nasazuje Evora Smart Hub 3.0.41 bez neplatného prázdného URL defaultu pro volitelné napojení Loxone Builderu.
+- Zachovává vratný zdroj Hubu 3.0.40, databázi, šifrované přístupy, `/data` i nativní klienty.
+
 ## 3.0.40.1
 
 - Nasazuje Evora Smart Hub 3.0.40 s členěným Intranetem, osobní Knihou jízd a odděleným stavovým napojením Loxone Builderu.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.41
+
+- Volitelná adresa Loxone Builderu už nemá ve výchozích add-on options prázdný řetězec. Dokud není samostatná HTTPS služba skutečně nastavená, klíč zůstává nepřítomný a Supervisor může Hub bezpečně spustit; server i UI dál pravdivě zobrazují stav `Nenastaveno`.
+
 ## 3.0.40
 
 - Evora Smart Menu 3.0.26 a Hub 3.0.40 přidávají osobní Knihu jízd pod `Intranet`. Data se čtou z přihlášené zaměstnanecké stránky Evora Intranetu a úpravy používají jen akce skutečně deklarované jejím Next.js kódem: účel, zakázku, řidiče, cestovní příkaz a spolucestující. Server znovu ověřuje osobní `canEdit` i všechny identifikátory; GPS souřadnice se do snapshotu Menu ani Hubu neukládají.

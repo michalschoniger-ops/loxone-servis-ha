@@ -567,9 +567,9 @@ class CameraVideoGateway {
             }
         }
         const query = new URLSearchParams({ src: name });
-        // go2rtc deliberately selects MPEG-TS HLS when no codec filter is sent.
-        // That avoids fMP4 init/fragment sequence races while keeping one direct
-        // RTSP-derived stream compatible with native Safari HLS and hls.js.
+        // A fixed H.264/fMP4 profile gives every new player a reusable init.mp4.
+        // The Hub publishes each media fragment only after it has been cached, so
+        // clients never see the historic init/fragment readiness race.
         if (mode !== "mpegts")
             query.set("video", mode);
         const result = await this.request(`/api/stream.m3u8?${query.toString()}`, {
@@ -733,7 +733,7 @@ class CameraVideoGateway {
                 void (async () => {
                     let warmed = false;
                     try {
-                        const master = await this.hlsMaster(db, channelId, quality, "mpegts");
+                        const master = await this.hlsMaster(db, channelId, quality, "h264");
                         const sessionId = cameraHlsSessionId(master.body.toString("utf8"));
                         const session = this.hlsSessionsById.get(sessionId);
                         if (!session)

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.46
+
+- Jediný publikovaný kanál 7 přechází ze sdíleného MPEG-TS výřezu na jedinou sdílenou H.264/fMP4 HLS relaci. Připnutý `init.mp4` dává každému novému browseru, VLC i AVPlayeru kodekovou inicializaci nezávisle na stáří relace; hotové fragmenty se dál zveřejňují až po úplném načtení do omezené cache Hubu.
+- Oprava reaguje na živý opakovaný start Hubu 3.0.45: první VLC klient z rozběhu dekódoval 79 snímků, ale pozdější klient dostal šest kompletních HTTP 200 MPEG-TS segmentů bez přenosného dekódovatelného začátku a za 180 sekund zůstal na nule. Menu zůstává 3.0.29 a schéma 23.
+
 ## 3.0.45
 
 - HLS playlist kanálu 7 už klientům neoznamuje právě vznikající segment, který interní brána ještě vrací jako nedostupný. Hub vede omezený souvislý seznam pouze plně načtených segmentů ve vlastní paměti, okamžitě jej vrací klientům a nový segment zařadí až po dokončení na pozadí.

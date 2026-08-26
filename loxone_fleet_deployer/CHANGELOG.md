@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.46.1
+
+- Nasazuje Evora Smart Hub 3.0.46 se schématem 23 a jedinou H.264/fMP4 HLS relací s připnutým `init.mp4` pro spolehlivý nový start klienta i po zestárnutí relace.
+- Hotové fragmenty se dál zveřejňují až po úplném načtení do omezené cache Hubu. Zachovává data, šifrované přístupy, `/data`, Menu 3.0.29 i vratný zdroj živého Hubu 3.0.45.
+
 ## 3.0.45.1
 
 - Nasazuje Evora Smart Hub 3.0.45 se schématem 23 a HLS playlistem, který klientům zveřejňuje pouze už celé načtené souvislé segmenty z omezené paměti Hubu.

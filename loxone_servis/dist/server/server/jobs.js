@@ -624,9 +624,11 @@ export class JobQueue {
         audit(this.db, "miniserver.scheduled_refresh", null, serial, { jobId: job.id, remaining });
     }
     async executeBulkCheck(job) {
+        const payload = safeJson(job.payload_json);
+        const prioritizedSerial = typeof payload.prioritizedSerial === "string" ? payload.prioritizedSerial : "";
         const rows = this.db
-            .prepare("SELECT serial FROM miniservers ORDER BY serial")
-            .all();
+            .prepare("SELECT serial FROM miniservers ORDER BY CASE WHEN serial=? THEN 0 ELSE 1 END,serial")
+            .all(prioritizedSerial);
         let completed = 0;
         let online = 0;
         for (let offset = 0; offset < rows.length; offset += config.checkConcurrency) {

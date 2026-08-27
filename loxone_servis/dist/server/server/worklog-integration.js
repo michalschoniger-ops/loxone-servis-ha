@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { hashToken, randomToken } from "./crypto.js";
 const TOKEN_PREFIX = "esh_worklog_";
+const PAIRING_CODE_PREFIX = "MENU-";
+const PAIRING_TTL_MS = 15 * 60 * 1_000;
 function publicToken(row) {
     return {
         id: row.id,
@@ -31,6 +33,58 @@ export function createWorkLogToken(db, ownerUserId, name) {
     const item = db.prepare(`SELECT id,name,token_hint,active,created_at,last_used_at,revoked_at
      FROM worklog_tokens WHERE id=?`).get(id);
     return { token, item: publicToken(item) };
+}
+function cleanupWorkLogPairings(db, now = new Date()) {
+    const timestamp = now.toISOString();
+    db.prepare("DELETE FROM worklog_pairings WHERE expires_at<=? OR used_at IS NOT NULL").run(timestamp);
+}
+export function createWorkLogPairing(db, ownerUserId, name) {
+    cleanupWorkLogPairings(db);
+    const code = `${PAIRING_CODE_PREFIX}${randomToken(12).toUpperCase()}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + PAIRING_TTL_MS).toISOString();
+    db.prepare(`INSERT INTO worklog_pairings(id,code_hash,owner_user_id,name,expires_at,created_at)
+     VALUES(?,?,?,?,?,?)`).run(randomUUID(), hashToken(code), ownerUserId, name.trim() || "Evora Smart Menu", expiresAt, now.toISOString());
+    return { code, expiresAt };
+}
+export function pairWorkLogMenu(db, code) {
+    cleanupWorkLogPairings(db);
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode.startsWith(PAIRING_CODE_PREFIX))
+        return { ok: false, reason: "invalid" };
+    const pairing = db.prepare(`SELECT p.id,p.owner_user_id,p.name,p.expires_at,p.used_at,u.email,u.role,u.active
+     FROM worklog_pairings p JOIN users u ON u.id=p.owner_user_id
+     WHERE p.code_hash=?`).get(hashToken(normalizedCode));
+    if (!pairing || pairing.used_at || Date.parse(pairing.expires_at) <= Date.now()
+        || pairing.active !== 1 || !["admin", "technician"].includes(pairing.role)) {
+        return { ok: false, reason: "invalid" };
+    }
+    db.exec("BEGIN IMMEDIATE");
+    try {
+        if (activeWorkLogTokenCount(db, pairing.owner_user_id) >= 5) {
+            db.exec("ROLLBACK");
+            return { ok: false, reason: "limit" };
+        }
+        const now = new Date().toISOString();
+        const consumed = db.prepare("UPDATE worklog_pairings SET used_at=? WHERE id=? AND used_at IS NULL").run(now, pairing.id);
+        if (consumed.changes !== 1) {
+            db.exec("ROLLBACK");
+            return { ok: false, reason: "invalid" };
+        }
+        const created = createWorkLogToken(db, pairing.owner_user_id, pairing.name);
+        db.exec("COMMIT");
+        return {
+            ok: true,
+            ownerUserId: pairing.owner_user_id,
+            email: pairing.email,
+            role: pairing.role,
+            ...created,
+        };
+    }
+    catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+    }
 }
 export function revokeWorkLogToken(db, ownerUserId, id) {
     const now = new Date().toISOString();

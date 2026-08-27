@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.50.1
+
+- Nasazuje Evora Smart Hub 3.0.50 se schématem 24, osobním párováním Menu a ruční kontrolou celé flotily s prioritou vybraného Miniserveru.
+- Zachovává Hub 3.0.49 jako vratný zdroj a nemění uložená data, šifrované přístupy ani `/data`; součástí distribuce jsou Windows Menu 3.0.31 a aktualizovaná macOS Menu.
+
 ## 3.0.49.1
 
 - Nasazuje úzký hotfix Evora Smart Hub 3.0.49 pro odpovědi Remote Connect ve formátu `IPHTTPS` a `DataCenter`.

@@ -1,12 +1,25 @@
 # Changelog
 
+## 3.0.50
+
+- Evora Smart Menu se nově páruje vlastním jednorázovým kódem `MENU-…`. Přihlášený správce nebo technik vytvoří kód pro pojmenované zařízení, Windows Menu 3.0.31 nebo plné/technické macOS Menu 3.0.34/3.0.35 jej po HTTPS vymění za osobní odvolatelný token a kód se po prvním použití zneplatní. Kód Loxone Config Launcheru zůstává oddělený a Menu jej odmítne. Technik v Nastavení vidí nejdřív kartu Menu; samostatná karta Config Launcheru je pouze pro správce. Databázové schéma se zvyšuje na 24 o hashované, časově omezené párovací kódy.
+- Zdrojové PNG loga už nemá pouze deklarovaný RGBA formát, ale skutečně průhledné čtyři vnější rohy. Windows build průhlednost rohů povinně kontroluje, vytváří plnobarevné vícevelikostní ICO a publikuje instalačku i pod verzovaným názvem `EvoraSmartMenu-Windows-Setup-3.0.31.exe`, takže Průzkumník nepřebírá starou ikonu z cache stejného názvu.
+- Podpora v Hubu nabízí vedle telefonu také přímý WhatsApp na `+420 380 429 011`, připraví první zprávu s poli pro příjmení a firemní e-mail a zachovává samostatné volání i WhatsApp kontakt Vácha. Pro oba WhatsApp odkazy používá originální zelený digitální glyph z oficiálního balíčku Meta s průhledným pozadím.
+- Evora Smart Menu 3.0.34 přidává tentýž originální WhatsApp glyph do profilové karty správce; kliknutí nejprve ukončí hlavní AppKit menu a následně nabídne přesně volby `Podpora` a `Vácha`. Podpora otevře připravenou první zprávu, zatímco Vácha používá již evidovaný firemní kontakt.
+- Sekundový čas během otevřeného nativního menu nově běží nejen v horní liště, ale také v profilové kartě a prvním stavovém řádku podmenu Intranet. Aktualizují se pouze existující textová pole s číslicemi; obrázky, tooltipy, vrstvy, síťová data ani strom menu se při trackingu nepřestavují.
+- Evora Smart Menu 3.0.31 pro Windows přidává přímo vedle hledání tlačítko `Obnovit stavy`. To spustí skutečnou kontrolu celé flotily na Hubu, vybraný Miniserver zařadí jako první a otevřený seznam aktualizuje po třech sekundách bez ztráty filtru ani vybraného řádku. Mimo ruční kontrolu zůstává běžné načtení snapshotu jednou za 60 sekund; plánovaný aktivní cyklus Hubu zůstává 120 minut.
+
 ## 3.0.49
 
+- Párování Windows Menu 3.0.29 už nelze zaměnit s jednorázovým kódem Loxone Config Launcheru: dialog vyžaduje dlouhý osobní token `esh_worklog_…`, chybu vysvětluje konkrétně a tlačítko otevře přímo zvýrazněnou kartu Evora Smart Menu / WorkLog. Odkaz zachová i za reverzní proxy koncové lomítko před parametry. Opakované vyvolání párování aktivuje jediný existující dialog, takže nevznikají překrytá okna. Hub zachovává schéma 23; instalační balíček dál neobsahuje heslo ani token.
 - Remote Connect přijímá vedle nového pole `url` také skutečný formát Loxone `IPHTTPS` a `DataCenter`, takže Exporty fungují i pro Miniservery, které jsou online přes tuto trasu.
 - Neznámá úspěšná odpověď nového resolveru už nezablokuje ověřený záložní dotaz na CloudDNS.
 
 ## 3.0.48
 
+- Přibývá samostatná Evora Smart Menu technická edice 3.0.31 pro macOS. Instalační PKG vloží aplikaci do `/Applications`, nastaví automatický start aktuálního uživatele a při spuštění otevře osobní párování. Levý klik zobrazí pouze přímé hledání Miniserverů; pravý klik nabízí hledání, připojení, aktualizaci a ukončení. Docházka, pracovní výkazy, tickety a obecné Systémy v technické edici nejsou.
+- Windows Menu 3.0.26 dostává jednosouborový bezkonzolový per-user instalátor. Bez oprávnění správce vytvoří položku v nabídce Start a Po spuštění, zachová DPAPI nastavení, ověří nový runtime a po instalaci vyvolá párovací dialog. Při aktualizaci bezpečně ukončí běžící Menu, odstraní starý atribut jen pro čtení a na uvolnění souboru počká s omezeným opakováním. Vložené Evora logo nově používá vícevelikostní 32bitové ICO, takže zachovává zeleno-modré barvy a průhlednost i v Průzkumníku a Finderu.
+- Každý správce nebo technik vytváří v Hubu vlastní token pod svým firemním e-mailem. macOS i Windows ověří e-mail a roli proti Hubu před uložením; technická macOS edice používá samostatnou Keychain službu a nesdílí správcovský token plného Menu. Tokenové endpointy, seznam Miniserverů a servisní akce přijímají roli technika, zatímco tickety, kamera, brána, Builder a další správcovské části zůstávají skryté nebo administrátorské. Databázové schéma zůstává 23.
 - Evora Smart Menu 3.0.31 ztmavuje skutečný podklad dočasného nativního `NSMenu` okna, nejen vlastní profilovou kartu. Největší veřejný `NSVisualEffectView` používá tmavý HUD materiál s mícháním uvnitř vlastního téměř černého podkladu, takže bílý obsah Safari pod nabídkou už celý systémový povrch nezesvětluje.
 - Oprava zachovává běžné nativní řádky, hover, klávesnici i kaskády a neaktivuje Evora aplikaci. `Parkoviště a brána`, Milesight a Loxone Builder zůstávají skryté; Hub zachovává schéma 23 a H.264/fMP4 HLS cestu z 3.0.46.
 

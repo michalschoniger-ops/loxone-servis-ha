@@ -16,7 +16,7 @@ import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
 import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
-import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogToken, listWorkLogTokens, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
+import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogPairing, createWorkLogToken, listWorkLogTokens, pairWorkLogMenu, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 import { cachedLoxoneBuilderStatus, loxoneBuilderStatus } from "./loxone-builder.js";
 import { getMiniserverProfile, listTags, saveMiniserverProfile } from "./miniserver-profiles.js";
@@ -663,6 +663,49 @@ export async function registerApi(app, db, jobs) {
             return;
         return { items: listWorkLogTokens(db, user.id) };
     });
+    app.post("/api/integrations/worklog/pairings", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin", "technician"]);
+        if (!user)
+            return;
+        if (activeWorkLogTokenCount(db, user.id) >= 5) {
+            return reply.code(409).send({
+                error: "Nejdřív zrušte některé starší připojení Menu. Jeden účet může mít nejvýše pět aktivních zařízení.",
+                code: "WORKLOG_TOKEN_LIMIT",
+            });
+        }
+        const input = z.object({
+            name: z.string().trim().min(1).max(100).default("Evora Smart Menu"),
+        }).parse(request.body ?? {});
+        const pairing = createWorkLogPairing(db, user.id, input.name);
+        audit(db, "worklog.pairing_created", user.id, null, { name: input.name, expiresAt: pairing.expiresAt });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return pairing;
+    });
+    app.post("/api/integrations/worklog/pair", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const input = z.object({
+            code: z.string().trim().min(17).max(40).regex(/^MENU-[A-Za-z0-9_-]+$/i),
+        }).parse(request.body);
+        const paired = pairWorkLogMenu(db, input.code);
+        if (!paired.ok) {
+            if (paired.reason === "limit") {
+                return reply.code(409).send({
+                    error: "Účet už má pět aktivních zařízení. V Hubu nejdřív zrušte některé starší připojení Menu.",
+                    code: "WORKLOG_TOKEN_LIMIT",
+                });
+            }
+            return reply.code(401).send({
+                error: "Párovací kód Evora Smart Menu není platný, už byl použit nebo vypršel.",
+                code: "WORKLOG_PAIRING_INVALID",
+            });
+        }
+        audit(db, "worklog.paired", paired.ownerUserId, null, { integrationId: paired.item.id, name: paired.item.name });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return {
+            token: paired.token,
+            item: paired.item,
+            user: { email: paired.email, role: paired.role },
+        };
+    });
     app.post("/api/integrations/worklog/tokens", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
         if (!user)
@@ -802,7 +845,7 @@ export async function registerApi(app, db, jobs) {
         return result;
     });
     app.get("/api/integrations/worklog/v1/profile/avatar", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const row = db.prepare("SELECT avatar_mime AS mime,avatar_data AS data FROM users WHERE id=? AND active=1").get(identity.ownerUserId);
@@ -819,7 +862,7 @@ export async function registerApi(app, db, jobs) {
             .send(content);
     });
     app.get("/api/integrations/worklog/v1/miniservers", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }
@@ -857,6 +900,7 @@ export async function registerApi(app, db, jobs) {
         });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         const menuProfile = identity.role === "technician" ? "technician" : "full";
+        const activeFleetCheck = jobs.findActive("bulk_check", null);
         // Native menu responses remain a cached read. Expired Builder health is
         // refreshed asynchronously for a later polling cycle.
         void loxoneBuilderStatus();
@@ -878,6 +922,20 @@ export async function registerApi(app, db, jobs) {
             },
             launcherAgent: agent,
             items,
+            fleetCheck: activeFleetCheck
+                ? {
+                    id: activeFleetCheck.id,
+                    state: activeFleetCheck.state,
+                    progress: activeFleetCheck.progress,
+                    message: activeFleetCheck.message,
+                    createdAt: activeFleetCheck.createdAt,
+                    startedAt: activeFleetCheck.startedAt,
+                }
+                : null,
+            refreshIntervals: {
+                menuSnapshotSeconds: 60,
+                fleetCheckMinutes: config.fullCheckIntervalMinutes,
+            },
         };
         if (identity.role === "technician")
             return common;
@@ -947,6 +1005,28 @@ export async function registerApi(app, db, jobs) {
                 updatedAt: task.updatedAt,
             })),
         };
+    });
+    app.post("/api/integrations/worklog/v1/miniservers/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const input = z.object({ prioritizedSerial: serialSchema.optional() }).strict().parse(request.body ?? {});
+        if (input.prioritizedSerial && !getMiniserver(db, input.prioritizedSerial)) {
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        }
+        const existing = jobs.findActive("bulk_check", null);
+        const job = existing ?? jobs.enqueueUnique("bulk_check", null, identity.ownerUserId, {
+            manual: true,
+            prioritizedSerial: input.prioritizedSerial ?? null,
+        });
+        audit(db, "worklog.fleet_check_requested", identity.ownerUserId, input.prioritizedSerial ?? null, {
+            integrationId: identity.tokenId,
+            jobId: job.id,
+            reused: Boolean(existing),
+        });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return reply.code(202).send({ job });
     });
     app.put("/api/integrations/worklog/v1/gate/config", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
@@ -1052,7 +1132,7 @@ export async function registerApi(app, db, jobs) {
         }
     });
     app.post("/api/integrations/worklog/v1/miniservers/:serial/actions", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }
@@ -1125,7 +1205,7 @@ export async function registerApi(app, db, jobs) {
         return reply.code(202).send({ action: input.action, job });
     });
     app.get("/api/integrations/worklog/v1/config-jobs/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
-        const identity = authenticateWorkLogToken(db, request.headers.authorization);
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }

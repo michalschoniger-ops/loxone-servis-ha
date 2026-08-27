@@ -771,6 +771,18 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_worklog_tokens_owner_active
       ON worklog_tokens(owner_user_id,active,created_at DESC);
+    CREATE TABLE IF NOT EXISTS worklog_pairings (
+      id TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      owner_user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_worklog_pairings_expiry
+      ON worklog_pairings(expires_at);
     CREATE TABLE IF NOT EXISTS portal_ticket_cache (
       id TEXT PRIMARY KEY,
       ticket_number TEXT NOT NULL DEFAULT '',
@@ -993,6 +1005,7 @@ function applyMigrations(db) {
     migrateServiceTaskExcelWritebackStates(db);
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(22, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(23, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(24, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

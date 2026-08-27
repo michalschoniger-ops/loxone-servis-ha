@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.55
+
+- Evora Smart Menu 3.0.32 pro Windows po osobním spárování samo připraví a skrytě spustí Config konektor. Technik instaluje a páruje pouze Menu; jeho odvolatelný DPAPI token zároveň autentizuje právě jeden navázaný konektor a zneplatní se společně s ním. Samostatná druhá instalačka ani druhý párovací kód už nejsou potřeba.
+- Verze Menu je viditelná v titulku i záhlaví vyhledávacího okna, v systémovém tooltipu a ve stavové nabídce. Menu kontroluje podepsaný manifest při spuštění a každých 15 minut; novější balíček ze stejného Hubu ověří HMAC podpisem a SHA-256, automaticky nainstaluje přes rollbackový updater a po chybě nechá funkční verzi beze změny.
+- Hub přidává idempotentní provisioning skrytého konektoru pro aktivní osobní Menu token a databázové schéma 25. Oprava přesně řízeného překódování cesty brány, jedno důvěryhodné Loxone Cloud přesměrování a jednorázová úvodní animace zůstávají součástí vydání.
+
 ## 3.0.54
 
 - Loxone Cloud při přesměrování povelu s českým znakem v názvu vstupu vrací cestu chybně překódovanou jako UTF-8 čtené přes Latin-1, na kterou Miniserver odpovídá 404. Hub tuto konkrétní bezeztrátovou chybu opraví jen tehdy, když každý segment výsledné cesty přesně odpovídá původnímu povelu bez cloudového identifikátoru; jiná cesta se odmítne ještě před předáním přihlášení.

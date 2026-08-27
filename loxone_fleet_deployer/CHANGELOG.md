@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.55.1
+
+- Nasazuje Evora Smart Hub 3.0.55 a Windows Menu 3.0.32 s jediným osobním párováním, automaticky připraveným skrytým Config konektorem, viditelnou verzí a podepsanou automatickou aktualizací při spuštění a každých 15 minut.
+- Zachovává živý Hub 3.0.53 nebo katalogový zdroj 3.0.54 jako vratný zdroj, bezpečnou opravu Loxone Cloud cesty brány, úvodní animaci, `/data` a uložené přístupy; databázi migruje na schéma 25.
+
 ## 3.0.54.1
 
 - Nasazuje Evora Smart Hub 3.0.54 s úzkou opravou chybného UTF-8 překódování českého znaku v přesměrované cestě Loxone Cloud; jinou doménu či jiný povel nadále odmítne bez předání účtu.

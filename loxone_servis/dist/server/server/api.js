@@ -15,7 +15,7 @@ import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCr
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
-import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, provisionMenuLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogPairing, createWorkLogToken, listWorkLogTokens, pairWorkLogMenu, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 import { cachedLoxoneBuilderStatus, loxoneBuilderStatus } from "./loxone-builder.js";
@@ -1007,6 +1007,22 @@ export async function registerApi(app, db, jobs) {
                 updatedAt: task.updatedAt,
             })),
         };
+    });
+    app.post("/api/integrations/worklog/v1/config-launcher/provision", { config: { rateLimit: { max: 6, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const input = z.object({ name: z.string().trim().min(1).max(100) }).strict().parse(request.body);
+        const item = provisionMenuLauncherAgent(db, identity.ownerUserId, identity.tokenId, input.name);
+        if (!item)
+            return reply.code(401).send({ error: "Osobní připojení Menu už není aktivní.", code: "WORKLOG_AUTH_INVALID" });
+        audit(db, "worklog.config_launcher_provisioned", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            agentId: item.agentId,
+            name: item.agentName,
+        });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return item;
     });
     app.post("/api/integrations/worklog/v1/miniservers/check", { config: { rateLimit: { max: 4, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);

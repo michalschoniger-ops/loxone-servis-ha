@@ -710,6 +710,7 @@ function applyMigrations(db) {
     CREATE TABLE IF NOT EXISTS config_launcher_agents (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL,
+      source_worklog_token_id TEXT,
       name TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       active INTEGER NOT NULL DEFAULT 1,
@@ -720,7 +721,8 @@ function applyMigrations(db) {
       last_error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(source_worklog_token_id) REFERENCES worklog_tokens(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS config_launcher_pairings (
       id TEXT PRIMARY KEY,
@@ -993,8 +995,10 @@ function applyMigrations(db) {
     addColumn(db, "config_launcher_agents", "owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
     addColumn(db, "config_launcher_agents", "diagnostics_json TEXT NOT NULL DEFAULT '{}'");
     addColumn(db, "config_launcher_agents", "diagnostics_at TEXT");
+    addColumn(db, "config_launcher_agents", "source_worklog_token_id TEXT REFERENCES worklog_tokens(id) ON DELETE CASCADE");
     addColumn(db, "config_launch_jobs", "launch_mode TEXT NOT NULL DEFAULT 'new_window' CHECK(launch_mode IN ('existing','new_window'))");
     db.exec("CREATE INDEX IF NOT EXISTS idx_config_launcher_agents_owner_seen ON config_launcher_agents(owner_user_id,active,last_seen_at DESC)");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_config_launcher_agents_worklog_source ON config_launcher_agents(source_worklog_token_id) WHERE source_worklog_token_id IS NOT NULL");
     db.exec("UPDATE config_launcher_agents SET active=0 WHERE owner_user_id IS NULL");
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(15, new Date().toISOString());
     migrateDistinctFolderColors(db);
@@ -1006,6 +1010,7 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(22, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(23, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(24, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(25, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

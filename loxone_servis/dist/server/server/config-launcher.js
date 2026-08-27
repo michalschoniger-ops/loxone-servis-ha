@@ -153,13 +153,40 @@ export function pairLauncherAgent(db, code, requestedName) {
     }
     return { agentId, agentToken, pollIntervalSeconds: 3 };
 }
+export function provisionMenuLauncherAgent(db, ownerUserId, workLogTokenId, name) {
+    const source = db.prepare("SELECT token_hash FROM worklog_tokens WHERE id=? AND owner_user_id=? AND active=1").get(workLogTokenId, ownerUserId);
+    if (!source)
+        return null;
+    const agentName = name.trim() || "Evora Smart Menu";
+    const existing = db.prepare("SELECT id FROM config_launcher_agents WHERE source_worklog_token_id=?").get(workLogTokenId);
+    const now = new Date().toISOString();
+    if (existing) {
+        db.prepare(`UPDATE config_launcher_agents SET owner_user_id=?,name=?,token_hash=?,active=1,
+       last_status=CASE WHEN active=1 THEN last_status ELSE 'paired' END,last_error=NULL,updated_at=? WHERE id=?`).run(ownerUserId, agentName, source.token_hash, now, existing.id);
+        return { agentId: existing.id, agentName, pollIntervalSeconds: 3 };
+    }
+    const agentId = randomUUID();
+    db.prepare(`INSERT INTO config_launcher_agents(
+       id,owner_user_id,source_worklog_token_id,name,token_hash,active,last_status,created_at,updated_at
+     ) VALUES(?,?,?,?,?,1,'paired',?,?)`).run(agentId, ownerUserId, workLogTokenId, agentName, source.token_hash, now, now);
+    return { agentId, agentName, pollIntervalSeconds: 3 };
+}
 export function authenticateLauncherAgent(db, authorization) {
     if (!authorization?.startsWith("Bearer "))
         return null;
     const token = authorization.slice(7).trim();
     if (token.length < 32)
         return null;
-    return db.prepare("SELECT * FROM config_launcher_agents WHERE token_hash=? AND active=1").get(hashToken(token)) ?? null;
+    const agent = db.prepare("SELECT * FROM config_launcher_agents WHERE token_hash=? AND active=1").get(hashToken(token));
+    if (!agent)
+        return null;
+    if (agent.source_worklog_token_id) {
+        const activeSource = db.prepare(`SELECT 1 AS ok FROM worklog_tokens t JOIN users u ON u.id=t.owner_user_id
+       WHERE t.id=? AND t.owner_user_id=? AND t.token_hash=? AND t.active=1 AND u.active=1`).get(agent.source_worklog_token_id, agent.owner_user_id, agent.token_hash);
+        if (!activeSource)
+            return null;
+    }
+    return agent;
 }
 export function heartbeatLauncherAgent(db, agent, helperVersion, installedVersions, diagnostics) {
     const versions = [...new Set(installedVersions.map((value) => value.trim()).filter(Boolean))].slice(0, 100);

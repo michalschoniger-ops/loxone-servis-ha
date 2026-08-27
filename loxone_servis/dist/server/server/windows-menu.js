@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-export const CURRENT_WINDOWS_MENU_VERSION = "3.0.32";
+export const CURRENT_WINDOWS_MENU_VERSION = "3.0.33";
 export const WINDOWS_MENU_PACKAGE_URL = "/api/integrations/worklog/v1/windows-menu/package";
 function packagePath() {
     const configured = process.env.EVORA_WINDOWS_MENU_PACKAGE_PATH?.trim();

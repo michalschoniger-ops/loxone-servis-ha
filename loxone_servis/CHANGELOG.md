@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.56
+
+- Živý test upgradu ve Windows/Parallels odhalil staré samostatné párování Config Launcheru, které Menu 3.0.32 záměrně zachovalo, a proto se Vaverkův skrytý konektor dál hlásil neplatným původním tokenem. Windows Menu 3.0.33 nyní bezpečně ověří přesný běžící PowerShell proces podle PID, času startu a cesty skriptu, požádá jej o ukončení, převezme konfiguraci pod osobní token Menu a spustí nový skrytý konektor.
+- Převzetí se provádí při každém startu idempotentně přes jediného agenta navázaného na Menu token; cizí proces se neukončí. Viditelná verze, patnáctiminutová automatická aktualizace, databázové schéma 25, oprava brány a úvodní animace zůstávají beze změny.
+
 ## 3.0.55
 
 - Evora Smart Menu 3.0.32 pro Windows po osobním spárování samo připraví a skrytě spustí Config konektor. Technik instaluje a páruje pouze Menu; jeho odvolatelný DPAPI token zároveň autentizuje právě jeden navázaný konektor a zneplatní se společně s ním. Samostatná druhá instalačka ani druhý párovací kód už nejsou potřeba.

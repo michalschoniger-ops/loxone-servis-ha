@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.54.1
+
+- Nasazuje Evora Smart Hub 3.0.54 s úzkou opravou chybného UTF-8 překódování českého znaku v přesměrované cestě Loxone Cloud; jinou doménu či jiný povel nadále odmítne bez předání účtu.
+- Zachovává Hub 3.0.53 jako vratný zdroj, úvodní animaci, databázové schéma 24, `/data`, uložená data i nativní Menu.
+
 ## 3.0.53.1
 
 - Nasazuje Evora Smart Hub 3.0.53 s bezpečným jednorázovým HTTPS přesměrováním ovládání brány mezi důvěryhodnými servery Loxone Cloud; přihlášení se nikdy nepředá cizí doméně.

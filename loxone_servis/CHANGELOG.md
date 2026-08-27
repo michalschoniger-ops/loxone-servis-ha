@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.54
+
+- Loxone Cloud při přesměrování povelu s českým znakem v názvu vstupu vrací cestu chybně překódovanou jako UTF-8 čtené přes Latin-1, na kterou Miniserver odpovídá 404. Hub tuto konkrétní bezeztrátovou chybu opraví jen tehdy, když každý segment výsledné cesty přesně odpovídá původnímu povelu bez cloudového identifikátoru; jiná cesta se odmítne ještě před předáním přihlášení.
+- Důvěryhodnost jediné HTTPS domény, šifrované serverové přihlášení, úvodní animace a databázové schéma 24 zůstávají beze změny.
+
 ## 3.0.53
 
 - Serverové ovládání brány bezpečně následuje právě jedno HTTP 307/308 přesměrování z důvěryhodné adresy Loxone Cloud na jiný HTTPS server téže služby a až tam znovu odešle šifrovaně uložené Basic přihlášení. Přesměrování na cizí doménu, nešifrovaný protokol, adresu s parametry nebo další přesměrování se odmítne bez předání účtu.

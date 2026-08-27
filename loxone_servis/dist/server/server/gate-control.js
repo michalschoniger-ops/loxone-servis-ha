@@ -59,6 +59,26 @@ function isLoxoneCloudHost(hostname) {
     const normalized = hostname.toLowerCase();
     return normalized === "loxonecloud.com" || normalized.endsWith(".loxonecloud.com");
 }
+function canonicalizeLoxoneRedirectPath(original, redirected) {
+    const originalSegments = original.pathname.split("/").filter(Boolean);
+    const redirectedSegments = redirected.pathname.split("/").filter(Boolean);
+    if (!redirectedSegments.length || redirectedSegments.length > originalSegments.length) {
+        throw new Error("redirect path mismatch");
+    }
+    const expectedSegments = originalSegments.slice(-redirectedSegments.length);
+    const pathMatches = redirectedSegments.every((segment, index) => {
+        const expected = decodeURIComponent(expectedSegments[index] ?? "");
+        const received = decodeURIComponent(segment);
+        if (received === expected)
+            return true;
+        const repaired = Buffer.from(received, "latin1").toString("utf8");
+        const losslessRepair = Buffer.from(repaired, "utf8").toString("latin1") === received;
+        return losslessRepair && repaired === expected;
+    });
+    if (!pathMatches)
+        throw new Error("redirect path mismatch");
+    redirected.pathname = `/${expectedSegments.join("/")}`;
+}
 function redirectedCommandUrl(source, location) {
     if (!location) {
         throw new GateControlError("UNAVAILABLE", "Zařízení brány nevrátilo platný cíl HTTP přesměrování.");
@@ -72,6 +92,8 @@ function redirectedCommandUrl(source, location) {
             || (redirected.origin !== original.origin && !trustedCrossOrigin)) {
             throw new Error("untrusted redirect");
         }
+        if (redirected.origin !== original.origin)
+            canonicalizeLoxoneRedirectPath(original, redirected);
         return redirected.toString();
     }
     catch {

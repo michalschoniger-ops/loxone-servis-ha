@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.53.1
+
+- Nasazuje Evora Smart Hub 3.0.53 s bezpečným jednorázovým HTTPS přesměrováním ovládání brány mezi důvěryhodnými servery Loxone Cloud; přihlášení se nikdy nepředá cizí doméně.
+- Zachovává Hub 3.0.52 jako vratný zdroj, úvodní animaci, databázové schéma 24, `/data`, uložená data i nativní Menu.
+
 ## 3.0.52.1
 
 - Nasazuje Evora Smart Hub 3.0.52 s jednorázovou animací úvodní obrazovky a s opraveným serverovým ovládáním brány přes dva HTTPS povely s šifrovaným Basic přihlášením.

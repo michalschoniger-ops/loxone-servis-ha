@@ -55,6 +55,29 @@ function normalizePassword(value) {
     }
     return value;
 }
+function isLoxoneCloudHost(hostname) {
+    const normalized = hostname.toLowerCase();
+    return normalized === "loxonecloud.com" || normalized.endsWith(".loxonecloud.com");
+}
+function redirectedCommandUrl(source, location) {
+    if (!location) {
+        throw new GateControlError("UNAVAILABLE", "Zařízení brány nevrátilo platný cíl HTTP přesměrování.");
+    }
+    try {
+        const original = new URL(source);
+        const redirected = new URL(location, original);
+        const trustedCrossOrigin = isLoxoneCloudHost(original.hostname) && isLoxoneCloudHost(redirected.hostname);
+        if (redirected.protocol !== "https:"
+            || redirected.username || redirected.password || redirected.search || redirected.hash
+            || (redirected.origin !== original.origin && !trustedCrossOrigin)) {
+            throw new Error("untrusted redirect");
+        }
+        return redirected.toString();
+    }
+    catch {
+        throw new GateControlError("UNAVAILABLE", "Zařízení brány vrátilo nedůvěryhodné HTTP přesměrování.");
+    }
+}
 function readEncryptedUrl(db, setting) {
     const stored = getSetting(db, setting[0]);
     if (!stored)
@@ -131,16 +154,23 @@ export async function executeGateControl(db, command) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
     try {
-        const response = await fetch(command === "open" ? configured.openUrl : configured.closeUrl, {
+        const commandUrl = command === "open" ? configured.openUrl : configured.closeUrl;
+        const requestInit = {
             method: configured.method,
-            redirect: "error",
+            redirect: "manual",
             cache: "no-store",
             headers: {
                 Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
                 Authorization: `Basic ${Buffer.from(`${configured.username}:${configured.password}`, "utf8").toString("base64")}`,
             },
             signal: controller.signal,
-        });
+        };
+        let response = await fetch(commandUrl, requestInit);
+        if (response.status === 307 || response.status === 308) {
+            const redirectedUrl = redirectedCommandUrl(commandUrl, response.headers.get("location"));
+            await response.body?.cancel().catch(() => undefined);
+            response = await fetch(redirectedUrl, { ...requestInit, redirect: "error" });
+        }
         await response.body?.cancel().catch(() => undefined);
         if (response.status === 401 || response.status === 403) {
             throw new GateControlError("AUTH_FAILED", "Přihlášení zařízení brány bylo odmítnuto.");

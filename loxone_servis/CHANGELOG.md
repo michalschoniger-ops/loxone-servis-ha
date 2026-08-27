@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.53
+
+- Serverové ovládání brány bezpečně následuje právě jedno HTTP 307/308 přesměrování z důvěryhodné adresy Loxone Cloud na jiný HTTPS server téže služby a až tam znovu odešle šifrovaně uložené Basic přihlášení. Přesměrování na cizí doménu, nešifrovaný protokol, adresu s parametry nebo další přesměrování se odmítne bez předání účtu.
+- Úvodní jednorázová animace a oprava JSON požadavku z 3.0.52 zůstávají beze změny; databázové schéma zůstává 24 a Menu se nemění.
+
 ## 3.0.52
 
 - Úvodní desktopová obrazovka nově při načtení jednou složí černé části společného motivu, nechá krátce projet světlo přes zeleno-modrou diagonálu a plynule zobrazí text `Vítejte`. Animace se po dokončení zastaví a respektuje systémové `prefers-reduced-motion`.

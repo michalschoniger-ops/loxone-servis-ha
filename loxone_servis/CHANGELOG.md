@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.51
+
+- Plné Evora Smart Menu 3.0.35 má v profilové kartě dvě samostatná tlačítka. Originální LOXONE znak otevírá volby `Podpora` a `Vácha`; zelený WhatsApp glyph otevírá kontakty `Filip Kubín` (`+420 725 959 685`), `Lukáš Majer` (`+420 721 062 300`) a `Jiří Vaverka` (`+420 602 462 104`). Všechny kontakty se předávají přímo nativní aplikaci přes `whatsapp://send`, takže Mac neskončí na mezistránce `api.whatsapp.com`. Pokud aplikace WhatsApp není nainstalovaná, Menu zobrazí srozumitelnou chybu a web samo neotevře.
+- Hub zachovává databázové schéma 24, ruční kontrolu flotily, Windows Menu 3.0.31 i technické macOS Menu 3.0.35 beze změny.
+
 ## 3.0.50
 
 - Evora Smart Menu se nově páruje vlastním jednorázovým kódem `MENU-…`. Přihlášený správce nebo technik vytvoří kód pro pojmenované zařízení, Windows Menu 3.0.31 nebo plné/technické macOS Menu 3.0.34/3.0.35 jej po HTTPS vymění za osobní odvolatelný token a kód se po prvním použití zneplatní. Kód Loxone Config Launcheru zůstává oddělený a Menu jej odmítne. Technik v Nastavení vidí nejdřív kartu Menu; samostatná karta Config Launcheru je pouze pro správce. Databázové schéma se zvyšuje na 24 o hashované, časově omezené párovací kódy.

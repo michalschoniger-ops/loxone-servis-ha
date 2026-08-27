@@ -1,5 +1,5 @@
 /* global self, caches, fetch, Request, Response, URL */
-const CACHE_NAME = "evora-smart-hub-shell-v3.0.50";
+const CACHE_NAME = "evora-smart-hub-shell-v3.0.51";
 const scopeUrl = new URL(self.registration.scope);
 
 function relativePath(url) {

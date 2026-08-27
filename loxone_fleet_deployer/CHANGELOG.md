@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.57.1
+
+- Nasazuje Evora Smart Hub 3.0.57 a Windows Menu 3.0.34, které již zdravý skrytý Config konektor při běžném startu ani diagnostice znovu nerestartuje a jednorázové převzetí nechá dokončit i probíhající long-poll.
+- Zachovává Hub 3.0.56 jako vratný zdroj, databázové schéma 25, živě ověřené otevření i zavření brány, úvodní animaci, `/data` a uložené přístupy.
+
 ## 3.0.56.1
 
 - Nasazuje Evora Smart Hub 3.0.56 a Windows Menu 3.0.33, které po živě zjištěném konfliktu bezpečně ověří a ukončí starý samostatně párovaný Config Launcher, převezme jej pod osobní token Menu a znovu jej spustí skrytě.

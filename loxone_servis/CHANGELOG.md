@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.57
+
+- Windows Menu 3.0.34 provede převzetí starého samostatného Config konektoru jen tehdy, když se chráněný token, adresa Hubu nebo příznak správy neshoduje s aktuálním osobním Menu. Již zdravý skrytý konektor při běžném startu ani diagnostice znovu nerestartuje.
+- Při jednorázovém převzetí čeká na bezpečné ukončení přesně ověřeného procesu až 40 sekund, aby doběhl i probíhající long-poll. Token porovnává v DPAPI rozšifrovaných bajtech konstantním průchodem a citlivé buffery vždy vynuluje. Hub zůstává na databázovém schématu 25; brána i úvodní animace se nemění.
+
 ## 3.0.56
 
 - Živý test upgradu ve Windows/Parallels odhalil staré samostatné párování Config Launcheru, které Menu 3.0.32 záměrně zachovalo, a proto se Vaverkův skrytý konektor dál hlásil neplatným původním tokenem. Windows Menu 3.0.33 nyní bezpečně ověří přesný běžící PowerShell proces podle PID, času startu a cesty skriptu, požádá jej o ukončení, převezme konfiguraci pod osobní token Menu a spustí nový skrytý konektor.

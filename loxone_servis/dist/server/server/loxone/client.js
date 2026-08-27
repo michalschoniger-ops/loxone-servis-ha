@@ -62,6 +62,20 @@ function normalizeOfficialUrl(value) {
     parsed.hash = "";
     return { baseUrl: parsed.toString().replace(/\/$/, ""), source: "connect", websocketUrl };
 }
+function normalizeCloudDnsRoute(payload, serial) {
+    if (payload.Code !== 200 || !payload.PortOpenHTTPS || !payload.IPHTTPS) {
+        throw new LoxoneError("route_unavailable", "Miniserver nemá dostupnou HTTPS trasu.");
+    }
+    const match = payload.IPHTTPS.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/);
+    if (!match || !payload.DataCenter || !/^[a-z0-9.-]+$/i.test(payload.DataCenter)) {
+        throw new LoxoneError("invalid_response", "CloudDNS vrátil neplatnou trasu.");
+    }
+    const port = Number(match[2]);
+    if (port < 1 || port > 65535)
+        throw new LoxoneError("invalid_response", "CloudDNS vrátil neplatný port.");
+    const host = `${match[1].replaceAll(".", "-")}.${serial.toLowerCase()}.dyndns.${payload.DataCenter}`;
+    return { baseUrl: `https://${host}:${port}`, source: "legacy", websocketUrl: null };
+}
 export function isSafeLocalMiniserverUrl(value) {
     try {
         const parsed = new URL(value);
@@ -177,15 +191,20 @@ async function resolveConnectionAttempt(serial, localUrl) {
             throw new LoxoneError("not_registered", "Sériové číslo není v Remote Connect platné.", 400);
         if (response.ok) {
             const payload = (await response.json());
-            if (payload.url)
+            if (typeof payload.url === "string" && payload.url.trim())
                 return normalizeOfficialUrl(payload.url);
+            // The current connect.loxonecloud.com proxy can return the established
+            // CloudDNS IPHTTPS/DataCenter schema instead of the newer `url` schema.
+            if (payload.Code !== undefined || payload.IPHTTPS !== undefined) {
+                return normalizeCloudDnsRoute(payload, serial);
+            }
             throw new LoxoneError("invalid_response", "Remote Connect nevrátil URL.");
         }
         if (response.status !== 500)
             throw new LoxoneError("resolver_error", `Remote Connect odpověděl HTTP ${response.status}.`, response.status);
     }
     catch (error) {
-        if (error instanceof LoxoneError && error.code !== "resolver_error")
+        if (error instanceof LoxoneError && error.code !== "resolver_error" && error.code !== "invalid_response")
             throw error;
         if (!(error instanceof LoxoneError)) {
             const classified = classifyFetchError(error, true);
@@ -200,18 +219,7 @@ async function resolveConnectionAttempt(serial, localUrl) {
         if (!response.ok)
             throw new LoxoneError("resolver_error", `CloudDNS odpověděl HTTP ${response.status}.`, response.status);
         const payload = (await response.json());
-        if (payload.Code !== 200 || !payload.PortOpenHTTPS || !payload.IPHTTPS) {
-            throw new LoxoneError("route_unavailable", "Miniserver nemá dostupnou HTTPS trasu.");
-        }
-        const match = payload.IPHTTPS.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/);
-        if (!match || !payload.DataCenter || !/^[a-z0-9.-]+$/i.test(payload.DataCenter)) {
-            throw new LoxoneError("invalid_response", "CloudDNS vrátil neplatnou trasu.");
-        }
-        const port = Number(match[2]);
-        if (port < 1 || port > 65535)
-            throw new LoxoneError("invalid_response", "CloudDNS vrátil neplatný port.");
-        const host = `${match[1].replaceAll(".", "-")}.${serial.toLowerCase()}.dyndns.${payload.DataCenter}`;
-        return { baseUrl: `https://${host}:${port}`, source: "legacy", websocketUrl: null };
+        return normalizeCloudDnsRoute(payload, serial);
     }
     catch (error) {
         if (error instanceof LoxoneError)

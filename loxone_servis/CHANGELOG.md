@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.49
+
+- Remote Connect přijímá vedle nového pole `url` také skutečný formát Loxone `IPHTTPS` a `DataCenter`, takže Exporty fungují i pro Miniservery, které jsou online přes tuto trasu.
+- Neznámá úspěšná odpověď nového resolveru už nezablokuje ověřený záložní dotaz na CloudDNS.
+
 ## 3.0.48
 
 - Evora Smart Menu 3.0.31 ztmavuje skutečný podklad dočasného nativního `NSMenu` okna, nejen vlastní profilovou kartu. Největší veřejný `NSVisualEffectView` používá tmavý HUD materiál s mícháním uvnitř vlastního téměř černého podkladu, takže bílý obsah Safari pod nabídkou už celý systémový povrch nezesvětluje.

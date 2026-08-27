@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.49.1
+
+- Nasazuje úzký hotfix Evora Smart Hub 3.0.49 pro odpovědi Remote Connect ve formátu `IPHTTPS` a `DataCenter`.
+- Zachovává Hub 3.0.48 jako vratný zdroj a nemění databázi, šifrované přístupy, `/data`, kamerovou cestu ani nativní Menu.
+
 ## 3.0.48.1
 
 - Nasazuje Evora Smart Hub 3.0.48 se schématem 23 a distribučním Evora Smart Menu 3.0.31 s tmavým podkladem celého nativního `NSMenu`, nejen vlastní profilové karty.

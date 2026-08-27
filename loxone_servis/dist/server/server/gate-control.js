@@ -1,9 +1,12 @@
+import { Buffer } from "node:buffer";
 import { config } from "./config.js";
 import { decryptSecret, encryptSecret } from "./crypto.js";
 import { getSetting, setSetting } from "./database.js";
 const SETTINGS = {
     openUrl: ["camera_gate_open_url_encrypted", "camera-gate:open-url"],
     closeUrl: ["camera_gate_close_url_encrypted", "camera-gate:close-url"],
+    username: ["camera_gate_username_encrypted", "camera-gate:username"],
+    password: ["camera_gate_password_encrypted", "camera-gate:password"],
     method: "camera_gate_http_method",
 };
 const GATE_PROJECT = "Parkoviště a brána";
@@ -33,13 +36,26 @@ function normalizeCommandUrl(value) {
     catch {
         throw new GateControlError("INVALID_CONFIG", "HTTP příkaz brány nemá platnou adresu.");
     }
-    if (!["http:", "https:"].includes(parsed.protocol)
+    if (parsed.protocol !== "https:"
         || parsed.username || parsed.password || parsed.search || parsed.hash) {
-        throw new GateControlError("INVALID_CONFIG", "HTTP příkaz brány smí používat jen HTTP/HTTPS bez přihlašovacích údajů, parametrů a fragmentu.");
+        throw new GateControlError("INVALID_CONFIG", "HTTP příkaz brány smí používat jen HTTPS bez přihlašovacích údajů, parametrů a fragmentu.");
     }
     return parsed.toString();
 }
-function readEncrypted(db, setting) {
+function normalizeUsername(value) {
+    const normalized = value.trim();
+    if (!normalized || normalized.length > 128 || /[:\r\n\0]/.test(normalized)) {
+        throw new GateControlError("INVALID_CONFIG", "Přihlašovací jméno zařízení brány není platné.");
+    }
+    return normalized;
+}
+function normalizePassword(value) {
+    if (!value || value.length > 256 || /[\r\n\0]/.test(value)) {
+        throw new GateControlError("INVALID_CONFIG", "Heslo zařízení brány není platné.");
+    }
+    return value;
+}
+function readEncryptedUrl(db, setting) {
     const stored = getSetting(db, setting[0]);
     if (!stored)
         return null;
@@ -51,13 +67,27 @@ function readEncrypted(db, setting) {
         return null;
     }
 }
-function readConfiguration(db) {
-    const openUrl = readEncrypted(db, SETTINGS.openUrl);
-    const closeUrl = readEncrypted(db, SETTINGS.closeUrl);
-    const method = getSetting(db, SETTINGS.method);
-    if (!openUrl || !closeUrl || (method !== "GET" && method !== "POST"))
+function readEncryptedCredential(db, setting, normalize) {
+    const stored = getSetting(db, setting[0]);
+    if (!stored)
         return null;
-    return { openUrl, closeUrl, method };
+    try {
+        ensureEncryption();
+        return normalize(decryptSecret(stored, config.masterKey, setting[1]));
+    }
+    catch {
+        return null;
+    }
+}
+function readConfiguration(db) {
+    const openUrl = readEncryptedUrl(db, SETTINGS.openUrl);
+    const closeUrl = readEncryptedUrl(db, SETTINGS.closeUrl);
+    const username = readEncryptedCredential(db, SETTINGS.username, normalizeUsername);
+    const password = readEncryptedCredential(db, SETTINGS.password, normalizePassword);
+    const method = getSetting(db, SETTINGS.method);
+    if (!openUrl || !closeUrl || !username || !password || (method !== "GET" && method !== "POST"))
+        return null;
+    return { openUrl, closeUrl, username, password, method };
 }
 export function gateControlStatus(db) {
     const configured = readConfiguration(db) !== null;
@@ -75,6 +105,8 @@ export function configureGateControl(db, input) {
     ensureEncryption();
     const openUrl = normalizeCommandUrl(input.openUrl);
     const closeUrl = normalizeCommandUrl(input.closeUrl);
+    const username = normalizeUsername(input.username);
+    const password = normalizePassword(input.password);
     const method = input.method ?? "GET";
     if (method !== "GET" && method !== "POST") {
         throw new GateControlError("INVALID_CONFIG", "Metoda HTTP příkazu brány není podporovaná.");
@@ -84,6 +116,8 @@ export function configureGateControl(db, input) {
     }
     setSetting(db, SETTINGS.openUrl[0], encryptSecret(openUrl, config.masterKey, SETTINGS.openUrl[1]));
     setSetting(db, SETTINGS.closeUrl[0], encryptSecret(closeUrl, config.masterKey, SETTINGS.closeUrl[1]));
+    setSetting(db, SETTINGS.username[0], encryptSecret(username, config.masterKey, SETTINGS.username[1]));
+    setSetting(db, SETTINGS.password[0], encryptSecret(password, config.masterKey, SETTINGS.password[1]));
     setSetting(db, SETTINGS.method, method);
     return gateControlStatus(db);
 }
@@ -101,10 +135,16 @@ export async function executeGateControl(db, command) {
             method: configured.method,
             redirect: "error",
             cache: "no-store",
-            headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.1" },
+            headers: {
+                Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
+                Authorization: `Basic ${Buffer.from(`${configured.username}:${configured.password}`, "utf8").toString("base64")}`,
+            },
             signal: controller.signal,
         });
         await response.body?.cancel().catch(() => undefined);
+        if (response.status === 401 || response.status === 403) {
+            throw new GateControlError("AUTH_FAILED", "Přihlášení zařízení brány bylo odmítnuto.");
+        }
         if (!response.ok) {
             throw new GateControlError("UNAVAILABLE", "Zařízení brány HTTP příkaz nepotvrdilo.");
         }

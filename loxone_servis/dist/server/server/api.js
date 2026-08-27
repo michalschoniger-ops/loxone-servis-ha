@@ -224,7 +224,7 @@ function sendIntranetError(reply, error) {
 }
 function sendGateError(reply, error) {
     if (error instanceof GateControlError) {
-        const status = error.code === "UNAVAILABLE" ? 503 : 409;
+        const status = error.code === "AUTH_FAILED" ? 502 : error.code === "UNAVAILABLE" ? 503 : 409;
         return reply.code(status).send({ error: error.message, code: `GATE_${error.code}` });
     }
     return reply.code(500).send({ error: "Příkaz brány skončil interní chybou Hubu.", code: "GATE_INTERNAL_ERROR" });
@@ -232,6 +232,8 @@ function sendGateError(reply, error) {
 const gateConfigurationSchema = z.object({
     openUrl: z.string().trim().min(8).max(2_048),
     closeUrl: z.string().trim().min(8).max(2_048),
+    username: z.string().trim().min(1).max(128),
+    password: z.string().min(1).max(256),
     method: z.enum(["GET", "POST"]).default("GET"),
 }).strict();
 const cameraStreamQuerySchema = z.object({

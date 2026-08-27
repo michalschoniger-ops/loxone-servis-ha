@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.52.1
+
+- Nasazuje Evora Smart Hub 3.0.52 s jednorázovou animací úvodní obrazovky a s opraveným serverovým ovládáním brány přes dva HTTPS povely s šifrovaným Basic přihlášením.
+- Zachovává Hub 3.0.51 jako vratný zdroj a nemění databázové schéma 24, `/data`, uložená data ani nativní Menu.
+
 ## 3.0.51.1
 
 - Nasazuje Evora Smart Hub 3.0.51 s plným macOS Menu 3.0.35, které má originální LOXONE tlačítko pro Podporu/Váchu a samostatné WhatsApp tlačítko pro Filipa Kubína, Lukáše Majera a Jiřího Vaverku. Všechny volby otevírá přímo v nativní aplikaci WhatsApp bez webové mezistránky.

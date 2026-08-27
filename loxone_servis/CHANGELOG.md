@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.52
+
+- Úvodní desktopová obrazovka nově při načtení jednou složí černé části společného motivu, nechá krátce projet světlo přes zeleno-modrou diagonálu a plynule zobrazí text `Vítejte`. Animace se po dokončení zastaví a respektuje systémové `prefers-reduced-motion`.
+- Tlačítka `Otevřít bránu` a `Zavřít bránu` už neposílají prázdný POST odmítaný jako nepodporovaný typ dat. Hub přijímá korektní JSON a cílové HTTP povely provádí serverově s Basic přihlášením uloženým odděleně pomocí AES-256-GCM. Adresy, jméno ani heslo se neposílají klientovi a chyby přihlášení nevracejí citlivé údaje.
+- Databázové schéma zůstává 24; macOS Menu 3.0.35 a Windows Menu 3.0.31 se nemění.
+
 ## 3.0.51
 
 - Plné Evora Smart Menu 3.0.35 má v profilové kartě dvě samostatná tlačítka. Originální LOXONE znak otevírá volby `Podpora` a `Vácha`; zelený WhatsApp glyph otevírá kontakty `Filip Kubín` (`+420 725 959 685`), `Lukáš Majer` (`+420 721 062 300`) a `Jiří Vaverka` (`+420 602 462 104`). Všechny kontakty se předávají přímo nativní aplikaci přes `whatsapp://send`, takže Mac neskončí na mezistránce `api.whatsapp.com`. Pokud aplikace WhatsApp není nainstalovaná, Menu zobrazí srozumitelnou chybu a web samo neotevře.

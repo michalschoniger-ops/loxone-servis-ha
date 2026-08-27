@@ -29,6 +29,8 @@ const app = Fastify({
                 "req.headers['x-action-confirmation']",
                 "res.headers['set-cookie']",
                 "body.password",
+                "body.openUrl",
+                "body.closeUrl",
                 "body.nvrPassword",
                 "body.portalPassword",
                 "body.currentPassword",

@@ -4,4 +4,4 @@ Bezpečný servisní a monitorovací hub EVORA Smart pro Loxone Miniservery a Ho
 
 Po instalaci aplikace otevřete její webové rozhraní ze sidebaru Home Assistantu. Citlivá data jsou uložena pouze v trvalém adresáři `/data` dané instalace a nejsou součástí obrazu ani GitHub repozitáře.
 
-Vydání 3.0.58 obsahuje plné macOS Menu 3.0.36 s dynamickým seznamem Home Assistantů z Hubu a auditovaným otevřením konkrétního serveru. Windows Menu zůstává ve verzi 3.0.34 s viditelnou verzí, automatickou podepsanou aktualizací a stabilním skrytým Config konektorem pod stejné osobní párování Menu.
+Vydání 3.0.59 přidává trvalou frontu časově omezených aktualizací Miniserverů. Složce Melori lze nastavit pravidlo pátek až neděle 22:00–04:00 v časové zóně Europe/Prague; podsložky je zdědí a Hub u čekajícího požadavku ukáže přesný termín. Plné macOS Menu zůstává ve verzi 3.0.37, technická edice ve verzi 3.0.35 a Windows Menu ve verzi 3.0.34.

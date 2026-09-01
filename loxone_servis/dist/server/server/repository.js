@@ -89,6 +89,9 @@ function mapMiniServer(row) {
         elementsOnline: row.inventory_total > 0 ? Number(row.inventory_online) : row.elements_online,
         elementsTotal: row.inventory_total > 0 ? Number(row.inventory_total) : row.elements_total,
         updateStatus: row.update_status,
+        firmwareUpdateJobState: row.active_update_state,
+        firmwareUpdateScheduledAt: row.active_update_not_before_at,
+        firmwareUpdateMessage: row.active_update_message,
         excluded: row.excluded === 1,
         notes: row.notes,
         folderId: row.folder_id,
@@ -140,6 +143,15 @@ const miniserverSelect = `
       WHERE j.serial=m.serial AND j.kind='project_sync' AND j.state IN ('queued','running','waiting')) AS active_loxapp_count
     ,(SELECT COUNT(*) FROM action_jobs j
       WHERE j.kind='portal_sync' AND j.state IN ('queued','running','waiting')) AS active_weather_count
+    ,(SELECT j.state FROM action_jobs j
+      WHERE j.serial=m.serial AND j.kind='firmware_update' AND j.state IN ('queued','running','waiting')
+      ORDER BY j.created_at,j.id LIMIT 1) AS active_update_state
+    ,(SELECT j.not_before_at FROM action_jobs j
+      WHERE j.serial=m.serial AND j.kind='firmware_update' AND j.state IN ('queued','running','waiting')
+      ORDER BY j.created_at,j.id LIMIT 1) AS active_update_not_before_at
+    ,(SELECT j.message FROM action_jobs j
+      WHERE j.serial=m.serial AND j.kind='firmware_update' AND j.state IN ('queued','running','waiting')
+      ORDER BY j.created_at,j.id LIMIT 1) AS active_update_message
   FROM miniservers m LEFT JOIN project_folders f ON f.id=m.folder_id`;
 export function listMiniservers(db) {
     return db.prepare(`${miniserverSelect} ORDER BY
@@ -154,7 +166,8 @@ export function getMiniserver(db, serial) {
 }
 export function listProjectFolders(db) {
     return db.prepare(`
-    SELECT f.id,f.name,f.description,f.color,f.parent_id,p.name AS parent_name,f.sort_order,f.created_at,f.updated_at,
+    SELECT f.id,f.name,f.description,f.color,f.parent_id,p.name AS parent_name,f.sort_order,
+      f.firmware_update_policy,f.created_at,f.updated_at,
       COUNT(m.serial) AS server_count,
       SUM(CASE WHEN m.gateway_role='gateway' THEN 1 ELSE 0 END) AS gateway_count,
       SUM(CASE WHEN m.gateway_role='client' THEN 1 ELSE 0 END) AS client_count
@@ -174,6 +187,7 @@ export function listProjectFolders(db) {
         serverCount: Number(row.server_count ?? 0),
         gatewayCount: Number(row.gateway_count ?? 0),
         clientCount: Number(row.client_count ?? 0),
+        firmwareUpdatePolicy: row.firmware_update_policy === "weekend_night" ? "weekend_night" : "immediate",
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     }));

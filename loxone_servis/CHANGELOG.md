@@ -1,8 +1,15 @@
 # Changelog
 
+## 3.0.59
+
+- Správce může složce Miniserverů nastavit omezení aktualizací na noci začínající v pátek, sobotu nebo neděli od 22:00 do 04:00 v časové zóně Europe/Prague. Pravidlo se dědí do podsložek, takže jediná politika složky Melori pokryje i její vnořené projekty.
+- Požadavek přijatý mimo povolené okno se neodešle Miniserveru, ale trvale se uloží do fronty s přesným termínem příštího provedení. Hub termín ukazuje v seznamu Miniserverů i provozním protokolu, opakovaný požadavek sloučí a při změně pravidla čekající frontu přepočítá.
+- Bezprostředně před odesláním Hub časové pravidlo znovu ověří. Po restartu nejistě rozpracovaný síťový příkaz neposílá podruhé a přejde pouze do ověřování výsledného firmware. Databázové schéma se zvyšuje na 26; verze macOS a Windows Menu se nemění.
+
 ## 3.0.58
 
-- Plné Evora Smart Menu 3.0.36 pro macOS odstranilo čtyři pevně zapsané Home Assistant odkazy. Podnabídku nyní skládá z aktuálního paměťového snapshotu Hubu, takže ruční i minutová obnova doplní nově založený server bez restartu Menu; změna seznamu, názvu nebo stavu je součástí strukturálního podpisu a během otevřeného AppKit menu se odloží do jeho bezpečného zavření.
+- Plné Evora Smart Menu 3.0.37 pro macOS odstranilo čtyři pevně zapsané Home Assistant odkazy. Podnabídku nyní skládá z aktuálního paměťového snapshotu Hubu, takže ruční i minutová obnova doplní nově založený server bez restartu Menu; změna seznamu, názvu nebo stavu je součástí strukturálního podpisu a během otevřeného AppKit menu se odloží do jeho bezpečného zavření.
+- Soukromý řádek `HA Domov` je oddělený od seznamu Hubu. Plné osobní Menu jej zobrazí jen tehdy, když je bezpečná HTTP(S) adresa uložená pod povoleným aliasem v Keychainu právě tohoto Macu; adresa není v databázi Hubu, zdroji, ZIPu ani manifestu a technická edice řádek nezobrazuje.
 - Přímé otevření konkrétního Home Assistantu používá nový auditovaný endpoint osobního admin tokenu. Cílová adresa se vrátí až po výslovném kliknutí, znovu projde serverovou HTTP(S) validací, odpověď má `no-store` a Menu odmítne credentials, query i fragment. Pevné zákaznické adresy už zdroj ani instalační ZIP neobsahují.
 - Hub zůstává na databázovém schématu 25; technické macOS Menu 3.0.35 a Windows Menu 3.0.34 se nemění.
 

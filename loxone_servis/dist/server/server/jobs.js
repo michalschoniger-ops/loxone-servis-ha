@@ -4,6 +4,8 @@ import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, re
 import { config } from "./config.js";
 import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
+import { firmwareUpdateWindowDecision, formatFirmwareUpdateSchedule } from "../shared/firmware-update-policy.js";
+import { resolveFirmwareUpdatePolicy } from "./firmware-update-policy.js";
 import { checkHomeAssistant, notifyHomeAssistant, persistHomeAssistantCheck, } from "./home-assistant.js";
 import { stabilizeAvailability } from "./availability.js";
 import { persistOneWireSamples, purgeOneWireHistory } from "./onewire-history.js";
@@ -70,6 +72,7 @@ function mapJob(row) {
         startedAt: row.started_at,
         finishedAt: row.finished_at,
         deadlineAt: row.deadline_at,
+        notBeforeAt: row.not_before_at,
         actorEmail: row.actor_email ?? null,
     };
 }
@@ -152,6 +155,21 @@ export class JobQueue {
     startedAt = Date.now();
     constructor(db) {
         this.db = db;
+        const recoveredAt = new Date();
+        const recoveryDeadline = new Date(recoveredAt.getTime() + 30 * 60_000).toISOString();
+        const uncertainFirmwareJobs = db.prepare(`SELECT j.id,j.serial,j.deadline_at FROM action_jobs j
+       WHERE j.kind='firmware_update' AND j.state='running' AND j.serial IS NOT NULL
+         AND EXISTS (SELECT 1 FROM action_steps s WHERE s.job_id=j.id AND s.step='update-command')`).all();
+        const recoverFirmwareJob = db.prepare(`UPDATE action_jobs SET state='waiting',progress=10,
+       message='Obnoveno po restartu · ověřuji již odesílaný příkaz bez opakování',
+       started_at=COALESCE(started_at,?),deadline_at=COALESCE(deadline_at,?),not_before_at=NULL WHERE id=?`);
+        const recoverFirmwareServer = db.prepare(`UPDATE miniservers SET update_status='waiting',update_started_at=COALESCE(update_started_at,?),
+       update_deadline_at=COALESCE(update_deadline_at,?),updated_at=? WHERE serial=?`);
+        for (const job of uncertainFirmwareJobs) {
+            const deadline = job.deadline_at ?? recoveryDeadline;
+            recoverFirmwareJob.run(recoveredAt.toISOString(), deadline, job.id);
+            recoverFirmwareServer.run(recoveredAt.toISOString(), deadline, recoveredAt.toISOString(), job.serial);
+        }
         db.prepare("UPDATE action_jobs SET state='queued',message='Obnoveno po restartu',started_at=NULL WHERE state='running'").run();
         const recoveredPortalJobs = db.prepare("SELECT id FROM action_jobs WHERE kind='portal_sync' AND state IN ('queued','waiting') ORDER BY created_at,id").all();
         if (recoveredPortalJobs.length > 1) {
@@ -190,11 +208,11 @@ export class JobQueue {
     scheduleTick(forceFullCheck = false) {
         void containBackgroundFailure(this.tick(forceFullCheck), (error) => this.recordBackgroundFailure("jobs.tick_failed", error));
     }
-    enqueue(kind, serial, actorUserId, payload = {}, deadlineAt = null) {
+    enqueue(kind, serial, actorUserId, payload = {}, deadlineAt = null, notBeforeAt = null, message = notBeforeAt ? `Naplánováno na ${formatFirmwareUpdateSchedule(notBeforeAt)}` : "Čeká ve frontě") {
         const id = randomUUID();
         const now = new Date().toISOString();
-        this.db.prepare(`INSERT INTO action_jobs(id,kind,serial,state,progress,message,payload_json,result_json,actor_user_id,created_at,deadline_at)
-       VALUES(?,?,?,'queued',0,'Čeká ve frontě',?,'{}',?,?,?)`).run(id, kind, serial, JSON.stringify(payload), actorUserId, now, deadlineAt);
+        this.db.prepare(`INSERT INTO action_jobs(id,kind,serial,state,progress,message,payload_json,result_json,actor_user_id,created_at,deadline_at,not_before_at)
+       VALUES(?,?,?,'queued',0,?,?,'{}',?,?,?,?)`).run(id, kind, serial, message, JSON.stringify(payload), actorUserId, now, deadlineAt, notBeforeAt);
         const job = this.get(id);
         queueMicrotask(() => this.scheduleTick());
         return job;
@@ -230,6 +248,48 @@ export class JobQueue {
         return this.findActiveByPayload(kind, key, value)
             ?? this.enqueue(kind, null, actorUserId, { ...payload, [key]: value }, deadlineAt);
     }
+    enqueueFirmwareUpdate(serial, actorUserId, payload = {}, at = Date.now()) {
+        const normalized = serial.toUpperCase();
+        const existing = this.findActive("firmware_update", normalized);
+        if (existing)
+            return existing;
+        const effective = resolveFirmwareUpdatePolicy(this.db, normalized);
+        const decision = firmwareUpdateWindowDecision(effective.policy, at);
+        const message = decision.notBeforeAt
+            ? `Požadavek uložen · provede se ${formatFirmwareUpdateSchedule(decision.notBeforeAt)}`
+            : "Čeká ve frontě na odeslání příkazu aktualizace";
+        const job = this.enqueue("firmware_update", normalized, actorUserId, { ...payload, firmwareUpdatePolicy: effective.policy, policyFolderId: effective.folderId }, null, decision.notBeforeAt, message);
+        this.db.prepare("UPDATE miniservers SET update_status=?,update_started_at=NULL,update_deadline_at=NULL,updated_at=? WHERE serial=?").run(decision.notBeforeAt ? "scheduled" : "queued", new Date().toISOString(), normalized);
+        audit(this.db, "miniserver.update_queued", actorUserId, normalized, {
+            jobId: job.id,
+            policy: effective.policy,
+            policyFolderId: effective.folderId,
+            scheduledAt: decision.notBeforeAt,
+        });
+        return job;
+    }
+    refreshFirmwareUpdateSchedules(at = Date.now()) {
+        const now = at instanceof Date ? new Date(at.getTime()) : new Date(at);
+        if (!Number.isFinite(now.getTime()))
+            throw new Error("Čas přepočtu fronty není platný.");
+        const queued = this.db.prepare("SELECT * FROM action_jobs WHERE kind='firmware_update' AND state='queued' ORDER BY created_at,id").all();
+        let changed = 0;
+        for (const job of queued) {
+            if (!job.serial)
+                continue;
+            const effective = resolveFirmwareUpdatePolicy(this.db, job.serial);
+            const decision = firmwareUpdateWindowDecision(effective.policy, now);
+            const message = decision.notBeforeAt
+                ? `Požadavek uložen · provede se ${formatFirmwareUpdateSchedule(decision.notBeforeAt)}`
+                : "Čeká ve frontě na odeslání příkazu aktualizace";
+            if (job.not_before_at !== decision.notBeforeAt || job.message !== message) {
+                this.db.prepare("UPDATE action_jobs SET not_before_at=?,message=?,started_at=NULL WHERE id=? AND state='queued'").run(decision.notBeforeAt, message, job.id);
+                changed += 1;
+            }
+            this.db.prepare("UPDATE miniservers SET update_status=?,updated_at=? WHERE serial=? AND update_status<>?").run(decision.notBeforeAt ? "scheduled" : "queued", now.toISOString(), job.serial, decision.notBeforeAt ? "scheduled" : "queued");
+        }
+        return changed;
+    }
     async tick(forceFullCheck = false) {
         if (this.ticking)
             return;
@@ -244,6 +304,7 @@ export class JobQueue {
             await this.maybeScheduleHomeAssistantCheck(forceFullCheck);
             await this.maybeCheckHomeAssistantServices(forceFullCheck);
             await this.maybeSyncServiceTasksExcel();
+            this.refreshFirmwareUpdateSchedules();
             if (Date.now() - this.lastServiceCenterRefreshAt >= 5 * 60_000) {
                 refreshIncidents(this.db);
                 await processServiceTaskReminders(this.db);
@@ -253,8 +314,8 @@ export class JobQueue {
             this.maybePurgeHistory();
             while (this.running < config.checkConcurrency) {
                 const next = this.db
-                    .prepare("SELECT * FROM action_jobs WHERE state='queued' ORDER BY created_at LIMIT 1")
-                    .get();
+                    .prepare("SELECT * FROM action_jobs WHERE state='queued' AND (not_before_at IS NULL OR not_before_at<=?) ORDER BY COALESCE(not_before_at,created_at),created_at,id LIMIT 1")
+                    .get(new Date().toISOString());
                 if (!next)
                     break;
                 this.running += 1;
@@ -546,6 +607,9 @@ export class JobQueue {
         }
         catch (error) {
             const code = error.code ?? "job_failed";
+            if (job.kind === "firmware_update" && job.serial) {
+                this.db.prepare("UPDATE miniservers SET update_status='failed',updated_at=? WHERE serial=?").run(new Date().toISOString(), job.serial);
+            }
             this.step(job.id, "error", "failed", error.message);
             this.finish(job.id, "failed", error.message, {}, code);
             audit(this.db, `job.${job.kind}.failed`, job.actor_user_id, job.serial, { jobId: job.id, code });
@@ -708,6 +772,21 @@ export class JobQueue {
         }
     }
     async executeFirmwareUpdate(job, serial) {
+        const effective = resolveFirmwareUpdatePolicy(this.db, serial);
+        const decision = firmwareUpdateWindowDecision(effective.policy);
+        if (!decision.allowedNow) {
+            const scheduledAt = decision.notBeforeAt;
+            const message = `Požadavek uložen · provede se ${formatFirmwareUpdateSchedule(scheduledAt)}`;
+            this.db.prepare("UPDATE action_jobs SET state='queued',started_at=NULL,not_before_at=?,message=? WHERE id=?").run(scheduledAt, message, job.id);
+            this.db.prepare("UPDATE miniservers SET update_status='scheduled',updated_at=? WHERE serial=?").run(new Date().toISOString(), serial);
+            audit(this.db, "miniserver.update_deferred", job.actor_user_id, serial, {
+                jobId: job.id,
+                policy: effective.policy,
+                policyFolderId: effective.folderId,
+                scheduledAt,
+            });
+            return;
+        }
         const server = this.db
             .prepare("SELECT current_firmware,target_firmware,firmware_policy,excluded,manual_only,firmware_channel FROM miniservers WHERE serial=?")
             .get(serial);
@@ -715,15 +794,18 @@ export class JobQueue {
             throw new Error("Miniserver je vyřazený z automatických aktualizací.");
         }
         if (firmwareRelation(server.current_firmware, server.target_firmware) !== "older") {
+            this.db.prepare("UPDATE miniservers SET update_status='done',updated_at=? WHERE serial=?").run(new Date().toISOString(), serial);
             this.finish(job.id, "succeeded", "Aktualizace není potřeba.");
             return;
         }
+        this.db.prepare("UPDATE miniservers SET update_status='running',updated_at=? WHERE serial=?").run(new Date().toISOString(), serial);
         this.step(job.id, "update-command", "running", "Odesílám oficiální příkaz aktualizace.");
         await miniserverCommand(this.db, serial, "update");
+        this.step(job.id, "update-command", "succeeded", "Oficiální příkaz aktualizace byl přijat.");
         const now = new Date();
         const deadline = new Date(now.getTime() + 30 * 60_000).toISOString();
         this.db.prepare(`UPDATE miniservers SET update_status='waiting',update_started_at=?,update_deadline_at=?,updated_at=? WHERE serial=?`).run(now.toISOString(), deadline, now.toISOString(), serial);
-        this.db.prepare(`UPDATE action_jobs SET state='waiting',progress=10,message='Příkaz odeslán, čekám na nový firmware',deadline_at=? WHERE id=?`).run(deadline, job.id);
+        this.db.prepare(`UPDATE action_jobs SET state='waiting',progress=10,message='Příkaz odeslán, čekám na nový firmware',deadline_at=?,not_before_at=NULL WHERE id=?`).run(deadline, job.id);
         audit(this.db, "miniserver.update_sent", job.actor_user_id, serial, { jobId: job.id, target: server.target_firmware });
     }
     async executeBulkFirmwareUpdate(job) {
@@ -738,7 +820,7 @@ export class JobQueue {
                 .prepare("SELECT 1 AS ok FROM action_jobs WHERE serial=? AND kind='firmware_update' AND state IN ('queued','running','waiting')")
                 .get(row.serial);
             if (!existing?.ok)
-                this.enqueue("firmware_update", row.serial, job.actor_user_id, { parentJobId: job.id });
+                this.enqueueFirmwareUpdate(row.serial, job.actor_user_id, { parentJobId: job.id });
         }
         this.finish(job.id, "succeeded", `Do fronty přidáno ${outdated.length} aktualizací.`, { count: outdated.length });
         audit(this.db, "fleet.update_queued", job.actor_user_id, null, { count: outdated.length, jobId: job.id });

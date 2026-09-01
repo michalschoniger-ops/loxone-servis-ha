@@ -340,6 +340,7 @@ function applyMigrations(db) {
       name TEXT NOT NULL COLLATE NOCASE UNIQUE,
       description TEXT NOT NULL DEFAULT '',
       parent_id TEXT,
+      firmware_update_policy TEXT NOT NULL DEFAULT 'immediate',
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -481,6 +482,7 @@ function applyMigrations(db) {
       started_at TEXT,
       finished_at TEXT,
       deadline_at TEXT,
+      not_before_at TEXT,
       FOREIGN KEY(serial) REFERENCES miniservers(serial) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_state_time ON action_jobs(state, created_at);
@@ -670,7 +672,10 @@ function applyMigrations(db) {
     db.exec("CREATE INDEX IF NOT EXISTS idx_miniservers_portal_seen ON miniservers(portal_last_seen_at)");
     // Starší instalace získají hierarchii beze změny dosavadních přiřazení.
     addColumn(db, "project_folders", "parent_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL");
+    addColumn(db, "project_folders", "firmware_update_policy TEXT NOT NULL DEFAULT 'immediate'");
+    addColumn(db, "action_jobs", "not_before_at TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_project_folders_parent ON project_folders(parent_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_runnable ON action_jobs(state,not_before_at,created_at)");
     db.exec(`
     INSERT OR IGNORE INTO firmware_release_history(
       channel,version,config_url,first_seen_at,last_seen_at,source_url
@@ -1011,6 +1016,7 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(23, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(24, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(25, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(26, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

@@ -11,6 +11,8 @@ import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBu
 import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { nextDistinctFolderColor } from "../shared/folder-colors.js";
+import { firmwareUpdateWindowDecision, formatFirmwareUpdateSchedule } from "../shared/firmware-update-policy.js";
+import { resolveFirmwareUpdatePolicy } from "./firmware-update-policy.js";
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, installHomeAssistantUpdate, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
@@ -2311,7 +2313,11 @@ export async function registerApi(app, db, jobs) {
             color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
             parentId: z.string().uuid().nullable().optional(),
             sortOrder: z.number().int().min(0).max(1_000_000).optional(),
+            firmwareUpdatePolicy: z.enum(["immediate", "weekend_night"]).optional(),
         }).strict().parse(request.body);
+        if (input.firmwareUpdatePolicy !== undefined && user.role !== "admin") {
+            return reply.code(403).send({ error: "Časové pravidlo aktualizací může změnit pouze správce.", code: "FORBIDDEN" });
+        }
         if (input.parentId !== undefined) {
             const folders = listProjectFolders(db);
             if (input.parentId && !folders.some((folder) => folder.id === input.parentId)) {
@@ -2330,7 +2336,14 @@ export async function registerApi(app, db, jobs) {
         }
         const fields = [];
         const values = [];
-        const columns = { name: "name", description: "description", color: "color", parentId: "parent_id", sortOrder: "sort_order" };
+        const columns = {
+            name: "name",
+            description: "description",
+            color: "color",
+            parentId: "parent_id",
+            sortOrder: "sort_order",
+            firmwareUpdatePolicy: "firmware_update_policy",
+        };
         for (const [key, value] of Object.entries(normalizedInput)) {
             fields.push(`${columns[key]}=?`);
             values.push(value);
@@ -2691,6 +2704,25 @@ export async function registerApi(app, db, jobs) {
             return;
         return reply.code(202).send({ job: jobs.enqueueUnique("topology_discovery", null, user.id, { manual: true }) });
     });
+    app.get("/api/miniservers/:serial/update-preview", async (request, reply) => {
+        const user = requireRole(request, reply, ["admin"]);
+        if (!user)
+            return;
+        const serial = serialSchema.parse(request.params.serial);
+        if (!getMiniserver(db, serial))
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        const effective = resolveFirmwareUpdatePolicy(db, serial);
+        const decision = firmwareUpdateWindowDecision(effective.policy);
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return {
+            policy: effective.policy,
+            policyFolderId: effective.folderId,
+            policyFolderName: effective.folderName,
+            allowedNow: decision.allowedNow,
+            notBeforeAt: decision.notBeforeAt,
+            schedule: decision.notBeforeAt ? formatFirmwareUpdateSchedule(decision.notBeforeAt) : null,
+        };
+    });
     app.post("/api/miniservers/:serial/update", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
         if (!user)
@@ -2699,7 +2731,7 @@ export async function registerApi(app, db, jobs) {
         if (!requireConfirmation(db, user, confirmationHeader(request.headers), "firmware_update", serial, {})) {
             return reply.code(428).send({ error: "Aktualizaci je nutné znovu potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
         }
-        return reply.code(202).send({ job: jobs.enqueue("firmware_update", serial, user.id, {}, new Date(Date.now() + 30 * 60_000).toISOString()) });
+        return reply.code(202).send({ job: jobs.enqueueFirmwareUpdate(serial, user.id) });
     });
     app.post("/api/fleet/update", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);
@@ -2709,7 +2741,7 @@ export async function registerApi(app, db, jobs) {
         if (!requireConfirmation(db, user, confirmationHeader(request.headers), "bulk_firmware_update", null, payload)) {
             return reply.code(428).send({ error: "Hromadnou aktualizaci je nutné znovu potvrdit heslem.", code: "CONFIRMATION_REQUIRED" });
         }
-        return reply.code(202).send({ job: jobs.enqueue("bulk_firmware_update", null, user.id, payload) });
+        return reply.code(202).send({ job: jobs.enqueueUnique("bulk_firmware_update", null, user.id, payload) });
     });
     app.post("/api/miniservers/:serial/reboot", async (request, reply) => {
         const user = requireRole(request, reply, ["admin"]);

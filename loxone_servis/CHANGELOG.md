@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.58
+
+- Plné Evora Smart Menu 3.0.36 pro macOS odstranilo čtyři pevně zapsané Home Assistant odkazy. Podnabídku nyní skládá z aktuálního paměťového snapshotu Hubu, takže ruční i minutová obnova doplní nově založený server bez restartu Menu; změna seznamu, názvu nebo stavu je součástí strukturálního podpisu a během otevřeného AppKit menu se odloží do jeho bezpečného zavření.
+- Přímé otevření konkrétního Home Assistantu používá nový auditovaný endpoint osobního admin tokenu. Cílová adresa se vrátí až po výslovném kliknutí, znovu projde serverovou HTTP(S) validací, odpověď má `no-store` a Menu odmítne credentials, query i fragment. Pevné zákaznické adresy už zdroj ani instalační ZIP neobsahují.
+- Hub zůstává na databázovém schématu 25; technické macOS Menu 3.0.35 a Windows Menu 3.0.34 se nemění.
+
 ## 3.0.57
 
 - Windows Menu 3.0.34 provede převzetí starého samostatného Config konektoru jen tehdy, když se chráněný token, adresa Hubu nebo příznak správy neshoduje s aktuálním osobním Menu. Již zdravý skrytý konektor při běžném startu ani diagnostice znovu nerestartuje.

@@ -1008,6 +1008,24 @@ export async function registerApi(app, db, jobs) {
             })),
         };
     });
+    app.post("/api/integrations/worklog/v1/home-assistant/:id/open", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const id = homeAssistantIdSchema.parse(request.params.id);
+        const instance = getHomeAssistantInstance(db, id);
+        if (!instance) {
+            return reply.code(404).send({ error: "Home Assistant nebyl nalezen.", code: "NOT_FOUND" });
+        }
+        const url = normalizeHomeAssistantUrl(instance.baseUrl);
+        audit(db, "worklog.home_assistant_opened", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            homeAssistantId: id,
+        });
+        reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
+        return { url };
+    });
     app.post("/api/integrations/worklog/v1/config-launcher/provision", { config: { rateLimit: { max: 6, timeWindow: "15 minutes" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity)

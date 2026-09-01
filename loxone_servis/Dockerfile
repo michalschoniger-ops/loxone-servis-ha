@@ -27,7 +27,7 @@ RUN set -eu; \
 
 FROM node:22-bookworm-slim AS runtime
 
-ARG BUILD_VERSION=3.0.59
+ARG BUILD_VERSION=3.0.60
 ARG BUILD_ARCH
 ENV NODE_ENV=production \
     PORT=8099 \

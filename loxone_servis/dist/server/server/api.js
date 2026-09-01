@@ -1010,6 +1010,43 @@ export async function registerApi(app, db, jobs) {
             })),
         };
     });
+    app.get("/api/integrations/worklog/v1/folders", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "Admin token Menu není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return {
+            items: listProjectFolders(db).map((folder) => ({
+                id: folder.id,
+                name: folder.name,
+                parentId: folder.parentId,
+                firmwareUpdatePolicy: folder.firmwareUpdatePolicy,
+            })),
+        };
+    });
+    app.put("/api/integrations/worklog/v1/folders/:id/firmware-update-policy", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "Admin token Menu není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const id = z.string().uuid().parse(request.params.id);
+        const input = z.object({ policy: z.enum(["immediate", "weekend_night"]) }).strict().parse(request.body);
+        const now = new Date().toISOString();
+        const result = db.prepare("UPDATE project_folders SET firmware_update_policy=?,updated_at=? WHERE id=?").run(input.policy, now, id);
+        if (!result.changes)
+            return reply.code(404).send({ error: "Složka nebyla nalezena.", code: "NOT_FOUND" });
+        const recalculatedJobs = jobs.refreshFirmwareUpdateSchedules();
+        const activeFirmwareJobs = Number(db.prepare("SELECT COUNT(*) AS count FROM action_jobs WHERE kind='firmware_update' AND state IN ('queued','running','waiting')").get().count);
+        audit(db, "folder.firmware_update_policy_updated", identity.ownerUserId, null, {
+            folderId: id,
+            policy: input.policy,
+            source: "worklog_admin_token",
+            recalculatedJobs,
+        });
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return { configured: true, policy: input.policy, recalculatedJobs, activeFirmwareJobs };
+    });
     app.post("/api/integrations/worklog/v1/home-assistant/:id/open", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
         if (!identity) {
@@ -2363,6 +2400,8 @@ export async function registerApi(app, db, jobs) {
             throw error;
         }
         audit(db, "folder.updated", user.id, null, { id, fields: Object.keys(input) });
+        if (input.firmwareUpdatePolicy !== undefined)
+            jobs.refreshFirmwareUpdateSchedules();
         return { folder: listProjectFolders(db).find((folder) => folder.id === id) };
     });
     app.put("/api/folders/:id/members", async (request, reply) => {

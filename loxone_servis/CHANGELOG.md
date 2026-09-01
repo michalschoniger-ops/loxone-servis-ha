@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.60
+
+- Osobní admin token Evora Smart Menu dostává úzké, auditované API pouze pro read-only strom složek a změnu časového pravidla konkrétní složky. Umožňuje bezpečně nastavit Melori bez kopírování hesla, session cookie nebo přímého zásahu do databáze; technický token je odmítnut.
+- Změna pravidla okamžitě přepočítá čekající firmware frontu a odpověď ani audit neobsahují přihlašovací údaje či cílové adresy. Databázové schéma zůstává 26 a žádný endpoint nevytváří ani neposílá firmware požadavek.
+
 ## 3.0.59
 
 - Správce může složce Miniserverů nastavit omezení aktualizací na noci začínající v pátek, sobotu nebo neděli od 22:00 do 04:00 v časové zóně Europe/Prague. Pravidlo se dědí do podsložek, takže jediná politika složky Melori pokryje i její vnořené projekty.

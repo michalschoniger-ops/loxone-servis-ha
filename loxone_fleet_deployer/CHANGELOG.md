@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.58.1
+
+- Nasazuje Evora Smart Hub 3.0.58 a plné macOS Menu 3.0.36 s dynamickým seznamem Home Assistantů a auditovaným otevřením konkrétního serveru bez pevných zákaznických adres v Menu.
+- Zachovává Hub 3.0.57 jako vratný zdroj, databázové schéma 25, `/data`, šifrované přístupy, kameru, bránu i Windows Menu 3.0.34.
+
 ## 3.0.57.1
 
 - Nasazuje Evora Smart Hub 3.0.57 a Windows Menu 3.0.34, které již zdravý skrytý Config konektor při běžném startu ani diagnostice znovu nerestartuje a jednorázové převzetí nechá dokončit i probíhající long-poll.

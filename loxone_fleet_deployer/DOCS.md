@@ -1,10 +1,10 @@
 # Evora Smart Hub Deployment Helper
 
-Jednorázový instalační pomocník pro řízené nasazení lokálního Evora Smart Hubu 3.0.57.
+Jednorázový instalační pomocník pro řízené nasazení lokálního Evora Smart Hubu 3.0.58.
 
 - Vyhledá právě jeden lokální add-on se slugem `loxone_fleet`.
 - Ověří kontrolní součet, slug, verzi a úplnost payloadu.
-- Připraví ověřený zdroj 3.0.57 a zachová vratnou kopii živé verze 3.0.56.
+- Připraví ověřený zdroj 3.0.58 a zachová vratnou kopii živé verze 3.0.57.
 - Původní zdroj přesune do vratné složky pod `/addons/.evora-smart-hub-rollback`.
 - Operace `rollback` obnoví přesně poslední zdroj zaznamenaný helperem a vadný zdroj ponechá pro diagnostiku.
 - Datový adresář aplikace ani databázi nemění.

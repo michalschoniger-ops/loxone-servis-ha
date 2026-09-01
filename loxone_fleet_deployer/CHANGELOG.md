@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.60.1
+
+- Nasazuje Evora Smart Hub 3.0.60 s úzkým auditovaným API osobního admin tokenu pro nastavení časového pravidla složky Melori bez hesla, session cookie nebo přímého zásahu do databáze.
+- Zachovává Hub 3.0.59 jako vratný zdroj, schéma 26, `/data`, šifrované přístupy a všechny stávající integrace. Pomocník sám nemění pravidlo a nevytváří firmware požadavek.
+
 ## 3.0.59.1
 
 - Nasazuje Evora Smart Hub 3.0.59 s databázovým schématem 26 a trvalou frontou aktualizací Miniserverů omezenou pravidlem složky na pátek až neděli 22:00–04:00 v časové zóně Europe/Prague.

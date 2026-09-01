@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.59.1
+
+- Nasazuje Evora Smart Hub 3.0.59 s databázovým schématem 26 a trvalou frontou aktualizací Miniserverů omezenou pravidlem složky na pátek až neděli 22:00–04:00 v časové zóně Europe/Prague.
+- Zachovává Hub 3.0.58 jako vratný zdroj, `/data`, šifrované přístupy, kameru, bránu i všechny nativní klienty. Pomocník sám nevytváří ani neodesílá žádný požadavek aktualizace Miniserveru.
+
 ## 3.0.58.1
 
 - Nasazuje Evora Smart Hub 3.0.58 a plné macOS Menu 3.0.36 s dynamickým seznamem Home Assistantů a auditovaným otevřením konkrétního serveru bez pevných zákaznických adres v Menu.

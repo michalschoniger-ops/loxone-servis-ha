@@ -894,6 +894,9 @@ export async function registerApi(app, db, jobs) {
                 healthVerdict: server.healthVerdict,
                 healthRefreshedAt: server.healthRefreshedAt,
                 dataState: server.dataState,
+                registered: server.registered,
+                weatherServiceStatus: server.weatherServiceStatus,
+                weatherServiceCheckedAt: server.weatherServiceCheckedAt,
                 hasCredentials: server.hasCredentials,
                 loxoneAppAvailable: server.hasCredentials,
                 loxoneConfigAvailable: Boolean(agent?.available && !agent.updateRequired && server.currentFirmware && server.hasCredentials),
@@ -905,6 +908,7 @@ export async function registerApi(app, db, jobs) {
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         const menuProfile = identity.role === "technician" ? "technician" : "full";
         const activeFleetCheck = jobs.findActive("bulk_check", null);
+        const portalSync = getPortalSyncStatus(db);
         // Native menu responses remain a cached read. Expired Builder health is
         // refreshed asynchronously for a later polling cycle.
         void loxoneBuilderStatus();
@@ -925,6 +929,15 @@ export async function registerApi(app, db, jobs) {
                 avatarUpdatedAt: identity.avatarUpdatedAt,
             },
             launcherAgent: agent,
+            portalSync: {
+                connected: portalSync.connected,
+                reconnectRequired: portalSync.reconnectRequired,
+                status: portalSync.status,
+                lastSyncAt: portalSync.lastSyncAt,
+                nextSyncAt: portalSync.nextSyncAt,
+                productCount: portalSync.productCount,
+                lastError: portalSync.lastError,
+            },
             items,
             fleetCheck: activeFleetCheck
                 ? {
@@ -1009,6 +1022,43 @@ export async function registerApi(app, db, jobs) {
                 updatedAt: task.updatedAt,
             })),
         };
+    });
+    app.post("/api/integrations/worklog/v1/portal-sync", { config: { rateLimit: { max: 3, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const existing = jobs.findActive("portal_sync", null);
+        const job = existing ?? jobs.enqueueUnique("portal_sync", null, identity.ownerUserId, {
+            manual: true,
+            source: "worklog_menu",
+        });
+        audit(db, existing ? "worklog.portal_sync.reused" : "worklog.portal_sync.requested", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            jobId: job.id,
+        });
+        reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
+        return reply.code(202).send({ job });
+    });
+    app.put("/api/integrations/worklog/v1/miniservers/:serial/credentials", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const serial = serialSchema.parse(request.params.serial);
+        const input = z.object({
+            username: z.string().trim().min(1).max(200),
+            password: z.string().min(1).max(1024),
+        }).strict().parse(request.body);
+        if (!getMiniserver(db, serial)) {
+            return reply.code(404).send({ error: "Miniserver nebyl nalezen.", code: "NOT_FOUND" });
+        }
+        saveCredentials(db, serial, input.username, input.password);
+        audit(db, "worklog.credentials.updated", identity.ownerUserId, serial, {
+            integrationId: identity.tokenId,
+        });
+        reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
+        return { ok: true, hasCredentials: true };
     });
     app.get("/api/integrations/worklog/v1/folders", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);

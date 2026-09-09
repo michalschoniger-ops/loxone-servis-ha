@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.61.1
+
+- Vratně připravuje Evora Smart Hub 3.0.61 s Menu 3.0.43, úzkým zápisem přístupů Miniserveru a auditovanou synchronizací LOXONE Portálu.
+- Payload před výměnou ověřuje SHA-256, cílový slug i verzi a původní 3.0.60 zachová jako rollback.
+
 ## 3.0.60.1
 
 - Nasazuje Evora Smart Hub 3.0.60 s úzkým auditovaným API osobního admin tokenu pro nastavení časového pravidla složky Melori bez hesla, session cookie nebo přímého zásahu do databáze.

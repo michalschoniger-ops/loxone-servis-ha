@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.61
+
+- Evora Smart Menu 3.0.43 udržuje otevřenou klasickou nabídku při úpravách docházky a Knihy jízd, po každém zápisu vynutí nový read-back a obnoví stejnou otevřenou cestu. Kniha jízd je členěná po měsících a dnech, výběr zakázky má vlastní hledání a řádky Vozidlo i Tachometr zobrazují celý údaj na jedné řádce bez hover tooltipu.
+- Profilová karta plného Menu má samostatnou zelenou ikonu Excelu, která otevírá výhradně určený HTTPS sešit na firemním SharePointu. Technická edice toto osobní tlačítko nezobrazuje.
+- Tickety se kontrolují každou minutu i během otevřené nabídky. Nová odpověď a Miniserver bez přihlašovacích údajů sdílejí červený číselný badge; přehled ticketů ukazuje čas poslední úspěšné aktualizace a při chybě jej zachová.
+- Osobní admin token může přes úzký auditovaný endpoint doplnit nebo kompletně nahradit přihlašovací jméno a heslo jednoho Miniserveru. Menu staré údaje nikdy nenačítá do formuláře, heslo používá zabezpečené pole a odpověď ani audit tajné údaje neobsahují.
+- Menu zpřístupňuje ověřené části Evora Intranetu (nástěnku docházky, kalendář dovolených, zasedačky, klienty, kontaktní osoby a nápovědu) bez kopírování přihlášení. Nový přehled LOXONE Portálu ukazuje stav připojení, počet registrovaných produktů, poslední synchronizaci a souhrn Weather Service. Ruční synchronizace používá úzký admin endpoint, znovu využije už běžící úlohu a výsledek čte dynamicky nejvýše 30 sekund.
+
 ## 3.0.60
 
 - Osobní admin token Evora Smart Menu dostává úzké, auditované API pouze pro read-only strom složek a změnu časového pravidla konkrétní složky. Umožňuje bezpečně nastavit Melori bez kopírování hesla, session cookie nebo přímého zásahu do databáze; technický token je odmítnut.

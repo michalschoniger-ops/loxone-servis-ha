@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.63.1
+
+- Vratně připravuje Evora Smart Hub 3.0.63 s přesně filtrovaným úklidem osiřelých dočasných databází exportu starších než hodinu.
+- Payload před výměnou ověřuje SHA-256, cílový slug i verzi a původní 3.0.62 zachová jako rollback.
+
 ## 3.0.62.1
 
 - Vratně připravuje Evora Smart Hub 3.0.62 s chráněnou diagnostikou databázového úložiště a přesně omezenou údržbou nepoužívaných LoxAPP3 snímků.

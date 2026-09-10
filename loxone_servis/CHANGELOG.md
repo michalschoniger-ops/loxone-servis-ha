@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.63
+
+- Údržba rozpozná přesným UUID filtrem nedokončené `backup-snapshot-*.sqlite` exporty a smaže jen soubory starší než hodinu.
+- Diagnostika předem vrací počet a souhrnnou velikost těchto osiřelých exportů bez zpřístupnění jejich obsahu.
+- Živá databáze, její WAL/SHM soubory i právě probíhající export jsou z mazání vyloučené.
+
 ## 3.0.62
 
 - Přidána chráněná diagnostika velikosti souborů, volných stránek, tabulek a indexů databáze bez čtení jejich citlivého obsahu.

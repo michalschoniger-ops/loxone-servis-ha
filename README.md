@@ -2,7 +2,7 @@
 
 Veřejný instalační katalog pro Home Assistant. Obsahuje jen instalační metadata a hotový aplikační runtime, ze kterého Home Assistant sestaví lokální obraz. Neobsahuje hesla, databáze ani zákaznické údaje. HA Práce lze provozovat jako jediný hlavní server a HA Domov jako bezstavového klienta, takže obě instalace i veřejný HTTPS odkaz používají stejná aktuální data.
 
-Verze 3.0.62 přidává chráněnou diagnostiku úložiště a přesně omezenou údržbu starších plných LoxAPP3 snímků. Nadále distribuuje Evora Smart Menu 3.0.43, bezpečné doplnění přístupů Miniserveru a auditovanou synchronizaci LOXONE Portálu se stavem registrace a Weather Service. Windows Menu zůstává 3.0.34 a technické macOS Menu 3.0.35; databázové schéma zůstává 26.
+Verze 3.0.63 přidává přesně filtrovaný úklid osiřelých dočasných databází exportu starších než hodinu. Nadále poskytuje chráněnou diagnostiku úložiště a údržbu starších plných LoxAPP3 snímků, distribuuje Evora Smart Menu 3.0.43, bezpečné doplnění přístupů Miniserveru a auditovanou synchronizaci LOXONE Portálu se stavem registrace a Weather Service. Windows Menu zůstává 3.0.34 a technické macOS Menu 3.0.35; databázové schéma zůstává 26.
 
 [Přidat repozitář do Home Assistantu](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fmichalschoniger-ops%2Floxone-servis-ha)
 

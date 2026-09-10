@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { config, optionsPath } from "./config.js";
 import { encryptBackupPayload } from "./backup-format.js";
@@ -21,6 +22,19 @@ function tokenMatches(value) {
 function backupRequestAuthorized(authorization) {
     const value = authorization ?? "";
     return tokenMatches(value.startsWith("Bearer ") ? value.slice(7) : "");
+}
+const temporarySnapshotPattern = /^backup-snapshot-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.sqlite$/i;
+const temporarySnapshotMinimumAgeMs = 60 * 60_000;
+function orphanedTemporarySnapshots(now = Date.now()) {
+    return readdirSync(config.dataDirectory, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && temporarySnapshotPattern.test(entry.name))
+        .map((entry) => {
+        const path = join(config.dataDirectory, entry.name);
+        const stat = statSync(path);
+        return { path, bytes: stat.size, modifiedAt: stat.mtime.toISOString(), modifiedMs: stat.mtimeMs };
+    })
+        .filter((entry) => now - entry.modifiedMs >= temporarySnapshotMinimumAgeMs)
+        .map(({ path, bytes, modifiedAt }) => ({ path, bytes, modifiedAt }));
 }
 function fileSize(path) {
     try {
@@ -60,6 +74,7 @@ function databaseStorageDiagnostic(db) {
     const pageCount = numberPragma("page_count");
     const freePages = numberPragma("freelist_count");
     const pageSize = numberPragma("page_size");
+    const temporarySnapshots = orphanedTemporarySnapshots();
     return {
         generatedAt: new Date().toISOString(),
         files: {
@@ -75,6 +90,11 @@ function databaseStorageDiagnostic(db) {
             reusableBytes: pageSize * freePages,
         },
         dbstatAvailable,
+        unusedTemporaryBackups: {
+            count: temporarySnapshots.length,
+            bytes: temporarySnapshots.reduce((total, entry) => total + entry.bytes, 0),
+            oldestModifiedAt: temporarySnapshots.map((entry) => entry.modifiedAt).sort()[0] ?? null,
+        },
         tables,
     };
 }
@@ -88,6 +108,12 @@ function projectSnapshotCleanupCount(db) {
 }
 function cleanupUnusedProjectSnapshots(db) {
     const before = databaseStorageDiagnostic(db);
+    const temporarySnapshots = orphanedTemporarySnapshots();
+    let removedTemporaryBackupBytes = 0;
+    for (const snapshot of temporarySnapshots) {
+        unlinkSync(snapshot.path);
+        removedTemporaryBackupBytes += snapshot.bytes;
+    }
     const removableSnapshots = projectSnapshotCleanupCount(db);
     let removedSnapshots = 0;
     if (removableSnapshots > 0) {
@@ -120,6 +146,8 @@ function cleanupUnusedProjectSnapshots(db) {
         // zmenšení souboru lze bezpečně zopakovat později po uvolnění dalšího místa.
     }
     return {
+        removedTemporaryBackups: temporarySnapshots.length,
+        removedTemporaryBackupBytes,
         removedSnapshots,
         keptSnapshotsPerMiniserver: 2,
         vacuumed,
@@ -186,10 +214,13 @@ export async function registerEncryptedBackup(app, db) {
         }
         const body = request.body && typeof request.body === "object" ? request.body : {};
         const removableSnapshots = projectSnapshotCleanupCount(db);
+        const temporarySnapshots = orphanedTemporarySnapshots();
         if (body.confirm !== "DELETE_UNUSED_PROJECT_SNAPSHOTS") {
             reply.header("Cache-Control", "no-store, max-age=0");
             return {
                 apply: false,
+                removableTemporaryBackups: temporarySnapshots.length,
+                removableTemporaryBackupBytes: temporarySnapshots.reduce((total, entry) => total + entry.bytes, 0),
                 removableSnapshots,
                 keptSnapshotsPerMiniserver: 2,
                 preserved: ["latest_two_project_snapshots", "project_change_summaries", "credentials", "settings", "jobs", "audit"],

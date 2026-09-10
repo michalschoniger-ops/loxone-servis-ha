@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.65
+
+- Fakturační read-back LOXONE Portálu používá aktuální oficiální stránku `/invoices/` a stejný šestiměsíční rozsah jako její frontend, takže účetní saldo a pohledávky nejsou vyřazené chybným starším refererem.
+- Přidán regresní test refereru a polí `startDate`/`endDate`; ostatní části Hubu, Menu a databázové schéma 26 se nemění.
+
 ## 3.0.64
 
 - Synchronizace LOXONE Portálu využije stávající šifrovanou relaci také pro partner status, datum další certifikace, kreditní limit, obrat, otevřené objednávky, účetní saldo, pohledávky po splatnosti a školení. Vedlejší přehledy selhávají odděleně, takže změna jejich formátu nezablokuje import Miniserverů.

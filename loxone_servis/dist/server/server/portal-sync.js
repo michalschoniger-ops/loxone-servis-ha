@@ -432,14 +432,15 @@ async function portalProducts(accessToken) {
     openOrdersBody.set("offset", "0");
     openOrdersBody.set("limit", "999999");
     const ledgerBody = new FormData();
-    const ledgerEnd = new Date();
-    const ledgerStart = new Date(ledgerEnd);
-    ledgerStart.setUTCFullYear(ledgerStart.getUTCFullYear() - 10);
+    const ledgerNow = new Date();
+    // Keep this range aligned with the current official Invoices.vue request.
+    const ledgerStart = new Date(Date.UTC(ledgerNow.getUTCFullYear(), ledgerNow.getUTCMonth() - 6, 1));
+    const ledgerEnd = new Date(Date.UTC(ledgerNow.getUTCFullYear(), ledgerNow.getUTCMonth() + 1, 0));
     ledgerBody.set("startDate", isoDateOnly(ledgerStart));
     ledgerBody.set("endDate", isoDateOnly(ledgerEnd));
     const [ordersResult, ledgerResult, trainingsResult] = await Promise.allSettled([
         portalJson("/api/getOpenOrders", cookie, "/orders/", openOrdersBody),
-        portalJson("/api/getCustomerLedgerEntries", cookie, "/orders/invoices/", ledgerBody),
+        portalJson("/api/getCustomerLedgerEntries", cookie, "/invoices/", ledgerBody),
         portalJson("/api/getTrainings", cookie, "/trainings/"),
     ]);
     const now = new Date().toISOString();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.62
+
+- Přidána chráněná diagnostika velikosti souborů, volných stránek, tabulek a indexů databáze bez čtení jejich citlivého obsahu.
+- Přidána potvrzovaná údržba, která odstraňuje pouze starší nepoužívané plné LoxAPP3 snímky a pro každý Miniserver zachová dvě nejnovější kopie i všechny souhrny změn.
+- Po údržbě se databáze optimalizuje a podle dostupného místa zmenší; selhání zmenšení neohrozí integritu ani opětovné použití uvolněných stránek.
+
 ## 3.0.61
 
 - Evora Smart Menu 3.0.43 udržuje otevřenou klasickou nabídku při úpravách docházky a Knihy jízd, po každém zápisu vynutí nový read-back a obnoví stejnou otevřenou cestu. Kniha jízd je členěná po měsících a dnech, výběr zakázky má vlastní hledání a řádky Vozidlo i Tachometr zobrazují celý údaj na jedné řádce bez hover tooltipu.

@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { config, optionsPath } from "./config.js";
 import { encryptBackupPayload } from "./backup-format.js";
@@ -21,6 +21,111 @@ function tokenMatches(value) {
 function backupRequestAuthorized(authorization) {
     const value = authorization ?? "";
     return tokenMatches(value.startsWith("Bearer ") ? value.slice(7) : "");
+}
+function fileSize(path) {
+    try {
+        return statSync(path).size;
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return 0;
+        throw error;
+    }
+}
+function databaseStorageDiagnostic(db) {
+    const numberPragma = (name) => Number(db.prepare(`PRAGMA ${name}`).get()?.[name] ?? 0);
+    const tableNames = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(({ name }) => name).filter((name) => /^[a-zA-Z0-9_]+$/.test(name));
+    const sizeByName = new Map();
+    let dbstatAvailable = true;
+    try {
+        const rows = db.prepare("SELECT name,SUM(pgsize) AS bytes FROM dbstat GROUP BY name").all();
+        for (const row of rows)
+            sizeByName.set(row.name, Number(row.bytes));
+    }
+    catch {
+        dbstatAvailable = false;
+    }
+    const indexOwners = new Map();
+    for (const row of db.prepare("SELECT name,tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'").all()) {
+        indexOwners.set(row.tbl_name, [...(indexOwners.get(row.tbl_name) ?? []), row.name]);
+    }
+    const tables = tableNames.map((table) => {
+        const rows = Number(db.prepare(`SELECT COUNT(*) AS count FROM "${table}"`).get().count);
+        const tableBytes = dbstatAvailable ? (sizeByName.get(table) ?? 0) : null;
+        const indexesBytes = dbstatAvailable
+            ? (indexOwners.get(table) ?? []).reduce((total, index) => total + (sizeByName.get(index) ?? 0), 0)
+            : null;
+        return { table, rows, tableBytes, indexesBytes };
+    }).sort((left, right) => ((right.tableBytes ?? 0) + (right.indexesBytes ?? 0)) - ((left.tableBytes ?? 0) + (left.indexesBytes ?? 0)));
+    const pageCount = numberPragma("page_count");
+    const freePages = numberPragma("freelist_count");
+    const pageSize = numberPragma("page_size");
+    return {
+        generatedAt: new Date().toISOString(),
+        files: {
+            databaseBytes: fileSize(config.databasePath),
+            walBytes: fileSize(`${config.databasePath}-wal`),
+            shmBytes: fileSize(`${config.databasePath}-shm`),
+        },
+        pages: {
+            pageSize,
+            pageCount,
+            freePages,
+            allocatedBytes: pageSize * pageCount,
+            reusableBytes: pageSize * freePages,
+        },
+        dbstatAvailable,
+        tables,
+    };
+}
+function projectSnapshotCleanupCount(db) {
+    return Number(db.prepare(`
+    SELECT COUNT(*) AS count FROM (
+      SELECT ROW_NUMBER() OVER (PARTITION BY serial ORDER BY created_at DESC,id DESC) AS position
+      FROM project_snapshots
+    ) WHERE position > 2
+  `).get().count);
+}
+function cleanupUnusedProjectSnapshots(db) {
+    const before = databaseStorageDiagnostic(db);
+    const removableSnapshots = projectSnapshotCleanupCount(db);
+    let removedSnapshots = 0;
+    if (removableSnapshots > 0) {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+            const result = db.prepare(`
+        DELETE FROM project_snapshots WHERE id IN (
+          SELECT id FROM (
+            SELECT id,ROW_NUMBER() OVER (PARTITION BY serial ORDER BY created_at DESC,id DESC) AS position
+            FROM project_snapshots
+          ) WHERE position > 2
+        )
+      `).run();
+            removedSnapshots = Number(result.changes);
+            db.exec("COMMIT");
+        }
+        catch (error) {
+            db.exec("ROLLBACK");
+            throw error;
+        }
+    }
+    db.exec("PRAGMA optimize");
+    let vacuumed = false;
+    try {
+        db.exec("VACUUM");
+        vacuumed = true;
+    }
+    catch {
+        // Smazané stránky jsou i bez VACUUM znovu použitelné databází. Samotné
+        // zmenšení souboru lze bezpečně zopakovat později po uvolnění dalšího místa.
+    }
+    return {
+        removedSnapshots,
+        keptSnapshotsPerMiniserver: 2,
+        vacuumed,
+        before,
+        after: databaseStorageDiagnostic(db),
+    };
 }
 export async function registerEncryptedBackup(app, db) {
     app.addContentTypeParser("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", { parseAs: "buffer", bodyLimit: EXCEL_WORKBOOK_LIMIT }, (_request, body, done) => done(null, body));
@@ -61,6 +166,37 @@ export async function registerEncryptedBackup(app, db) {
             if (existsSync(snapshotPath))
                 unlinkSync(snapshotPath);
         }
+    });
+    app.get("/api/system/storage-diagnostic", {
+        config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
+    }, async (request, reply) => {
+        if (!backupRequestAuthorized(request.headers.authorization)) {
+            reply.header("WWW-Authenticate", "Bearer");
+            return reply.code(401).send({ error: "Neplatné oprávnění pro diagnostiku.", code: "UNAUTHORIZED" });
+        }
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return databaseStorageDiagnostic(db);
+    });
+    app.post("/api/system/storage-cleanup", {
+        config: { rateLimit: { max: 2, timeWindow: "1 minute" } },
+    }, async (request, reply) => {
+        if (!backupRequestAuthorized(request.headers.authorization)) {
+            reply.header("WWW-Authenticate", "Bearer");
+            return reply.code(401).send({ error: "Neplatné oprávnění pro údržbu.", code: "UNAUTHORIZED" });
+        }
+        const body = request.body && typeof request.body === "object" ? request.body : {};
+        const removableSnapshots = projectSnapshotCleanupCount(db);
+        if (body.confirm !== "DELETE_UNUSED_PROJECT_SNAPSHOTS") {
+            reply.header("Cache-Control", "no-store, max-age=0");
+            return {
+                apply: false,
+                removableSnapshots,
+                keptSnapshotsPerMiniserver: 2,
+                preserved: ["latest_two_project_snapshots", "project_change_summaries", "credentials", "settings", "jobs", "audit"],
+            };
+        }
+        reply.header("Cache-Control", "no-store, max-age=0");
+        return { apply: true, ...cleanupUnusedProjectSnapshots(db) };
     });
     app.get("/api/system/service-tasks-excel/status", {
         config: { rateLimit: { max: 30, timeWindow: "1 minute" } },

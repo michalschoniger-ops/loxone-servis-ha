@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.68.2
+
+- Vratně opravuje distribuční balíček Menu 3.0.45 tak, aby karta Partner Coache měla velkou fotografii uprostřed a jméno, roli i kontakty pod ní.
+- Zachovává stejný Hub 3.0.68 a při opravě používá původní rollback vytvořený nasazením 3.0.68.1.
+
 ## 3.0.68.1
 
 - Vratně připravuje Evora Smart Hub 3.0.68 s Partner Coachem, přesnou historií školení a Windows stahováním aktuálních verzí LOXONE Configu.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.64.1
+
+- Vratně připravuje Evora Smart Hub 3.0.64 s rozšířeným přehledem LOXONE Portálu, přímou rezervací zasedaček a stavově řízenými ikonami docházky v Menu 3.0.44.
+- Payload před výměnou ověřuje SHA-256, cílový slug i verzi a původní 3.0.63 zachová jako rollback.
+
 ## 3.0.63.1
 
 - Vratně připravuje Evora Smart Hub 3.0.63 s přesně filtrovaným úklidem osiřelých dočasných databází exportu starších než hodinu.

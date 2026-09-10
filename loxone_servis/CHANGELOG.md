@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.64
+
+- Synchronizace LOXONE Portálu využije stávající šifrovanou relaci také pro partner status, datum další certifikace, kreditní limit, obrat, otevřené objednávky, účetní saldo, pohledávky po splatnosti a školení. Vedlejší přehledy selhávají odděleně, takže změna jejich formátu nezablokuje import Miniserverů.
+- Sanitovaný přehled bez tokenu, cookie a přihlašovacích údajů se ukládá do cache; finanční a partnerská data dostane přes osobní Menu API pouze správce, nikoli technik.
+- Evora Smart Menu 3.0.44 zobrazuje nové části Portálu, jejich poslední synchronizaci a červeně zvýrazní částku po splatnosti. Intranet nově každou minutu čte ověřený kalendář zasedaček a nabízí místnosti, aktuální obsazenost a události přímo v menu. Rezervaci umí po samostatné kontrole odeslat přímo přes oficiální endpoint do M365 včetně Teams, účastníků a zakázky a po úspěchu ihned obnoví obsazenost.
+- Platné docházkové akce se v horní části Intranetu zobrazují jako stavově řízené ikony; potvrzení i výsledek zůstávají v otevřeném Menu a úspěšný zápis okamžitě spustí nový read-back.
+
 ## 3.0.63
 
 - Údržba rozpozná přesným UUID filtrem nedokončené `backup-snapshot-*.sqlite` exporty a smaže jen soubory starší než hodinu.

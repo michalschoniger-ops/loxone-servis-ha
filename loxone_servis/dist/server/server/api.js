@@ -937,6 +937,7 @@ export async function registerApi(app, db, jobs) {
                 nextSyncAt: portalSync.nextSyncAt,
                 productCount: portalSync.productCount,
                 lastError: portalSync.lastError,
+                overview: identity.role === "admin" ? portalSync.overview : null,
             },
             items,
             fleetCheck: activeFleetCheck

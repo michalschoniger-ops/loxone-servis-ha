@@ -103,6 +103,83 @@ function first(record, keys) {
     }
     return "";
 }
+function portalNumberValue(value) {
+    if (typeof value === "number")
+        return Number.isFinite(value) ? value : null;
+    if (typeof value !== "string")
+        return null;
+    let normalized = value.trim().replace(/\s/g, "").replace(/[^0-9,.-]/g, "");
+    if (!normalized)
+        return null;
+    const lastComma = normalized.lastIndexOf(",");
+    const lastDot = normalized.lastIndexOf(".");
+    if (lastComma >= 0 && lastDot >= 0) {
+        normalized = lastComma > lastDot
+            ? normalized.replace(/\./g, "").replace(",", ".")
+            : normalized.replace(/,/g, "");
+    }
+    else if (lastComma >= 0) {
+        normalized = normalized.replace(/\./g, "").replace(",", ".");
+    }
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+function portalNumber(record, keys) {
+    for (const key of keys) {
+        if (!(key in record))
+            continue;
+        const parsed = portalNumberValue(record[key]);
+        if (parsed !== null)
+            return parsed;
+    }
+    return null;
+}
+function nestedRecord(value, preferredKeys) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    for (const key of preferredKeys) {
+        const nested = record[key];
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+            return nested;
+        }
+    }
+    return record;
+}
+function findArray(value, preferredKeys) {
+    if (Array.isArray(value))
+        return value;
+    if (!value || typeof value !== "object")
+        return [];
+    const record = value;
+    for (const key of preferredKeys) {
+        const nested = record[key];
+        if (Array.isArray(nested))
+            return nested;
+    }
+    for (const nested of Object.values(record)) {
+        if (!nested || typeof nested !== "object")
+            continue;
+        const found = findArray(nested, preferredKeys);
+        if (found.length)
+            return found;
+    }
+    return [];
+}
+function recursiveNumber(value, keys) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    const direct = portalNumber(record, keys);
+    if (direct !== null)
+        return direct;
+    for (const nested of Object.values(record)) {
+        const found = recursiveNumber(nested, keys);
+        if (found !== null)
+            return found;
+    }
+    return null;
+}
 function portalBoolean(record, keys) {
     for (const key of keys) {
         if (!(key in record))
@@ -187,6 +264,120 @@ function findProducts(value) {
     }
     return [];
 }
+function normalizeOrder(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    const id = first(record, ["order_id", "orderId", "id", "number", "document_number"]);
+    if (!id)
+        return null;
+    return {
+        id,
+        date: first(record, ["order_date", "orderDate", "date", "created_at", "createdAt"]) || null,
+        reference: first(record, ["reference", "customer_reference", "customerReference", "description"]),
+        status: first(record, ["status", "state", "order_status", "orderStatus"]),
+        amount: portalNumber(record, ["order_amount_excl_vat", "orderAmountExclVat", "amount", "total", "net_amount"]),
+    };
+}
+function normalizeLedgerEntry(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    const documentNumber = first(record, ["document_number", "documentNumber", "number", "invoice_number", "invoiceNumber", "id"]);
+    if (!documentNumber)
+        return null;
+    return {
+        documentNumber,
+        date: first(record, ["date", "document_date", "documentDate", "invoice_date", "invoiceDate"]) || null,
+        dueDate: first(record, ["due_date", "dueDate", "due", "payment_due_date"]) || null,
+        description: first(record, ["description", "text", "reference", "document_type"]),
+        amount: portalNumber(record, ["amount", "total_amount", "totalAmount", "value"]),
+        openAmount: portalNumber(record, ["open_amount", "openAmount", "amount_open", "outstanding_amount"]),
+        status: first(record, ["state", "status", "payment_status", "paymentStatus"]),
+    };
+}
+function normalizeTraining(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    const title = first(record, ["title", "name", "training_name", "trainingName", "description"]);
+    const id = first(record, ["id", "training_id", "trainingId", "event_id", "eventId"]) || title;
+    if (!id || !title)
+        return null;
+    return {
+        id,
+        title,
+        startsAt: first(record, ["start_date", "startDate", "starts_at", "startsAt", "date_from", "dateFrom", "date"]) || null,
+        endsAt: first(record, ["end_date", "endDate", "ends_at", "endsAt", "date_to", "dateTo"]) || null,
+        status: first(record, ["status", "state", "booking_status", "bookingStatus"]),
+        location: first(record, ["location", "place", "city", "venue"]),
+    };
+}
+function isoDateOnly(value) {
+    return value.toISOString().slice(0, 10);
+}
+async function portalJson(path, cookie, referer, body) {
+    const response = await fetchWithTimeout(`${PORTAL_ORIGIN}${path}`, {
+        method: "POST",
+        headers: portalHeaders(cookie, `${PORTAL_ORIGIN}${referer}`),
+        ...(body ? { body } : {}),
+    });
+    if (!response.ok)
+        throw new Error(`${path} HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.valid !== true) {
+        throw new Error(`${path} invalid response`);
+    }
+    return payload;
+}
+function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayload, trainingsPayload, updatedAt) {
+    const partner = nestedRecord(partnerPayload, ["partner_data", "partnerData", "data"]) ?? {};
+    const openOrders = openOrdersPayload
+        ? findArray(openOrdersPayload, ["found_orders", "foundOrders", "orders", "items", "data"])
+            .map(normalizeOrder).filter((item) => Boolean(item)).slice(0, 20)
+        : [];
+    const ledgerEntries = ledgerPayload
+        ? findArray(ledgerPayload, ["ledger_entries", "ledgerEntries", "entries", "items", "data"])
+            .map(normalizeLedgerEntry).filter((item) => Boolean(item)).slice(0, 20)
+        : [];
+    const trainings = trainingsPayload
+        ? findArray(trainingsPayload, ["trainings", "events", "items", "data"])
+            .map(normalizeTraining).filter((item) => Boolean(item)).slice(0, 20)
+        : [];
+    const creditLimit = portalNumber(partner, ["credit_limit", "creditLimit"]);
+    const usedCredit = portalNumber(partner, ["used_credit", "usedCredit"]);
+    const availableSections = [
+        "partner",
+        ...(openOrdersPayload ? ["orders"] : []),
+        ...(ledgerPayload ? ["ledger"] : []),
+        ...(trainingsPayload ? ["trainings"] : []),
+    ];
+    return {
+        updatedAt,
+        partnerStatus: first(partner, ["partner_status", "partnerStatus", "status"]) || null,
+        nextCertificationDate: first(partner, ["next_certification_date", "nextCertificationDate", "certification_valid_until", "certificationValidUntil"]) || null,
+        annualTrainingDone: portalBoolean(partner, ["annual_training_done", "annualTrainingDone"]),
+        currency: first(partner, ["currency", "currency_code", "currencyCode"]) || null,
+        creditLimit,
+        usedCredit,
+        availableCredit: creditLimit !== null && usedCredit !== null ? creditLimit - usedCredit : null,
+        turnover12Months: portalNumber(partner, ["12_month_turnover", "twelve_month_turnover", "turnover12Months"]),
+        openAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["total_amount_open", "totalAmountOpen", "open_amount_total", "openAmount"]) : null,
+        dueAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["total_amount_due", "totalAmountDue", "due_amount_total", "dueAmount"]) : null,
+        accountBalance: ledgerPayload ? recursiveNumber(ledgerPayload, ["saldo", "balance", "account_balance", "accountBalance"]) : null,
+        openOrderCount: openOrdersPayload
+            ? recursiveNumber(openOrdersPayload, ["overall_count", "overallCount", "count", "total"]) ?? openOrders.length
+            : 0,
+        openOrders,
+        ledgerEntries,
+        trainingCount: trainingsPayload
+            ? recursiveNumber(trainingsPayload, ["overall_count", "overallCount", "count", "total"]) ?? trainings.length
+            : 0,
+        trainings,
+        availableSections,
+        unavailableSections: ["orders", "ledger", "trainings"].filter((section) => !availableSections.includes(section)),
+    };
+}
 async function portalProducts(accessToken) {
     const home = await fetchWithTimeout(`${PORTAL_ORIGIN}/`, {
         method: "GET",
@@ -237,7 +428,25 @@ async function portalProducts(accessToken) {
     const products = findProducts(payload).map(normalizeProduct).filter((item) => Boolean(item));
     if (!products.length)
         throw Object.assign(new Error("Loxone Portál nevrátil žádné registrované Miniservery."), { code: "portal_format_changed" });
-    return products;
+    const openOrdersBody = new FormData();
+    openOrdersBody.set("offset", "0");
+    openOrdersBody.set("limit", "999999");
+    const ledgerBody = new FormData();
+    const ledgerEnd = new Date();
+    const ledgerStart = new Date(ledgerEnd);
+    ledgerStart.setUTCFullYear(ledgerStart.getUTCFullYear() - 10);
+    ledgerBody.set("startDate", isoDateOnly(ledgerStart));
+    ledgerBody.set("endDate", isoDateOnly(ledgerEnd));
+    const [ordersResult, ledgerResult, trainingsResult] = await Promise.allSettled([
+        portalJson("/api/getOpenOrders", cookie, "/orders/", openOrdersBody),
+        portalJson("/api/getCustomerLedgerEntries", cookie, "/orders/invoices/", ledgerBody),
+        portalJson("/api/getTrainings", cookie, "/trainings/"),
+    ]);
+    const now = new Date().toISOString();
+    return {
+        products,
+        overview: normalizePortalOverview(partnerPayload, ordersResult.status === "fulfilled" ? ordersResult.value : null, ledgerResult.status === "fulfilled" ? ledgerResult.value : null, trainingsResult.status === "fulfilled" ? trainingsResult.value : null, now),
+    };
 }
 function saveRefreshToken(db, token) {
     setSetting(db, "portal_sync_refresh_token", encryptSecret(token, config.masterKey, REFRESH_AAD));
@@ -272,6 +481,15 @@ export function getPortalSyncStatus(db) {
     const lastSyncAt = getSetting(db, "portal_sync_last_at");
     const encrypted = getSetting(db, "portal_sync_refresh_token");
     const nextAttemptAt = getSetting(db, "portal_sync_next_attempt_at");
+    let overview = null;
+    try {
+        const cached = getSetting(db, "portal_sync_overview");
+        if (cached)
+            overview = JSON.parse(cached);
+    }
+    catch {
+        overview = null;
+    }
     return {
         connected: Boolean(encrypted),
         reconnectRequired: getSetting(db, "portal_sync_status") === "reconnect_required",
@@ -285,6 +503,7 @@ export function getPortalSyncStatus(db) {
         lastAutomaticLoginAt: getSetting(db, "portal_sync_last_reauth_at"),
         productCount: Number(getSetting(db, "portal_sync_count") ?? 0),
         lastError: getSetting(db, "portal_sync_error") || null,
+        overview,
     };
 }
 export function portalSyncDue(db, now = Date.now()) {
@@ -350,12 +569,13 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
         }
         if (refreshToken)
             saveRefreshToken(db, refreshToken);
-        const products = await portalProducts(accessToken);
+        const portalData = await portalProducts(accessToken);
         const now = new Date().toISOString();
-        transaction(db, () => upsertProducts(db, products, now));
+        transaction(db, () => upsertProducts(db, portalData.products, now));
         setSetting(db, "portal_sync_last_at", now);
         setSetting(db, "portal_sync_next_attempt_at", new Date(Date.parse(now) + SYNC_INTERVAL_MS).toISOString());
-        setSetting(db, "portal_sync_count", String(products.length));
+        setSetting(db, "portal_sync_count", String(portalData.products.length));
+        setSetting(db, "portal_sync_overview", JSON.stringify({ ...portalData.overview, updatedAt: now }));
         updateStatus(db, "connected");
         return getPortalSyncStatus(db);
     }
@@ -385,6 +605,7 @@ export function disconnectPortal(db) {
         "portal_sync_last_attempt_at",
         "portal_sync_next_attempt_at",
         "portal_sync_last_reauth_at",
+        "portal_sync_overview",
     ])
         setSetting(db, key, "");
     updateStatus(db, "not_connected");

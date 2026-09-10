@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.66
+
+- Přijímá aktuální úspěšnou odpověď `getCustomerLedgerEntries`, která na rozdíl od ostatních částí Portálu nemusí obsahovat obecný příznak `valid`.
+- Výslovně neplatná odpověď `valid: false` zůstává izolovanou chybou účetní části a nemůže narušit synchronizaci Miniserverů.
+
 ## 3.0.65
 
 - Fakturační read-back LOXONE Portálu používá aktuální oficiální stránku `/invoices/` a stejný šestiměsíční rozsah jako její frontend, takže účetní saldo a pohledávky nejsou vyřazené chybným starším refererem.

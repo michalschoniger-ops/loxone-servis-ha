@@ -325,7 +325,7 @@ async function portalJson(path, cookie, referer, body) {
     if (!response.ok)
         throw new Error(`${path} HTTP ${response.status}`);
     const payload = await response.json();
-    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.valid !== true) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.valid === false) {
         throw new Error(`${path} invalid response`);
     }
     return payload;

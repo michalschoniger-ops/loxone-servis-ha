@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.66.1
+
+- Vratně připravuje Evora Smart Hub 3.0.66 s přijetím aktuální úspěšné účetní odpovědi LOXONE Portálu bez obecného příznaku `valid`.
+- Payload před výměnou ověřuje SHA-256, cílový slug i verzi a živou 3.0.65 zachová jako rollback.
+
 ## 3.0.65.1
 
 - Vratně připravuje Evora Smart Hub 3.0.65 s opravou fakturačního read-backu podle aktuální stránky Faktury LOXONE Portálu.

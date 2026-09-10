@@ -4,7 +4,7 @@ Bezpečný servisní a monitorovací hub EVORA Smart pro Loxone Miniservery a Ho
 
 Po instalaci aplikace otevřete její webové rozhraní ze sidebaru Home Assistantu. Citlivá data jsou uložena pouze v trvalém adresáři `/data` dané instalace a nejsou součástí obrazu ani GitHub repozitáře.
 
-Vydání 3.0.66 přijímá úspěšná účetní data aktuální stránky Moje účty také tehdy, když odpověď neobsahuje obecný příznak `valid`; výslovné `valid: false` zůstává chybou. Vydání 3.0.65 srovnalo trasu a šestiměsíční rozsah s aktuální stránkou LOXONE Portálu.
+Vydání 3.0.67 přidává sanitovaný důvod nedostupnosti každé volitelné části LOXONE Portálu bez obsahu odpovědi, cookie nebo tokenu. Vydání 3.0.66 přijímá úspěšná účetní data aktuální stránky Moje účty také tehdy, když odpověď neobsahuje obecný příznak `valid`; výslovné `valid: false` zůstává chybou.
 
 Vydání 3.0.64 rozšiřuje stávající šifrovanou synchronizaci LOXONE Portálu o partner status, certifikaci, kredit, obrat, otevřené objednávky, účetní saldo, pohledávky a školení. Tyto čtecí přehledy se ukládají bez přihlašovacích údajů a finanční data vydává osobnímu Menu API jen správci. Evora Smart Menu 3.0.44 navíc načítá kalendáře zasedaček přímo z Evora Intranetu, ukazuje aktuální obsazenost a události, rezervuje přímo do M365 a nabízí platné docházkové akce jako horní ikony.
 

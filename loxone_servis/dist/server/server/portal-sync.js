@@ -325,10 +325,27 @@ async function portalJson(path, cookie, referer, body) {
     if (!response.ok)
         throw new Error(`${path} HTTP ${response.status}`);
     const payload = await response.json();
-    if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.valid === false) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         throw new Error(`${path} invalid response`);
     }
+    if (payload.valid === false)
+        throw new Error(`${path} rejected`);
     return payload;
+}
+function optionalSectionReason(result) {
+    if (result.status === "fulfilled")
+        return null;
+    const message = result.reason instanceof Error ? result.reason.message : "unknown failure";
+    const http = message.match(/HTTP (\d{3})$/);
+    if (http)
+        return `HTTP ${http[1]}`;
+    if (message.endsWith(" rejected"))
+        return "rejected";
+    if (message.endsWith(" invalid response"))
+        return "invalid_response";
+    if (message.includes("aborted"))
+        return "timeout";
+    return "request_failed";
 }
 function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayload, trainingsPayload, updatedAt) {
     const partner = nestedRecord(partnerPayload, ["partner_data", "partnerData", "data"]) ?? {};
@@ -376,6 +393,7 @@ function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayloa
         trainings,
         availableSections,
         unavailableSections: ["orders", "ledger", "trainings"].filter((section) => !availableSections.includes(section)),
+        unavailableSectionReasons: {},
     };
 }
 async function portalProducts(accessToken) {
@@ -444,9 +462,15 @@ async function portalProducts(accessToken) {
         portalJson("/api/getTrainings", cookie, "/trainings/"),
     ]);
     const now = new Date().toISOString();
+    const overview = normalizePortalOverview(partnerPayload, ordersResult.status === "fulfilled" ? ordersResult.value : null, ledgerResult.status === "fulfilled" ? ledgerResult.value : null, trainingsResult.status === "fulfilled" ? trainingsResult.value : null, now);
+    overview.unavailableSectionReasons = Object.fromEntries([
+        ["orders", optionalSectionReason(ordersResult)],
+        ["ledger", optionalSectionReason(ledgerResult)],
+        ["trainings", optionalSectionReason(trainingsResult)],
+    ].filter((entry) => Boolean(entry[1])));
     return {
         products,
-        overview: normalizePortalOverview(partnerPayload, ordersResult.status === "fulfilled" ? ordersResult.value : null, ledgerResult.status === "fulfilled" ? ledgerResult.value : null, trainingsResult.status === "fulfilled" ? trainingsResult.value : null, now),
+        overview,
     };
 }
 function saveRefreshToken(db, token) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.67
+
+- Volitelné části LOXONE Portálu nyní vracejí pouze sanitovaný stav `HTTP nnn`, `rejected`, `invalid_response`, `timeout` nebo `request_failed`.
+- Diagnostika nikdy neukládá ani nevydává obsah odmítnuté odpovědi, přihlašovací token nebo session cookie.
+
 ## 3.0.66
 
 - Přijímá aktuální úspěšnou odpověď `getCustomerLedgerEntries`, která na rozdíl od ostatních částí Portálu nemusí obsahovat obecný příznak `valid`.

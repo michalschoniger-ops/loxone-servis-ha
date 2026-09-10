@@ -775,6 +775,23 @@ export async function readLoxApp3(db, serial) {
     const version = typeof parsed.LoxAPPversion3 === "string" ? parsed.LoxAPPversion3 : null;
     return { payload: parsed, hash: createHash("sha256").update(text).digest("hex"), version };
 }
+/**
+ * Authoritative mapping published by LOXONE for msInfo.miniserverType in
+ * LoxAPP3.json (Structure File V17.0). Unknown future values deliberately stay
+ * unresolved so the UI never assigns the wrong product photo.
+ */
+export function miniserverTypeName(value) {
+    const type = Number(value);
+    if (!Number.isInteger(type))
+        return null;
+    return {
+        0: "Miniserver Gen. 1",
+        1: "Miniserver Go Gen. 1",
+        2: "Miniserver",
+        3: "Miniserver Go",
+        4: "Miniserver Compact",
+    }[type] ?? null;
+}
 export function parseGatewayTopology(payload, ownSerial, knownSerials) {
     const root = payload && typeof payload === "object" ? payload : {};
     const msInfo = root.msInfo && typeof root.msInfo === "object" ? root.msInfo : {};

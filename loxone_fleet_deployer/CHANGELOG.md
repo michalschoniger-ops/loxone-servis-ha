@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.69.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.69 a plné macOS Menu 3.0.46 s ručním přidáním Miniserveru do Hubu nebo pouze do macOS Klíčenky.
+- Po připojení určuje model z oficiálního `msInfo.miniserverType`, přiřadí odpovídající fotografii a lokální záznam lze později bezpečně synchronizovat do Hubu.
+- Zachovává databázové schéma 27, stávající `/data`, šifrované přístupy a vratnou zálohu předchozího zdroje.
+
 ## 3.0.68.2
 
 - Vratně opravuje distribuční balíček Menu 3.0.45 tak, aby karta Partner Coache měla velkou fotografii uprostřed a jméno, roli i kontakty pod ní.

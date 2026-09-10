@@ -933,6 +933,7 @@ export async function registerApi(app, db, jobs) {
             capabilities: {
                 miniserverWebInterface: true,
                 miniserverPasswordCopy: true,
+                manualMiniserverManagement: identity.role === "admin",
             },
             user: {
                 id: identity.ownerUserId,
@@ -1075,6 +1076,53 @@ export async function registerApi(app, db, jobs) {
         });
         reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
         return { ok: true, hasCredentials: true };
+    });
+    app.post("/api/integrations/worklog/v1/miniservers/manual", { config: { rateLimit: { max: 6, timeWindow: "15 minutes" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "Admin token Menu není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const input = z.object({
+            serial: serialSchema,
+            description: z.string().trim().min(1).max(250),
+            username: z.string().trim().min(1).max(200),
+            password: z.string().min(1).max(1024),
+        }).strict().parse(request.body);
+        if (getMiniserver(db, input.serial)) {
+            return reply.code(409).send({
+                error: "Miniserver s tímto sériovým číslem už v Hubu existuje. Přístup aktualizujte v jeho detailu.",
+                code: "DUPLICATE_SERIAL",
+            });
+        }
+        const now = new Date().toISOString();
+        const stable = db.prepare("SELECT value FROM settings WHERE key='target_firmware'").get();
+        transaction(db, () => {
+            db.prepare(`INSERT INTO miniservers(
+             serial,type,project,registered,credential_source,access_policy,target_firmware,
+             firmware_policy,firmware_channel,manual_only,notes,created_at,updated_at
+           ) VALUES(?, 'Typ se ověřuje', ?, '', 'manual', 'managed', ?, 'follow_stable', 'stable', 0, ?, ?, ?)`).run(input.serial, input.description, stable?.value ?? "", "Ručně přidáno z Evora Smart Menu.", now, now);
+            saveCredentials(db, input.serial, input.username, input.password);
+        });
+        const checkJob = jobs.enqueueUnique("check", input.serial, identity.ownerUserId, {
+            manual: true,
+            source: "worklog_menu_manual_add",
+        });
+        const identifyJob = jobs.enqueueUnique("project_sync", input.serial, identity.ownerUserId, {
+            manual: true,
+            source: "worklog_menu_manual_add",
+        });
+        audit(db, "worklog.miniserver.created", identity.ownerUserId, input.serial, {
+            integrationId: identity.tokenId,
+            checkJobId: checkJob.id,
+            identifyJobId: identifyJob.id,
+        });
+        reply.header("Cache-Control", "private, no-store, max-age=0").header("Pragma", "no-cache");
+        return reply.code(201).send({
+            ok: true,
+            item: getMiniserver(db, input.serial),
+            checkJob,
+            identifyJob,
+        });
     });
     app.get("/api/integrations/worklog/v1/folders", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);

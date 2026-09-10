@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { audit, setSetting, transaction } from "./database.js";
-import { checkMiniserver, miniserverCommand, readGatewayTopology, readHealth, readLoxApp3, sampleOneWireTemperaturesFromStoredRoute, } from "./loxone/client.js";
+import { checkMiniserver, miniserverCommand, miniserverTypeName, readGatewayTopology, readHealth, readLoxApp3, sampleOneWireTemperaturesFromStoredRoute, } from "./loxone/client.js";
 import { config } from "./config.js";
 import { encryptSecret } from "./crypto.js";
 import { firmwareRelation } from "./version.js";
@@ -895,6 +895,10 @@ export class JobQueue {
     async syncProjectSnapshot(serial, actorUserId, jobId) {
         const snapshot = await readLoxApp3(this.db, serial);
         const payload = snapshot.payload;
+        const msInfo = payload.msInfo && typeof payload.msInfo === "object"
+            ? payload.msInfo
+            : {};
+        const verifiedType = miniserverTypeName(msInfo.miniserverType);
         const summary = {
             controls: payload.controls && typeof payload.controls === "object" ? Object.keys(payload.controls).length : 0,
             rooms: payload.rooms && typeof payload.rooms === "object" ? Object.keys(payload.rooms).length : 0,
@@ -906,7 +910,7 @@ export class JobQueue {
             .get(serial);
         if (existing?.content_hash === snapshot.hash) {
             const refreshedAt = new Date().toISOString();
-            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, refreshedAt, refreshedAt, serial);
+            this.db.prepare("UPDATE miniservers SET type=COALESCE(?,type),loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(verifiedType, snapshot.version, snapshot.hash, refreshedAt, refreshedAt, serial);
             return { changed: false, message: "Projekt se od posledního snímku nezměnil.", summary };
         }
         const id = randomUUID();
@@ -917,7 +921,7 @@ export class JobQueue {
          VALUES(?,?,?,?,?,?,?)`).run(id, serial, snapshot.version, snapshot.hash, JSON.stringify(summary), encryptedPayload, createdAt);
             this.db.prepare(`INSERT INTO project_changes(serial,from_snapshot_id,to_snapshot_id,change_type,summary,details_json,created_at)
          VALUES(?,?,?,?,?,?,?)`).run(serial, existing?.id ?? null, id, existing ? "changed" : "initial", existing ? "LoxAPP3 se změnil." : "První snímek projektu.", JSON.stringify(summary), createdAt);
-            this.db.prepare("UPDATE miniservers SET loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(snapshot.version, snapshot.hash, createdAt, createdAt, serial);
+            this.db.prepare("UPDATE miniservers SET type=COALESCE(?,type),loxapp_version=?,current_project_hash=?,loxapp_refreshed_at=?,updated_at=? WHERE serial=?").run(verifiedType, snapshot.version, snapshot.hash, createdAt, createdAt, serial);
         });
         const message = existing ? "Změna projektu byla zaznamenána." : "Projekt byl načten.";
         audit(this.db, "project.snapshot", actorUserId, serial, { jobId, changed: Boolean(existing), hash: snapshot.hash });

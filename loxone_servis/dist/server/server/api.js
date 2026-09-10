@@ -4,7 +4,7 @@ import { actionPayloadHash, consumeConfirmation, createActionConfirmationWithPas
 import { audit, transaction } from "./database.js";
 import { config } from "./config.js";
 import { encryptSecret, hashPassword } from "./crypto.js";
-import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, saveCredentials } from "./repository.js";
+import { fleetOverview, getMiniserver, getStoredCredentials, listMiniservers, listProjectFolders, listReleaseArchive, listReleases, saveCredentials } from "./repository.js";
 import { deviceCommand, obtainJwt, readControlHistory, readDefinitionLog, readOperatingModes, readOperatingModeSchedule, readStatisticInfo, readUserAudit, resolveConnection, sendAllowedWebservice, mutateOperatingModeSchedule, isSafeLocalMiniserverUrl, LoxoneError, } from "./loxone/client.js";
 import { readCurrentProgramArchive, readExportManifest, readLegacyStatisticExport, readLoxApp3Export, readProgramBackupCatalog, readSelectedProgramBackup, readStatisticsCatalogExport, readSystemStatisticsExport, readV2StatisticExport, } from "./loxone/exports.js";
 import { cleanupServiceBundles, createServiceBundle, getServiceBundle, serviceBundleStream } from "./service-bundle.js";
@@ -15,9 +15,9 @@ import { firmwareUpdateWindowDecision, formatFirmwareUpdateSchedule } from "../s
 import { resolveFirmwareUpdatePolicy } from "./firmware-update-policy.js";
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, installHomeAssistantUpdate, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
-import { connectPortal, disconnectPortal, getPortalSyncStatus } from "./portal-sync.js";
+import { connectPortal, disconnectPortal, getPortalCoachPhoto, getPortalSyncStatus } from "./portal-sync.js";
 import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
-import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigLaunchJob, createLauncherPairing, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, provisionMenuLauncherAgent, revokeLauncherAgent, takeConfigLaunchJob, updateConfigLaunchJob, } from "./config-launcher.js";
+import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigDownloadJob, createConfigLaunchJob, createLauncherPairing, getConfigDownloadJob, getConfigDownloadJobForUser, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, provisionMenuLauncherAgent, revokeLauncherAgent, takeConfigDownloadJob, takeConfigLaunchJob, updateConfigDownloadJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogPairing, createWorkLogToken, listWorkLogTokens, pairWorkLogMenu, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
 import { cachedLoxoneBuilderStatus, loxoneBuilderStatus } from "./loxone-builder.js";
@@ -865,6 +865,20 @@ export async function registerApi(app, db, jobs) {
             .type(row.mime)
             .send(content);
     });
+    app.get("/api/integrations/worklog/v1/portal-coach/avatar", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity)
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        const photo = getPortalCoachPhoto(db);
+        if (!photo)
+            return reply.code(404).send({ error: "Fotografie Partner Coache není dostupná.", code: "NOT_FOUND" });
+        return reply
+            .header("Cache-Control", "private, no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("X-Content-Type-Options", "nosniff")
+            .type(photo.mime)
+            .send(photo.data);
+    });
     app.get("/api/integrations/worklog/v1/miniservers", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin", "technician"]);
         if (!identity) {
@@ -939,6 +953,7 @@ export async function registerApi(app, db, jobs) {
                 lastError: portalSync.lastError,
                 overview: identity.role === "admin" ? portalSync.overview : null,
             },
+            releases: listReleases(db),
             items,
             fleetCheck: activeFleetCheck
                 ? {
@@ -1336,11 +1351,43 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         }
         const id = configLaunchJobIdSchema.parse(request.params.id);
-        const job = getConfigLaunchJobForUser(db, id, identity.ownerUserId);
+        const job = getConfigLaunchJobForUser(db, id, identity.ownerUserId)
+            ?? getConfigDownloadJobForUser(db, id, identity.ownerUserId);
         if (!job)
             return reply.code(404).send({ error: "Požadavek nebyl nalezen.", code: "NOT_FOUND" });
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
         return { job };
+    });
+    app.post("/api/integrations/worklog/v1/config-downloads", { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } }, async (request, reply) => {
+        const identity = authenticateWorkLogToken(db, request.headers.authorization, ["admin"]);
+        if (!identity) {
+            return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
+        }
+        const input = z.object({ channel: z.enum(["stable", "beta", "alpha"]) }).strict().parse(request.body);
+        const agent = preferredLauncherAgent(db, identity.ownerUserId);
+        if (!agent?.available || agent.updateRequired) {
+            return reply.code(409).send({ error: "Aktuální Windows Launcher není online.", code: "AGENT_OFFLINE" });
+        }
+        const release = listReleases(db).find((item) => item.channel === input.channel);
+        if (!release?.version || !release.configUrl) {
+            return reply.code(404).send({ error: "Požadovaná verze Configu není dostupná.", code: "RELEASE_NOT_FOUND" });
+        }
+        const job = createConfigDownloadJob(db, {
+            actorUserId: identity.ownerUserId,
+            agentId: agent.id,
+            channel: input.channel,
+            requiredVersion: release.version,
+            configUrl: release.configUrl,
+        });
+        audit(db, "worklog.config_download_requested", identity.ownerUserId, null, {
+            integrationId: identity.tokenId,
+            jobId: job.id,
+            agentId: agent.id,
+            channel: job.channel,
+            requiredVersion: job.requiredVersion,
+        });
+        reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
+        return reply.code(202).send({ job });
     });
     app.get("/api/config-launcher", async (request, reply) => {
         const user = requireRole(request, reply, ["admin", "technician"]);
@@ -1399,8 +1446,28 @@ export async function registerApi(app, db, jobs) {
         }
         const job = takeConfigLaunchJob(db, agent.id);
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        if (!job)
-            return { job: null, ...versionStatus, update };
+        if (!job) {
+            const downloadJob = takeConfigDownloadJob(db, agent.id);
+            if (!downloadJob)
+                return { job: null, ...versionStatus, update };
+            audit(db, "config_launcher.download_delivered", null, null, {
+                jobId: downloadJob.id,
+                agentId: agent.id,
+                channel: downloadJob.channel,
+                requiredVersion: downloadJob.required_version,
+            });
+            return {
+                ...versionStatus,
+                update,
+                job: {
+                    id: downloadJob.id,
+                    kind: "config_download",
+                    channel: downloadJob.channel,
+                    requiredVersion: downloadJob.required_version,
+                    configUrl: downloadJob.config_url,
+                },
+            };
+        }
         const credentials = getStoredCredentials(db, job.serial);
         if (!credentials) {
             updateConfigLaunchJob(db, agent.id, job.id, "failed", "U Miniserveru chybí uložené přístupy.", "CREDENTIALS_MISSING");
@@ -1432,11 +1499,24 @@ export async function registerApi(app, db, jobs) {
             message: z.string().trim().min(1).max(500),
             errorCode: z.string().trim().min(1).max(80).nullable().optional(),
         }).parse(request.body);
-        const job = updateConfigLaunchJob(db, agent.id, id, input.state, input.message, input.errorCode ?? null);
+        const job = getConfigDownloadJob(db, id)
+            ? updateConfigDownloadJob(db, agent.id, id, input.state, input.message, input.errorCode ?? null)
+            : updateConfigLaunchJob(db, agent.id, id, input.state, input.message, input.errorCode ?? null);
         if (!job)
             return reply.code(409).send({ error: "Stav požadavku už nelze změnit.", code: "JOB_STATE_INVALID" });
         if (["succeeded", "missing_config", "failed"].includes(job.state)) {
-            audit(db, `config_launcher.${job.state}`, null, job.serial, { jobId: job.id, agentId: agent.id, errorCode: job.errorCode });
+            if ("channel" in job) {
+                audit(db, `config_launcher.download_${job.state}`, null, null, {
+                    jobId: job.id,
+                    agentId: agent.id,
+                    channel: job.channel,
+                    requiredVersion: job.requiredVersion,
+                    errorCode: job.errorCode,
+                });
+            }
+            else {
+                audit(db, `config_launcher.${job.state}`, null, job.serial, { jobId: job.id, agentId: agent.id, errorCode: job.errorCode });
+            }
         }
         return { job };
     });

@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.68.1
+
+- Vratně připravuje Evora Smart Hub 3.0.68 s Partner Coachem, přesnou historií školení a Windows stahováním aktuálních verzí LOXONE Configu.
+- Payload před výměnou ověřuje SHA-256, cílový slug i verzi a živou 3.0.67 zachová jako rollback.
+
 ## 3.0.67.1
 
 - Vratně připravuje Evora Smart Hub 3.0.67 se sanitovanou diagnostikou nedostupných částí LOXONE Portálu.

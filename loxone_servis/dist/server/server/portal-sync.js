@@ -300,18 +300,86 @@ function normalizeTraining(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return null;
     const record = value;
-    const title = first(record, ["title", "name", "training_name", "trainingName", "description"]);
-    const id = first(record, ["id", "training_id", "trainingId", "event_id", "eventId"]) || title;
+    const title = first(record, ["event_type_name", "eventTypeName", "title", "name", "training_name", "trainingName", "description"]);
+    const startsAt = first(record, ["date_start", "dateStart", "start_date", "startDate", "starts_at", "startsAt", "date_from", "dateFrom", "date"]) || null;
+    const endsAt = first(record, ["date_end", "dateEnd", "end_date", "endDate", "ends_at", "endsAt", "date_to", "dateTo"]) || null;
+    const participant = [
+        first(record, ["contact_first_name", "contactFirstName", "participant_first_name", "participantFirstName"]),
+        first(record, ["contact_last_name", "contactLastName", "participant_last_name", "participantLastName"]),
+    ].filter(Boolean).join(" ") || first(record, ["participant", "participant_name", "participantName", "contact_name", "contactName"]);
+    const id = first(record, ["id", "training_id", "trainingId", "event_id", "eventId", "order_no", "orderNo"])
+        || [startsAt, title, participant].filter(Boolean).join(":");
     if (!id || !title)
         return null;
     return {
         id,
         title,
-        startsAt: first(record, ["start_date", "startDate", "starts_at", "startsAt", "date_from", "dateFrom", "date"]) || null,
-        endsAt: first(record, ["end_date", "endDate", "ends_at", "endsAt", "date_to", "dateTo"]) || null,
+        startsAt,
+        endsAt,
         status: first(record, ["status", "state", "booking_status", "bookingStatus"]),
-        location: first(record, ["location", "place", "city", "venue"]),
+        location: first(record, ["location_name", "locationName", "location_city", "locationCity", "location", "place", "city", "venue"]),
+        participant,
     };
+}
+function safePortalUrl(value) {
+    if (!value)
+        return null;
+    try {
+        const url = new URL(value, PORTAL_ORIGIN);
+        return url.protocol === "https:" ? url.href : null;
+    }
+    catch {
+        return null;
+    }
+}
+function normalizeCoach(value) {
+    const record = nestedRecord(value, ["coach", "partner_coach", "partnerCoach", "contact", "data"]);
+    if (!record)
+        return null;
+    const image = nestedRecord(record.image ?? record.photo ?? record.avatar, ["image", "photo", "avatar"]);
+    const name = first(record, ["name", "full_name", "fullName", "display_name", "displayName"]);
+    const phone = first(record, ["phone", "telephone", "landline"]);
+    const mobile = first(record, ["mobile", "mobile_phone", "mobilePhone", "cellphone"]);
+    const email = first(record, ["email", "mail"]);
+    if (!name && !phone && !mobile && !email)
+        return null;
+    return {
+        summary: {
+            name: name || "LOXONE Partner Coach",
+            position: first(record, ["position", "job_title", "jobTitle", "role"]),
+            phone,
+            mobile,
+            email,
+            availability: first(record, ["availability", "available", "office_hours", "officeHours"]),
+            appointmentUrl: safePortalUrl(first(record, ["appointment", "appointment_url", "appointmentUrl"])),
+            alternateAppointmentUrl: safePortalUrl(first(record, ["appointment2", "appointment_2", "alternate_appointment", "alternateAppointmentUrl"])),
+        },
+        imageUrl: safePortalUrl(image
+            ? first(image, ["url", "src", "href"])
+            : first(record, ["image_url", "imageUrl", "photo_url", "photoUrl", "avatar_url", "avatarUrl"])),
+    };
+}
+async function fetchCoachPhoto(urlValue, cookie) {
+    const url = new URL(urlValue);
+    const hostname = url.hostname.toLocaleLowerCase("en-US");
+    if (!(hostname === "loxone.com" || hostname.endsWith(".loxone.com")))
+        return null;
+    const response = await fetchWithTimeout(url.href, {
+        method: "GET",
+        headers: portalHeaders(cookie, `${PORTAL_ORIGIN}/`),
+    });
+    if (!response.ok)
+        return null;
+    const mime = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLocaleLowerCase("en-US");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(mime))
+        return null;
+    const declaredLength = Number(response.headers.get("content-length") ?? 0);
+    if (declaredLength > 2_000_000)
+        return null;
+    const data = Buffer.from(await response.arrayBuffer());
+    if (!data.length || data.length > 2_000_000)
+        return null;
+    return { mime, data };
 }
 function isoDateOnly(value) {
     return value.toISOString().slice(0, 10);
@@ -347,7 +415,7 @@ function optionalSectionReason(result) {
         return "timeout";
     return "request_failed";
 }
-function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayload, trainingsPayload, updatedAt) {
+function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayload, trainingsPayload, coach, updatedAt) {
     const partner = nestedRecord(partnerPayload, ["partner_data", "partnerData", "data"]) ?? {};
     const openOrders = openOrdersPayload
         ? findArray(openOrdersPayload, ["found_orders", "foundOrders", "orders", "items", "data"])
@@ -368,6 +436,7 @@ function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayloa
         ...(openOrdersPayload ? ["orders"] : []),
         ...(ledgerPayload ? ["ledger"] : []),
         ...(trainingsPayload ? ["trainings"] : []),
+        ...(coach ? ["coach"] : []),
     ];
     return {
         updatedAt,
@@ -391,8 +460,9 @@ function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayloa
             ? recursiveNumber(trainingsPayload, ["overall_count", "overallCount", "count", "total"]) ?? trainings.length
             : 0,
         trainings,
+        coach,
         availableSections,
-        unavailableSections: ["orders", "ledger", "trainings"].filter((section) => !availableSections.includes(section)),
+        unavailableSections: ["orders", "ledger", "trainings", "coach"].filter((section) => !availableSections.includes(section)),
         unavailableSectionReasons: {},
     };
 }
@@ -450,27 +520,45 @@ async function portalProducts(accessToken) {
     openOrdersBody.set("offset", "0");
     openOrdersBody.set("limit", "999999");
     const ledgerBody = new FormData();
+    const coachBody = new FormData();
+    coachBody.set("language", "cscz");
     const ledgerNow = new Date();
     // Keep this range aligned with the current official Invoices.vue request.
     const ledgerStart = new Date(Date.UTC(ledgerNow.getUTCFullYear(), ledgerNow.getUTCMonth() - 6, 1));
     const ledgerEnd = new Date(Date.UTC(ledgerNow.getUTCFullYear(), ledgerNow.getUTCMonth() + 1, 0));
     ledgerBody.set("startDate", isoDateOnly(ledgerStart));
     ledgerBody.set("endDate", isoDateOnly(ledgerEnd));
-    const [ordersResult, ledgerResult, trainingsResult] = await Promise.allSettled([
+    const [ordersResult, ledgerResult, trainingsResult, coachResult] = await Promise.allSettled([
         portalJson("/api/getOpenOrders", cookie, "/orders/", openOrdersBody),
         portalJson("/api/getCustomerLedgerEntries", cookie, "/invoices/", ledgerBody),
         portalJson("/api/getTrainings", cookie, "/trainings/"),
+        portalJson("/api/getPartnerCoach", cookie, "/", coachBody),
     ]);
+    const normalizedCoach = coachResult.status === "fulfilled" ? normalizeCoach(coachResult.value) : null;
+    let coachPhoto = null;
+    if (normalizedCoach?.imageUrl) {
+        try {
+            coachPhoto = await fetchCoachPhoto(normalizedCoach.imageUrl, cookie);
+        }
+        catch {
+            coachPhoto = null;
+        }
+    }
+    const coach = normalizedCoach
+        ? { ...normalizedCoach.summary, photoAvailable: Boolean(coachPhoto) }
+        : null;
     const now = new Date().toISOString();
-    const overview = normalizePortalOverview(partnerPayload, ordersResult.status === "fulfilled" ? ordersResult.value : null, ledgerResult.status === "fulfilled" ? ledgerResult.value : null, trainingsResult.status === "fulfilled" ? trainingsResult.value : null, now);
+    const overview = normalizePortalOverview(partnerPayload, ordersResult.status === "fulfilled" ? ordersResult.value : null, ledgerResult.status === "fulfilled" ? ledgerResult.value : null, trainingsResult.status === "fulfilled" ? trainingsResult.value : null, coach, now);
     overview.unavailableSectionReasons = Object.fromEntries([
         ["orders", optionalSectionReason(ordersResult)],
         ["ledger", optionalSectionReason(ledgerResult)],
         ["trainings", optionalSectionReason(trainingsResult)],
+        ["coach", optionalSectionReason(coachResult)],
     ].filter((entry) => Boolean(entry[1])));
     return {
         products,
         overview,
+        coachPhoto,
     };
 }
 function saveRefreshToken(db, token) {
@@ -530,6 +618,16 @@ export function getPortalSyncStatus(db) {
         lastError: getSetting(db, "portal_sync_error") || null,
         overview,
     };
+}
+export function getPortalCoachPhoto(db) {
+    const mime = getSetting(db, "portal_sync_coach_image_mime");
+    const encoded = getSetting(db, "portal_sync_coach_image_base64");
+    if (!mime || !encoded || !["image/jpeg", "image/png", "image/webp"].includes(mime))
+        return null;
+    const data = Buffer.from(encoded, "base64");
+    if (!data.length || data.length > 2_000_000)
+        return null;
+    return { mime, data };
 }
 export function portalSyncDue(db, now = Date.now()) {
     if (!getSetting(db, "portal_sync_refresh_token"))
@@ -601,6 +699,8 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
         setSetting(db, "portal_sync_next_attempt_at", new Date(Date.parse(now) + SYNC_INTERVAL_MS).toISOString());
         setSetting(db, "portal_sync_count", String(portalData.products.length));
         setSetting(db, "portal_sync_overview", JSON.stringify({ ...portalData.overview, updatedAt: now }));
+        setSetting(db, "portal_sync_coach_image_mime", portalData.coachPhoto?.mime ?? "");
+        setSetting(db, "portal_sync_coach_image_base64", portalData.coachPhoto?.data.toString("base64") ?? "");
         updateStatus(db, "connected");
         return getPortalSyncStatus(db);
     }
@@ -631,6 +731,8 @@ export function disconnectPortal(db) {
         "portal_sync_next_attempt_at",
         "portal_sync_last_reauth_at",
         "portal_sync_overview",
+        "portal_sync_coach_image_mime",
+        "portal_sync_coach_image_base64",
     ])
         setSetting(db, key, "");
     updateStatus(db, "not_connected");

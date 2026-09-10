@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.68
+
+- Historie školení používá aktuální pole oficiálního endpointu LOXONE Portálu, takže Menu dostane názvy, termíny, místo, účastníka a stav namísto samotného celkového počtu.
+- Synchronizace doplňuje Partner Coache z oficiálního endpointu včetně jména, role, telefonu, mobilu, e-mailu, dostupnosti a odkazů na sjednání schůzky.
+- Fotografie Coache se přijímá jen přes HTTPS z domény LOXONE, s povoleným obrazovým MIME typem a limitem 2 MB. Chráněný endpoint ji vydá pouze osobnímu admin Menu tokenu s `no-store`.
+- Evora Smart Menu 3.0.45 označuje číslo školení jako počet historických záznamů, přidává kartu Coache s fotografií a přímými kontakty a vystřeďuje rychlé docházkové ikony bez hover tooltipů.
+- Menu API vydává současné Stable, Beta a Alpha verze LOXONE Configu včetně bezpečných oficiálních download URL z `updatecheck.xml`; Menu každou verzi ukáže a nabídne její přímé stažení.
+
 ## 3.0.67
 
 - Volitelné části LOXONE Portálu nyní vracejí pouze sanitovaný stav `HTTP nnn`, `rejected`, `invalid_response`, `timeout` nebo `request_failed`.

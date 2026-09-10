@@ -764,6 +764,26 @@ function applyMigrations(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_config_launch_jobs_agent_state
       ON config_launch_jobs(agent_id,state,created_at);
+    CREATE TABLE IF NOT EXISTS config_download_jobs (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      actor_user_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('stable','beta','alpha')),
+      required_version TEXT NOT NULL,
+      config_url TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('queued','delivered','launching','succeeded','failed','expired')),
+      message TEXT NOT NULL DEFAULT '',
+      error_code TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT,
+      finished_at TEXT,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(agent_id) REFERENCES config_launcher_agents(id) ON DELETE CASCADE,
+      FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_config_download_jobs_agent_state
+      ON config_download_jobs(agent_id,state,created_at);
     CREATE TABLE IF NOT EXISTS worklog_tokens (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL,
@@ -1017,6 +1037,7 @@ function applyMigrations(db) {
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(24, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(25, new Date().toISOString());
     db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(26, new Date().toISOString());
+    db.prepare("INSERT OR REPLACE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(27, new Date().toISOString());
 }
 function ensureBuiltInHomeAssistantMonitors(db) {
     const now = new Date().toISOString();

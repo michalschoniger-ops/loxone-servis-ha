@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.12"
+$HelperVersion = "3.0.0.13"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -1375,6 +1375,61 @@ function Post-JobStatus([string]$BaseUrl, [string]$Token, [string]$JobId, [strin
   }
 }
 
+function Resolve-LoxoneConfigDownloadUri([string]$Value) {
+  $uri = $null
+  if (-not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri)) {
+    throw (New-LauncherFailure "CONFIG_DOWNLOAD_URL_INVALID" "The Config download URL is invalid.")
+  }
+  $hostname = $uri.DnsSafeHost.ToLowerInvariant()
+  if ($uri.Scheme -ne "https" -or
+      ($hostname -ne "loxone.com" -and -not $hostname.EndsWith(".loxone.com")) -or
+      $uri.UserInfo -or $uri.Fragment) {
+    throw (New-LauncherFailure "CONFIG_DOWNLOAD_URL_INVALID" "The Config download URL is not an allowed LOXONE HTTPS address.")
+  }
+  return $uri
+}
+
+function Start-ConfigDownloadJob($Job, [string]$BaseUrl, [string]$Token) {
+  $jobId = [string]$Job.id
+  $requiredVersion = [string]$Job.requiredVersion
+  $channel = [string]$Job.channel
+  if ($requiredVersion -notmatch '^\d+(?:\.\d+){3}$' -or $channel -notin @("stable", "beta", "alpha")) {
+    throw (New-LauncherFailure "CONFIG_DOWNLOAD_REQUEST_INVALID" "The Config download request is invalid.")
+  }
+  $uri = Resolve-LoxoneConfigDownloadUri ([string]$Job.configUrl)
+  $downloadsDirectory = Join-Path $env:USERPROFILE "Downloads"
+  if (-not (Test-Path -LiteralPath $downloadsDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $downloadsDirectory -Force | Out-Null
+  }
+  $fileName = "LoxoneConfig-$channel-$requiredVersion.zip"
+  $targetPath = Join-Path $downloadsDirectory $fileName
+  $pendingPath = "$targetPath.download"
+  Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+  try {
+    Set-LauncherPhase "config-download"
+    Post-JobStatus $BaseUrl $Token $jobId "launching" "Downloading Loxone Config $requiredVersion ($channel) on Windows."
+    Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $pendingPath -UseBasicParsing -TimeoutSec 300
+    $file = Get-Item -LiteralPath $pendingPath -ErrorAction Stop
+    if ($file.Length -lt 100000 -or $file.Length -gt 2147483648) {
+      throw (New-LauncherFailure "CONFIG_DOWNLOAD_SIZE_INVALID" "The downloaded Config package has an invalid size.")
+    }
+    $stream = [IO.File]::OpenRead($pendingPath)
+    try {
+      if ($stream.ReadByte() -ne 0x50 -or $stream.ReadByte() -ne 0x4b) {
+        throw (New-LauncherFailure "CONFIG_DOWNLOAD_FORMAT_INVALID" "The downloaded Config package is not a ZIP archive.")
+      }
+    } finally {
+      $stream.Dispose()
+    }
+    Move-Item -LiteralPath $pendingPath -Destination $targetPath -Force
+    Post-JobStatus $BaseUrl $Token $jobId "succeeded" "Loxone Config $requiredVersion ($channel) was downloaded to the Windows Downloads folder."
+    Start-Process explorer.exe -ArgumentList @("`"$downloadsDirectory`"")
+    Show-LauncherNotice "Evora Smart Hub" "Loxone Config $requiredVersion ($channel) was downloaded on Windows." ""
+  } finally {
+    Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Start-ConfigJob($Job, [string]$BaseUrl, [string]$Token, $Executables) {
   $jobId = [string]$Job.id
   $requiredVersion = [string]$Job.requiredVersion
@@ -1531,18 +1586,24 @@ try {
       }
       if ($null -ne $response.job) {
         try {
-          Start-ConfigJob $response.job $configuredHubUrl $agentToken $executables
+          $jobKind = if ($null -ne $response.job.PSObject.Properties["kind"]) { [string]$response.job.kind } else { "config_launch" }
+          if ($jobKind -eq "config_download") {
+            Start-ConfigDownloadJob $response.job $configuredHubUrl $agentToken
+          } else {
+            Start-ConfigJob $response.job $configuredHubUrl $agentToken $executables
+          }
         } catch {
-          $failureCode = if ($_.Exception.Data.Contains("EvoraCode")) { [string]$_.Exception.Data["EvoraCode"] } else { "UI_AUTOMATION_FAILED" }
-          $safeRemainder = if ($failureCode -eq "CONFIG_NOT_RUNNING") { "No Config window was changed." } else { "Config remains open for safe manual connection." }
+          $isDownloadJob = $null -ne $response.job.PSObject.Properties["kind"] -and [string]$response.job.kind -eq "config_download"
+          $failureCode = if ($_.Exception.Data.Contains("EvoraCode")) { [string]$_.Exception.Data["EvoraCode"] } elseif ($isDownloadJob) { "CONFIG_DOWNLOAD_FAILED" } else { "UI_AUTOMATION_FAILED" }
+          $safeRemainder = if ($isDownloadJob) { "No existing Config installation was changed." } elseif ($failureCode -eq "CONFIG_NOT_RUNNING") { "No Config window was changed." } else { "Config remains open for safe manual connection." }
           $failureMessage = "$(Get-SafeFailureMessage $failureCode) Failed step: $script:LauncherPhase. $safeRemainder"
           Write-SafeLog "Config launch job failed safely ($failureCode; $(Get-SafeExceptionFingerprint $_))."
           try { Post-JobStatus $configuredHubUrl $agentToken ([string]$response.job.id) "failed" $failureMessage $failureCode } catch { }
           Show-LauncherNotice "Evora Smart Hub" "$failureMessage Details are available in the Hub."
         } finally {
           if ($null -ne $response.job) {
-            $response.job.password = $null
-            $response.job.username = $null
+            if ($null -ne $response.job.PSObject.Properties["password"]) { $response.job.password = $null }
+            if ($null -ne $response.job.PSObject.Properties["username"]) { $response.job.username = $null }
           }
         }
       }

@@ -6,7 +6,7 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const JOB_TTL_MS = 5 * 60_000;
 const AGENT_ONLINE_MS = 90_000;
 export const MINIMUM_CONFIG_LAUNCHER_VERSION = "2.0.0.2";
-export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.12";
+export const CURRENT_CONFIG_LAUNCHER_VERSION = "3.0.0.13";
 function parseVersions(value) {
     try {
         const parsed = JSON.parse(value);
@@ -109,10 +109,27 @@ function publicJob(row) {
         expiresAt: row.expires_at,
     };
 }
+function publicDownloadJob(row) {
+    return {
+        id: row.id,
+        agentId: row.agent_id,
+        channel: row.channel,
+        requiredVersion: row.required_version,
+        configUrl: row.config_url,
+        state: row.state,
+        message: row.message,
+        errorCode: row.error_code,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        expiresAt: row.expires_at,
+    };
+}
 export function expireConfigLaunchJobs(db, now = new Date()) {
     const timestamp = now.toISOString();
     db.prepare(`UPDATE config_launch_jobs SET state='expired',message='Požadavek vypršel.',error_code='JOB_EXPIRED',updated_at=?,finished_at=?
      WHERE state IN ('queued','delivered','launching','connecting') AND expires_at<=?`).run(timestamp, timestamp, timestamp);
+    db.prepare(`UPDATE config_download_jobs SET state='expired',message='Požadavek vypršel.',error_code='JOB_EXPIRED',updated_at=?,finished_at=?
+     WHERE state IN ('queued','delivered','launching') AND expires_at<=?`).run(timestamp, timestamp, timestamp);
     db.prepare("DELETE FROM config_launcher_pairings WHERE expires_at<=? OR used_at IS NOT NULL").run(timestamp);
 }
 export function createLauncherPairing(db, actorUserId, name) {
@@ -202,6 +219,11 @@ export function heartbeatLauncherAgent(db, agent, helperVersion, installedVersio
            SELECT id FROM config_launcher_agents
            WHERE owner_user_id=? AND name=? AND active=1 AND id<>? AND created_at<?
          ) AND state IN ('queued','delivered','launching','connecting')`).run(now, now, agent.owner_user_id, agent.name, agent.id, agent.created_at);
+            db.prepare(`UPDATE config_download_jobs SET state='failed',message='Počítač byl nahrazen novým spárováním.',error_code='AGENT_REPLACED',updated_at=?,finished_at=?
+         WHERE agent_id IN (
+           SELECT id FROM config_launcher_agents
+           WHERE owner_user_id=? AND name=? AND active=1 AND id<>? AND created_at<?
+         ) AND state IN ('queued','delivered','launching')`).run(now, now, agent.owner_user_id, agent.name, agent.id, agent.created_at);
             db.prepare(`UPDATE config_launcher_agents SET active=0,last_status='replaced',last_error=NULL,updated_at=?
          WHERE owner_user_id=? AND name=? AND active=1 AND id<>? AND created_at<?`).run(now, agent.owner_user_id, agent.name, agent.id, agent.created_at);
         }
@@ -223,6 +245,8 @@ export function revokeLauncherAgent(db, ownerUserId, agentId) {
         }
         db.prepare(`UPDATE config_launch_jobs SET state='failed',message='Windows Launcher byl odebrán.',error_code='AGENT_REVOKED',updated_at=?,finished_at=?
        WHERE agent_id=? AND actor_user_id=? AND state IN ('queued','delivered','launching','connecting')`).run(now, now, agentId, ownerUserId);
+        db.prepare(`UPDATE config_download_jobs SET state='failed',message='Windows Launcher byl odebrán.',error_code='AGENT_REVOKED',updated_at=?,finished_at=?
+       WHERE agent_id=? AND actor_user_id=? AND state IN ('queued','delivered','launching')`).run(now, now, agentId, ownerUserId);
         db.prepare(`UPDATE config_launcher_agents SET active=0,last_status='revoked',last_error=NULL,updated_at=?
        WHERE id=? AND owner_user_id=? AND active=1`).run(now, agentId, ownerUserId);
         db.exec("COMMIT");
@@ -282,4 +306,49 @@ export function updateConfigLaunchJob(db, agentId, jobId, state, message, errorC
     db.prepare("UPDATE config_launch_jobs SET state=?,message=?,error_code=?,updated_at=?,finished_at=? WHERE id=? AND agent_id=?").run(state, message.slice(0, 500), errorCode?.slice(0, 80) ?? null, now, TERMINAL_STATES.has(state) ? now : null, jobId, agentId);
     db.prepare("UPDATE config_launcher_agents SET last_status=?,last_error=?,last_seen_at=?,updated_at=? WHERE id=?").run(state, state === "failed" || state === "missing_config" ? message.slice(0, 500) : null, now, now, agentId);
     return getConfigLaunchJob(db, jobId);
+}
+export function createConfigDownloadJob(db, input) {
+    expireConfigLaunchJobs(db);
+    const now = new Date();
+    const id = randomUUID();
+    const expiresAt = new Date(now.getTime() + JOB_TTL_MS).toISOString();
+    db.prepare(`INSERT INTO config_download_jobs(
+       id,agent_id,actor_user_id,channel,required_version,config_url,state,message,created_at,updated_at,expires_at
+     ) VALUES(?,?,?,?,?,?,'queued','Čeká na Windows Launcher.',?,?,?)`).run(id, input.agentId, input.actorUserId, input.channel, input.requiredVersion, input.configUrl, now.toISOString(), now.toISOString(), expiresAt);
+    return getConfigDownloadJob(db, id);
+}
+export function getConfigDownloadJob(db, id) {
+    expireConfigLaunchJobs(db);
+    const row = db.prepare("SELECT * FROM config_download_jobs WHERE id=?").get(id);
+    return row ? publicDownloadJob(row) : null;
+}
+export function getConfigDownloadJobForUser(db, id, actorUserId) {
+    expireConfigLaunchJobs(db);
+    const row = db.prepare("SELECT * FROM config_download_jobs WHERE id=? AND actor_user_id=?").get(id, actorUserId);
+    return row ? publicDownloadJob(row) : null;
+}
+export function takeConfigDownloadJob(db, agentId) {
+    expireConfigLaunchJobs(db);
+    const row = db.prepare("SELECT * FROM config_download_jobs WHERE agent_id=? AND state='queued' AND expires_at>? ORDER BY created_at LIMIT 1").get(agentId, new Date().toISOString());
+    if (!row)
+        return null;
+    const now = new Date().toISOString();
+    const result = db.prepare("UPDATE config_download_jobs SET state='delivered',message='Předáno Windows Launcheru.',delivered_at=?,updated_at=? WHERE id=? AND state='queued'").run(now, now, row.id);
+    if (result.changes !== 1)
+        return null;
+    return { ...row, state: "delivered", updated_at: now };
+}
+const DOWNLOAD_ALLOWED_TRANSITIONS = {
+    delivered: new Set(["launching", "failed"]),
+    launching: new Set(["launching", "succeeded", "failed"]),
+};
+export function updateConfigDownloadJob(db, agentId, jobId, state, message, errorCode) {
+    expireConfigLaunchJobs(db);
+    const current = db.prepare("SELECT * FROM config_download_jobs WHERE id=? AND agent_id=?").get(jobId, agentId);
+    if (!current || !DOWNLOAD_ALLOWED_TRANSITIONS[current.state]?.has(state))
+        return null;
+    const now = new Date().toISOString();
+    db.prepare("UPDATE config_download_jobs SET state=?,message=?,error_code=?,updated_at=?,finished_at=? WHERE id=? AND agent_id=?").run(state, message.slice(0, 500), errorCode?.slice(0, 80) ?? null, now, state === "succeeded" || state === "failed" ? now : null, jobId, agentId);
+    db.prepare("UPDATE config_launcher_agents SET last_status=?,last_error=?,last_seen_at=?,updated_at=? WHERE id=?").run(state, state === "failed" ? message.slice(0, 500) : null, now, now, agentId);
+    return getConfigDownloadJob(db, jobId);
 }

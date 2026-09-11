@@ -219,6 +219,9 @@ try {
   Copy-Item -LiteralPath $restartSource -Destination $installedRestartScript -Force
   Copy-Item -LiteralPath $restartWrapperSource -Destination $installedRestartWrapper -Force
   Copy-Item -LiteralPath $wrapperSource -Destination $installedWrapper -Force
+  foreach ($installedPath in @($installedScript, $installedRestartScript, $installedRestartWrapper, $installedWrapper)) {
+    [IO.File]::SetAttributes($installedPath, [IO.FileAttributes]::Normal)
+  }
   Register-LauncherWatchdog $installedWrapper
   Save-StartupShortcut $installedWrapper
   Start-InstalledLauncher $installedWrapper

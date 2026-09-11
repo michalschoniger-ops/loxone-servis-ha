@@ -1,8 +1,8 @@
 # Changelog
 
-## 3.0.71
+## 3.0.72
 
-- Windows Launcher 3.0.0.15 přesouvá vlastní přepis do odděleného procesu, který počká na ukončení běžícího Launcheru; odstraňuje tak blokaci souboru, kvůli které se 3.0.0.13 nedokázal automaticky aktualizovat.
+- Windows Launcher 3.0.0.16 přesouvá vlastní přepis do odděleného procesu, který počká na ukončení běžícího Launcheru, a před zápisem bezpečně odstraní zděděný atribut jen pro čtení ze skriptu i pomocných obálek. Odstraňuje tak obě blokace, kvůli kterým se 3.0.0.13 nedokázal automaticky aktualizovat.
 - Stable, Beta a Alpha balíček se stahuje přímo přes HTTPS do složky Stažené soubory ve Windows; Edge se nespouští. Launcher před zveřejněním souboru dál ověří doménu LOXONE, velikost a ZIP signaturu.
 - Synchronizace Partner Portálu po změně datového schématu sama zneplatní starý přehled a načte konkrétní řádky školení, Partner Coache s fotografií a aktuální fakturační pole. Menu 3.0.48 vkládá fotografii, jméno, roli a přímé kontakty Coache přímo do panelu LOXONE Portálu místo další boční podnabídky. Faktury se zobrazí jen tehdy, když je Portál účtu skutečně zpřístupní.
 - Zachovává Evora Smart Menu 3.0.48, ruční Miniservery, Partner Coache, databázové schéma 27 a veškerá stávající data i šifrované přístupy.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.72.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.72 a Windows Launcher 3.0.0.16, který bezpečně odstraní zděděný atribut jen pro čtení a dokončí samoaktualizaci v odděleném procesu.
+- Stable, Beta a Alpha Config se stahují přímo z oficiálního HTTPS zdroje LOXONE do Windows bez Edge; Menu 3.0.48 má Partner Coache s fotografií a kontakty přímo v panelu LOXONE Portálu.
+- Zachovává všech 18 řádků historie školení, databázové schéma 27, stávající `/data`, šifrované přístupy a vratný rollback na předchozí zdroj.
+
 ## 3.0.71.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.71 a Windows Launcher 3.0.0.15 s odděleným procesem pro bezpečný přepis běžícího Launcheru.

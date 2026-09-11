@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.15"
+$HelperVersion = "3.0.0.16"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -56,6 +56,11 @@ function Install-HiddenLauncherEntrypoints {
   try {
     $expectedScriptPath = [IO.Path]::GetFullPath((Join-Path $AppDirectory "EvoraConfigLauncher.ps1"))
     if ([IO.Path]::GetFullPath($PSCommandPath) -ine $expectedScriptPath) { return }
+    foreach ($entrypointPath in @($HiddenWrapperPath, $RestartWrapperPath, $UpdateHelperPath)) {
+      if (Test-Path -LiteralPath $entrypointPath -PathType Leaf) {
+        [IO.File]::SetAttributes($entrypointPath, [IO.FileAttributes]::Normal)
+      }
+    }
     $wrapper = @'
 Option Explicit
 
@@ -112,6 +117,7 @@ try {
   if (-not (Test-Path -LiteralPath $pendingPath -PathType Leaf)) { throw "pending update missing" }
   $versionLine = '$HelperVersion = "' + $ExpectedVersion + '"'
   if (-not (Select-String -LiteralPath $pendingPath -SimpleMatch $versionLine -Quiet)) { throw "version marker missing" }
+  [IO.File]::SetAttributes($launcherPath, [IO.FileAttributes]::Normal)
   Copy-Item -LiteralPath $launcherPath -Destination $backupPath -Force
   Copy-Item -LiteralPath $pendingPath -Destination $launcherPath -Force
   Remove-Item -LiteralPath $pendingPath -Force

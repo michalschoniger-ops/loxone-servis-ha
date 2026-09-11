@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.69.2
+
+- Aktualizuje plné macOS Menu na 3.0.47 a opravuje předání oprávnění Klíčenky mezi po sobě jdoucími ad-hoc podepsanými verzemi bez výpisu nebo souborové kopie přístupů.
+- Zachovává ruční Miniservery, Partner Coache, Hub 3.0.69, databázové schéma 27, stávající `/data`, šifrované přístupy a původní vratný rollback.
+
 ## 3.0.69.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.69 a plné macOS Menu 3.0.46 s ručním přidáním Miniserveru do Hubu nebo pouze do macOS Klíčenky.

@@ -4,7 +4,8 @@
 
 - Osobní macOS Menu může ručně přidat Miniserver přímo do Hubu; endpoint přijímá jen validované SN, popis a úplnou náhradu přístupu, heslo ukládá šifrovaně a nikdy ho nevrací v odpovědi ani auditu.
 - Po přidání Hub automaticky zařadí kontrolu připojení a načtení `LoxAPP3`. `msInfo.miniserverType` mapuje podle oficiální dokumentace LOXONE a teprve ověřený typ určí fotografii zařízení.
-- Evora Smart Menu 3.0.46 nabízí alternativní uložení pouze do macOS Klíčenky, pozdější synchronizaci do Hubu, lokální aktualizaci přístupu, opakované ověření typu a bezpečné odstranění jen z daného Macu.
+- Evora Smart Menu 3.0.47 nabízí alternativní uložení pouze do macOS Klíčenky, pozdější synchronizaci do Hubu, lokální aktualizaci přístupu, opakované ověření typu a bezpečné odstranění jen z daného Macu.
+- Instalátor Menu bezpečně předává oprávnění Klíčenky mezi po sobě jdoucími ad-hoc podepsanými binárkami přes krátkodobou legacy položku a anonymní pipe; po ověřeném převzetí ji ihned odstraní.
 - Karta Partner Coache zůstává s velkou kulatou fotografií vycentrovanou nahoře a kontakty pod ní.
 
 ## 3.0.68

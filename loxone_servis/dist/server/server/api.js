@@ -12,11 +12,12 @@ import { replaceProjectFolderMembers } from "./folder-members.js";
 import { projectFolderDescendantIds, wouldCreateProjectFolderCycle } from "../shared/folder-hierarchy.js";
 import { nextDistinctFolderColor } from "../shared/folder-colors.js";
 import { firmwareUpdateWindowDecision, formatFirmwareUpdateSchedule } from "../shared/firmware-update-policy.js";
+import { supportHoursToday } from "../shared/support-hours.js";
 import { resolveFirmwareUpdatePolicy } from "./firmware-update-policy.js";
 import { clearHomeAssistantSecrets, callHomeAssistantService, getHomeAssistantCredentials, getHomeAssistantInstance, installHomeAssistantUpdate, listHomeAssistantInstances, normalizeHomeAssistantUrl, saveHomeAssistantSecrets, } from "./home-assistant.js";
 import { readOneWireHistory } from "./onewire-history.js";
 import { connectPortal, disconnectPortal, getPortalCoachPhoto, getPortalSyncStatus } from "./portal-sync.js";
-import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, replyPortalTicket, } from "./portal-tickets.js";
+import { clearPortalTicketCache, clearPortalTicketSession, createPortalTicket, downloadPortalTicketAttachment, getPortalTicket, listPortalTickets, listPortalTicketsForMenu, replyPortalTicket, } from "./portal-tickets.js";
 import { authenticateLauncherAgent, configLauncherUpdateManifest, configLauncherVersionStatus, createConfigDownloadJob, createConfigLaunchJob, createLauncherPairing, getConfigDownloadJob, getConfigDownloadJobForUser, getConfigLaunchJobForUser, heartbeatLauncherAgent, pairLauncherAgent, preferredLauncherAgent, provisionMenuLauncherAgent, revokeLauncherAgent, takeConfigDownloadJob, takeConfigLaunchJob, updateConfigDownloadJob, updateConfigLaunchJob, } from "./config-launcher.js";
 import { activeWorkLogTokenCount, authenticateWorkLogToken, createWorkLogPairing, createWorkLogToken, listWorkLogTokens, pairWorkLogMenu, revokeWorkLogToken, workLogLoxoneAppUrl, } from "./worklog-integration.js";
 import { officialConfigDownloadUrl } from "./release.js";
@@ -772,7 +773,11 @@ export async function registerApi(app, db, jobs) {
             return reply.code(401).send({ error: "WorkLog token není platný.", code: "WORKLOG_AUTH_INVALID" });
         const refresh = request.query?.refresh === "1";
         reply.header("Cache-Control", "no-store, max-age=0").header("Pragma", "no-cache");
-        return { user: { email: identity.email }, items: await listPortalTickets(db, { refresh }) };
+        const result = await listPortalTicketsForMenu(db, { refresh });
+        if (result.dataState === "stale") {
+            request.log.warn({ code: result.refreshErrorCode }, "Portal ticket refresh failed; serving the last verified cache");
+        }
+        return { user: { email: identity.email }, ...result };
     });
     app.get("/api/integrations/worklog/v1/portal-tickets/:id", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
         const identity = authenticateWorkLogToken(db, request.headers.authorization);
@@ -952,6 +957,7 @@ export async function registerApi(app, db, jobs) {
                 nextSyncAt: portalSync.nextSyncAt,
                 productCount: portalSync.productCount,
                 lastError: portalSync.lastError,
+                supportHours: supportHoursToday(),
                 overview: identity.role === "admin" ? portalSync.overview : null,
             },
             releases: listReleases(db),

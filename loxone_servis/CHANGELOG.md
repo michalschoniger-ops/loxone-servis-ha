@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.75
+
+- Evora Smart Menu 3.0.51 rozšiřuje pravé menu o celý Intranet, hlavní sekce nabídky a konkrétní osobní poznámky; připnutá poznámka ukáže plný obsah v bočním podmenu namísto systémového tooltipu.
+- Provozní dobu LOXONE podpory vyhodnocuje Hub jednotně v časové zóně Europe/Prague a předává Menu aktuální stav i dnešní čas. Prstenec Partner Coache proto v provozní době svítí zeleně i tehdy, když Portál u kontaktu neposlal vlastní text dostupnosti.
+- Vynucená minutová aktualizace ticketů při timeoutu externího Loxone Portálu vrátí poslední ověřenou cache s označením stáří namísto chyby 500; další pokusy a badge nových odpovědí pokračují.
+
 ## 3.0.74
 
 - Evora Smart Menu 3.0.50 přidává pravé menu s vyhledáváním a trvalým připínáním konkrétního Miniserveru pro Loxone Config, Loxone App nebo správu přístupů; připnout lze i vybrané funkce Menu.

@@ -439,6 +439,49 @@ export async function listPortalTickets(db, options = {}) {
     }
     return refreshPortalTicketCache(db);
 }
+export function cachedPortalTicketSyncAt(db) {
+    ensurePortalTicketCache(db);
+    return getSetting(db, TICKET_CACHE_SYNC_SETTING);
+}
+function portalTicketRefreshErrorCode(error) {
+    if (error instanceof DOMException && error.name === "TimeoutError")
+        return "PORTAL_TIMEOUT";
+    if (error instanceof Error && error.name === "TimeoutError")
+        return "PORTAL_TIMEOUT";
+    if (typeof error === "object" && error !== null && "code" in error) {
+        const code = String(error.code ?? "").trim();
+        if (code && code !== "23")
+            return code;
+    }
+    return "PORTAL_REFRESH_FAILED";
+}
+/**
+ * The macOS menu must stay useful when the external Partner Portal has a short outage.
+ * A forced refresh therefore falls back only to a previously verified encrypted cache;
+ * the stale state is explicit so clients can keep retrying without presenting it as live.
+ */
+export async function listPortalTicketsForMenu(db, options = {}) {
+    try {
+        const items = await listPortalTickets(db, options);
+        return {
+            items,
+            dataState: options.refresh ? "current" : "cache",
+            lastSyncAt: cachedPortalTicketSyncAt(db),
+            refreshErrorCode: null,
+        };
+    }
+    catch (error) {
+        const lastSyncAt = cachedPortalTicketSyncAt(db);
+        if (!lastSyncAt)
+            throw error;
+        return {
+            items: await listPortalTickets(db),
+            dataState: "stale",
+            lastSyncAt,
+            refreshErrorCode: portalTicketRefreshErrorCode(error),
+        };
+    }
+}
 async function rawPortalTicket(db, ticketId) {
     const payload = await postPortalJson(db, "getTicketDetail", { ticket_id: ticketId }, { referer: `${PORTAL_ORIGIN}/ticket/${encodeURIComponent(ticketId)}` });
     const item = portalObject(payload);

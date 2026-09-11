@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.75.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.75 a Evora Smart Menu 3.0.51 s úplnějším vyhledáváním a připínáním funkcí Intranetu, Miniserverů a konkrétních osobních poznámek.
+- Sjednocuje provozní dobu Partner Coache podle Hubu v časové zóně Europe/Prague a při timeoutu Loxone Portálu zachová poslední ověřenou cache ticketů.
+- Zachovává Launcher 3.0.0.16, všech 18 řádků školení, databázové schéma 27, stávající `/data`, šifrované přístupy a vratný rollback na předchozí zdroj.
+
 ## 3.0.74.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.74 a Evora Smart Menu 3.0.50 s vyhledáváním a připínáním akcí konkrétního Miniserveru po pravém kliknutí.

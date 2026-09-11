@@ -1,7 +1,7 @@
 name: Evora Smart Hub Deployment Helper
-version: "3.0.74.1"
+version: "3.0.75.1"
 slug: loxone_fleet_deployer
-description: Jednorázově a vratně nasadí Evora Smart Hub 3.0.74, Menu 3.0.50 a Launcher 3.0.0.16.
+description: Jednorázově a vratně nasadí Evora Smart Hub 3.0.75, Menu 3.0.51 a Launcher 3.0.0.16.
 url: https://github.com/michalschoniger-ops/loxone-servis-ha
 arch:
   - aarch64

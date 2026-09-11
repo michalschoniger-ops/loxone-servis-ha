@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.75.2
+
+- Opravné vydání aktualizuje plné Evora Smart Menu na 3.0.52 a otevírá levou i pravou stavovou nabídku s běžným odstupem pod horní lištou macOS.
+- Zachovává Hub 3.0.75, jednotnou provozní dobu podpory, odolnou cache ticketů, kompletní rychlé volby, databázi, šifrované přístupy a původní vratný rollback.
+
 ## 3.0.75.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.75 a Evora Smart Menu 3.0.51 s úplnějším vyhledáváním a připínáním funkcí Intranetu, Miniserverů a konkrétních osobních poznámek.

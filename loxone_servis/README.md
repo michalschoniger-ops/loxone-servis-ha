@@ -4,6 +4,8 @@ Bezpečný servisní a monitorovací hub EVORA Smart pro Loxone Miniservery a Ho
 
 Po instalaci aplikace otevřete její webové rozhraní ze sidebaru Home Assistantu. Citlivá data jsou uložena pouze v trvalém adresáři `/data` dané instalace a nejsou součástí obrazu ani GitHub repozitáře.
 
+Vydání 3.0.70 opravuje distribuci Windows Launcheru 3.0.0.14. Stahování Stable, Beta a Alpha Configu probíhá přímo přes HTTPS do složky Stažené soubory ve Windows bez Edge; Launcher ověří doménu LOXONE, velikost a ZIP signaturu.
+
 Vydání 3.0.69 přidává auditované ruční založení Miniserveru z osobního macOS Menu. Heslo Hub ukládá pouze šifrovaně; po zápisu zařadí kontrolu dostupnosti a ověří model přes oficiální `msInfo.miniserverType` v `LoxAPP3`, takže fotografii nepřiřazuje odhadem ze sériového čísla. Zachovává také aktuální historii školení a Partner Coache včetně vycentrované fotografie, kontaktů, dostupnosti a odkazů na schůzku.
 
 Vydání 3.0.67 přidává sanitovaný důvod nedostupnosti každé volitelné části LOXONE Portálu bez obsahu odpovědi, cookie nebo tokenu. Vydání 3.0.66 přijímá úspěšná účetní data aktuální stránky Moje účty také tehdy, když odpověď neobsahuje obecný příznak `valid`; výslovné `valid: false` zůstává chybou.

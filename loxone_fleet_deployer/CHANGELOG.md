@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.70.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.70 a vynutí opravený Windows Launcher 3.0.0.14 pro přímé stahování Configu bez Edge.
+- Obnovuje Partner Portál podle nového schématu: konkrétní školení, Partner Coach s fotografií a aktuální pole faktur; části odmítnuté oprávněním účtu zůstanou skryté.
+- Zachovává Menu 3.0.47, databázové schéma 27, stávající `/data`, šifrované přístupy a vratný rollback na předchozí zdroj.
+
 ## 3.0.69.2
 
 - Aktualizuje plné macOS Menu na 3.0.47 a opravuje předání oprávnění Klíčenky mezi po sobě jdoucími ad-hoc podepsanými verzemi bez výpisu nebo souborové kopie přístupů.

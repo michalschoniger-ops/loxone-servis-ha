@@ -5,6 +5,7 @@ const TOKEN_URL = "https://sso.loxone.com/realms/loxone/protocol/openid-connect/
 const PORTAL_ORIGIN = "https://portal.loxone.com";
 const REFRESH_AAD = "portal-sync:refresh-token";
 const PASSWORD_AAD = "portal-sync:password";
+const OVERVIEW_SCHEMA_VERSION = "2";
 const SYNC_INTERVAL_MS = 24 * 60 * 60_000;
 const ERROR_BACKOFF_MS = 30 * 60_000;
 const PORTAL_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.6 Safari/605.1.15";
@@ -180,6 +181,20 @@ function recursiveNumber(value, keys) {
     }
     return null;
 }
+function recursiveText(value, keys) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const record = value;
+    const direct = first(record, keys);
+    if (direct)
+        return direct;
+    for (const nested of Object.values(record)) {
+        const found = recursiveText(nested, keys);
+        if (found)
+            return found;
+    }
+    return null;
+}
 function portalBoolean(record, keys) {
     for (const key of keys) {
         if (!(key in record))
@@ -276,24 +291,25 @@ function normalizeOrder(value) {
         date: first(record, ["order_date", "orderDate", "date", "created_at", "createdAt"]) || null,
         reference: first(record, ["reference", "customer_reference", "customerReference", "description"]),
         status: first(record, ["status", "state", "order_status", "orderStatus"]),
-        amount: portalNumber(record, ["order_amount_excl_vat", "orderAmountExclVat", "amount", "total", "net_amount"]),
+        amount: portalNumber(record, ["order_amount_incl_vat", "orderAmountInclVat", "order_amount_excl_vat", "orderAmountExclVat", "amount", "total", "net_amount"]),
     };
 }
 function normalizeLedgerEntry(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return null;
     const record = value;
-    const documentNumber = first(record, ["document_number", "documentNumber", "number", "invoice_number", "invoiceNumber", "id"]);
+    const documentNumber = first(record, ["document_no", "documentNo", "document_number", "documentNumber", "number", "invoice_number", "invoiceNumber", "id"]);
     if (!documentNumber)
         return null;
     return {
         documentNumber,
-        date: first(record, ["date", "document_date", "documentDate", "invoice_date", "invoiceDate"]) || null,
+        date: first(record, ["posting_date", "postingDate", "date", "document_date", "documentDate", "invoice_date", "invoiceDate"]) || null,
         dueDate: first(record, ["due_date", "dueDate", "due", "payment_due_date"]) || null,
         description: first(record, ["description", "text", "reference", "document_type"]),
         amount: portalNumber(record, ["amount", "total_amount", "totalAmount", "value"]),
         openAmount: portalNumber(record, ["open_amount", "openAmount", "amount_open", "outstanding_amount"]),
-        status: first(record, ["state", "status", "payment_status", "paymentStatus"]),
+        status: first(record, ["state", "status", "payment_status", "paymentStatus"])
+            || ((portalNumber(record, ["open_amount", "openAmount"]) ?? 0) > 0 ? "open" : "paid"),
     };
 }
 function normalizeTraining(value) {
@@ -443,14 +459,15 @@ function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayloa
         partnerStatus: first(partner, ["partner_status", "partnerStatus", "status"]) || null,
         nextCertificationDate: first(partner, ["next_certification_date", "nextCertificationDate", "certification_valid_until", "certificationValidUntil"]) || null,
         annualTrainingDone: portalBoolean(partner, ["annual_training_done", "annualTrainingDone"]),
-        currency: first(partner, ["currency", "currency_code", "currencyCode"]) || null,
+        currency: first(partner, ["currency", "currency_code", "currencyCode"])
+            || (ledgerPayload ? recursiveText(ledgerPayload, ["customer_currency", "customerCurrency", "currency"]) : null),
         creditLimit,
         usedCredit,
         availableCredit: creditLimit !== null && usedCredit !== null ? creditLimit - usedCredit : null,
         turnover12Months: portalNumber(partner, ["12_month_turnover", "twelve_month_turnover", "turnover12Months"]),
-        openAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["total_amount_open", "totalAmountOpen", "open_amount_total", "openAmount"]) : null,
-        dueAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["total_amount_due", "totalAmountDue", "due_amount_total", "dueAmount"]) : null,
-        accountBalance: ledgerPayload ? recursiveNumber(ledgerPayload, ["saldo", "balance", "account_balance", "accountBalance"]) : null,
+        openAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["overall_open_amount", "overallOpenAmount", "total_amount_open", "totalAmountOpen", "open_amount_total", "openAmount"]) : null,
+        dueAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["overall_due_amount", "overallDueAmount", "total_amount_due", "totalAmountDue", "due_amount_total", "dueAmount"]) : null,
+        accountBalance: ledgerPayload ? recursiveNumber(ledgerPayload, ["saldo", "balance", "account_balance", "accountBalance", "overall_open_amount", "overallOpenAmount"]) : null,
         openOrderCount: openOrdersPayload
             ? recursiveNumber(openOrdersPayload, ["overall_count", "overallCount", "count", "total"]) ?? openOrders.length
             : 0,
@@ -632,6 +649,8 @@ export function getPortalCoachPhoto(db) {
 export function portalSyncDue(db, now = Date.now()) {
     if (!getSetting(db, "portal_sync_refresh_token"))
         return false;
+    if (getSetting(db, "portal_sync_overview_schema") !== OVERVIEW_SCHEMA_VERSION)
+        return true;
     const nextAttempt = getSetting(db, "portal_sync_next_attempt_at");
     if (nextAttempt && Number.isFinite(Date.parse(nextAttempt)))
         return now >= Date.parse(nextAttempt);
@@ -699,6 +718,7 @@ export async function syncPortal(db, suppliedAccessToken, suppliedRefreshToken) 
         setSetting(db, "portal_sync_next_attempt_at", new Date(Date.parse(now) + SYNC_INTERVAL_MS).toISOString());
         setSetting(db, "portal_sync_count", String(portalData.products.length));
         setSetting(db, "portal_sync_overview", JSON.stringify({ ...portalData.overview, updatedAt: now }));
+        setSetting(db, "portal_sync_overview_schema", OVERVIEW_SCHEMA_VERSION);
         setSetting(db, "portal_sync_coach_image_mime", portalData.coachPhoto?.mime ?? "");
         setSetting(db, "portal_sync_coach_image_base64", portalData.coachPhoto?.data.toString("base64") ?? "");
         updateStatus(db, "connected");
@@ -731,6 +751,7 @@ export function disconnectPortal(db) {
         "portal_sync_next_attempt_at",
         "portal_sync_last_reauth_at",
         "portal_sync_overview",
+        "portal_sync_overview_schema",
         "portal_sync_coach_image_mime",
         "portal_sync_coach_image_base64",
     ])

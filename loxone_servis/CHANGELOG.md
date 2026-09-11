@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.70
+
+- Windows Launcher 3.0.0.14 opravuje distribuční identitu funkce stahování Configu: starší skript označený jako 3.0.0.13 se nyní povinně aktualizuje a nemůže úlohu stažení omylem zpracovat jako připojení Miniserveru.
+- Stable, Beta a Alpha balíček se stahuje přímo přes HTTPS do složky Stažené soubory ve Windows; Edge se nespouští. Launcher před zveřejněním souboru dál ověří doménu LOXONE, velikost a ZIP signaturu.
+- Synchronizace Partner Portálu po změně datového schématu sama zneplatní starý přehled a načte konkrétní řádky školení, kartu Partner Coache s fotografií a aktuální fakturační pole. Faktury se zobrazí jen tehdy, když je Portál účtu skutečně zpřístupní.
+- Zachovává Evora Smart Menu 3.0.47, ruční Miniservery, Partner Coache, databázové schéma 27 a veškerá stávající data i šifrované přístupy.
+
 ## 3.0.69
 
 - Osobní macOS Menu může ručně přidat Miniserver přímo do Hubu; endpoint přijímá jen validované SN, popis a úplnou náhradu přístupu, heslo ukládá šifrovaně a nikdy ho nevrací v odpovědi ani auditu.

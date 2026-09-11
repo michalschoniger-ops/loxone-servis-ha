@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.73.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.73 a Evora Smart Menu 3.0.49 s kompaktním profilem Partner Coache úplně nahoře v panelu LOXONE Portálu.
+- Fotografie je vlevo, aktivní kontakty vpravo a zelený nebo oranžový prstenec odpovídá provozní době v časové zóně Europe/Prague.
+- Zachovává Launcher 3.0.0.16, všech 18 řádků školení, databázové schéma 27, stávající `/data`, šifrované přístupy a vratný rollback na předchozí zdroj.
+
 ## 3.0.72.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.72 a Windows Launcher 3.0.0.16, který bezpečně odstraní zděděný atribut jen pro čtení a dokončí samoaktualizaci v odděleném procesu.

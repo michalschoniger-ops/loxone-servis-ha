@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.73
+
+- Evora Smart Menu 3.0.49 přesouvá kompaktní profil Partner Coache úplně nahoru v panelu LOXONE Portálu, před stav, produkty, certifikaci i finanční souhrn.
+- Fotografie je vlevo a napravo jsou jméno, role, telefon, e-mail a dostupnost; telefon a e-mail zůstávají přímo aktivní bez duplicitních řádků pod kartou. Prstenec fotografie je podle provozní doby v časové zóně Europe/Prague zelený, nebo mimo ni oranžový.
+- Zachovává Launcher 3.0.0.16, všech 18 řádků školení, databázové schéma 27 a stávající data i šifrované přístupy.
+
 ## 3.0.72
 
 - Windows Launcher 3.0.0.16 přesouvá vlastní přepis do odděleného procesu, který počká na ukončení běžícího Launcheru, a před zápisem bezpečně odstraní zděděný atribut jen pro čtení ze skriptu i pomocných obálek. Odstraňuje tak obě blokace, kvůli kterým se 3.0.0.13 nedokázal automaticky aktualizovat.

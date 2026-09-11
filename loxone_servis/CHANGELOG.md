@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.77
+
+- Evora Smart Menu 3.0.53 ukončí čekání na Windows Launcher nejpozději po 180 sekundách včetně síťových prodlev. Pozdní odpověď po timeoutu už nemůže přepsat výsledek.
+- Diagnostika podepsaného Menu vypisuje stav provozní doby podpory a stav cache ticketů bez přihlašovacích údajů. Rozliší čerstvá data od poslední ověřené cache.
+
 ## 3.0.76
 
 - Evora Smart Menu 3.0.52 otevírá levou i pravou stavovou nabídku s běžným odstupem pod horní lištou stejně jako ostatní macOS aplikace.

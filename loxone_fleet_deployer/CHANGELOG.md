@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.74.1
+
+- Vratně nasazuje Evora Smart Hub 3.0.74 a Evora Smart Menu 3.0.50 s vyhledáváním a připínáním akcí konkrétního Miniserveru po pravém kliknutí.
+- Přidává dvanáctiměsíční historii s měsíčními souhrny a opravuje přímou rezervaci zasedačky v nativním menu.
+- Zachovává Launcher 3.0.0.16, horní profil Partner Coache, Portál, stávající `/data`, šifrované přístupy a vratný rollback na předchozí zdroj.
+
 ## 3.0.73.1
 
 - Vratně nasazuje Evora Smart Hub 3.0.73 a Evora Smart Menu 3.0.49 s kompaktním profilem Partner Coache úplně nahoře v panelu LOXONE Portálu.

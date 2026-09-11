@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.74
+
+- Evora Smart Menu 3.0.50 přidává pravé menu s vyhledáváním a trvalým připínáním konkrétního Miniserveru pro Loxone Config, Loxone App nebo správu přístupů; připnout lze i vybrané funkce Menu.
+- Historie docházky načítá jedním rozsahovým požadavkem dvanáct měsíců a u každého měsíce zobrazuje odpracováno, evidované dny a vypočtenou odchylku od denního úvazku. Oficiální saldo z Intranetu zůstává výslovně odlišeno od vypočtené hodnoty.
+- Rezervace zasedačky používá přímo nativní podmenu a po potvrzení zůstává v otevřeném kontextu; odstranila se chybná závislost na historickém náhledovém navigátoru.
+- Přidána bezpečná koncová diagnostika, která ověří skutečné převzetí stažení Configu Windows Launcherem dynamickým pollingem bez vypsání tokenu, URL nebo cílové cesty.
+
 ## 3.0.73
 
 - Evora Smart Menu 3.0.49 přesouvá kompaktní profil Partner Coache úplně nahoru v panelu LOXONE Portálu, před stav, produkty, certifikaci i finanční souhrn.

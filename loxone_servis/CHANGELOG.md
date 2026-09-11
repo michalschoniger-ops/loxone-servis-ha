@@ -1,9 +1,13 @@
 # Changelog
 
+## 3.0.76
+
+- Evora Smart Menu 3.0.52 otevírá levou i pravou stavovou nabídku s běžným odstupem pod horní lištou stejně jako ostatní macOS aplikace.
+- Zachovává úplné vyhledávání rychlých voleb, konkrétní poznámky, jednotnou pražskou provozní dobu podpory a odolnou cache ticketů z 3.0.75.
+
 ## 3.0.75
 
-- Evora Smart Menu 3.0.52 rozšiřuje pravé menu o celý Intranet, hlavní sekce nabídky a konkrétní osobní poznámky; připnutá poznámka ukáže plný obsah v bočním podmenu namísto systémového tooltipu.
-- Levé i pravé stavové menu se otevírá s běžným odstupem pod horní lištou jako ostatní macOS aplikace.
+- Evora Smart Menu 3.0.51 rozšiřuje pravé menu o celý Intranet, hlavní sekce nabídky a konkrétní osobní poznámky; připnutá poznámka ukáže plný obsah v bočním podmenu namísto systémového tooltipu.
 - Provozní dobu LOXONE podpory vyhodnocuje Hub jednotně v časové zóně Europe/Prague a předává Menu aktuální stav i dnešní čas. Prstenec Partner Coache proto v provozní době svítí zeleně i tehdy, když Portál u kontaktu neposlal vlastní text dostupnosti.
 - Vynucená minutová aktualizace ticketů při timeoutu externího Loxone Portálu vrátí poslední ověřenou cache s označením stáří namísto chyby 500; další pokusy a badge nových odpovědí pokračují.
 

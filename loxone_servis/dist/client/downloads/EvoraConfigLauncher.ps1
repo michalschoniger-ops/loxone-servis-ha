@@ -14,13 +14,14 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.14"
+$HelperVersion = "3.0.0.15"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
 $RuntimeStatePath = Join-Path $AppDirectory "runtime.json"
 $StopRequestPath = Join-Path $AppDirectory "stop.request"
 $RestartWrapperPath = Join-Path $AppDirectory "Restart-EvoraConfigLauncher.vbs"
+$UpdateHelperPath = Join-Path $AppDirectory "Complete-EvoraConfigLauncherUpdate.ps1"
 $HiddenWrapperPath = Join-Path $AppDirectory "Run-EvoraConfigLauncher.vbs"
 $ScheduledTaskName = "Evora Smart Hub Config Launcher"
 $StartupShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Evora Config Launcher.lnk"
@@ -71,19 +72,64 @@ shell.Run command, 0, False
     $restartWrapper = @'
 Option Explicit
 
-Dim shell, fileSystem, installDirectory, powerShellPath, launcherPath, command, waitPid, expectedVersion
+Dim shell, fileSystem, installDirectory, powerShellPath, updateHelperPath, command, waitPid, expectedVersion
 If WScript.Arguments.Count <> 2 Then WScript.Quit 2
 Set shell = CreateObject("WScript.Shell")
 Set fileSystem = CreateObject("Scripting.FileSystemObject")
 installDirectory = fileSystem.GetParentFolderName(WScript.ScriptFullName)
 powerShellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
-launcherPath = fileSystem.BuildPath(installDirectory, "EvoraConfigLauncher.ps1")
+updateHelperPath = fileSystem.BuildPath(installDirectory, "Complete-EvoraConfigLauncherUpdate.ps1")
 waitPid = CLng(WScript.Arguments(0))
 expectedVersion = CStr(WScript.Arguments(1))
-command = Chr(34) & powerShellPath & Chr(34) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & launcherPath & Chr(34) & " -CompleteUpdate -WaitForPid " & CStr(waitPid) & " -ExpectedVersion " & Chr(34) & expectedVersion & Chr(34)
+command = Chr(34) & powerShellPath & Chr(34) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & updateHelperPath & Chr(34) & " -WaitForPid " & CStr(waitPid) & " -ExpectedVersion " & Chr(34) & expectedVersion & Chr(34)
 shell.Run command, 0, False
 '@
     Set-Content -LiteralPath $RestartWrapperPath -Value $restartWrapper -Encoding Unicode
+    $updateHelper = @'
+param(
+  [int]$WaitForPid = 0,
+  [string]$ExpectedVersion = ""
+)
+
+$ErrorActionPreference = "Stop"
+$appDirectory = Split-Path -Parent $PSCommandPath
+$launcherPath = Join-Path $appDirectory "EvoraConfigLauncher.ps1"
+$pendingPath = Join-Path $appDirectory "EvoraConfigLauncher.pending.ps1"
+$backupPath = "$launcherPath.bak"
+$logPath = Join-Path $appDirectory "launcher.log"
+
+try {
+  if ($ExpectedVersion -notmatch '^\d+(?:\.\d+){3}$') { throw "invalid version" }
+  if ($WaitForPid -gt 0) {
+    $deadline = (Get-Date).AddSeconds(45)
+    do {
+      $running = Get-Process -Id $WaitForPid -ErrorAction SilentlyContinue
+      if ($null -eq $running) { break }
+      Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+    if ($null -ne (Get-Process -Id $WaitForPid -ErrorAction SilentlyContinue)) { throw "previous process did not stop" }
+  }
+  if (-not (Test-Path -LiteralPath $pendingPath -PathType Leaf)) { throw "pending update missing" }
+  $versionLine = '$HelperVersion = "' + $ExpectedVersion + '"'
+  if (-not (Select-String -LiteralPath $pendingPath -SimpleMatch $versionLine -Quiet)) { throw "version marker missing" }
+  Copy-Item -LiteralPath $launcherPath -Destination $backupPath -Force
+  Copy-Item -LiteralPath $pendingPath -Destination $launcherPath -Force
+  Remove-Item -LiteralPath $pendingPath -Force
+  $powerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+  Start-Process -FilePath $powerShellPath -ArgumentList @(
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+    "-File", "`"$launcherPath`"", "-CompleteUpdate", "-WaitForPid", "0", "-ExpectedVersion", "`"$ExpectedVersion`""
+  ) -WindowStyle Hidden
+  exit 0
+} catch {
+  Add-Content -LiteralPath $logPath -Value ("{0} Automatic update handoff failed safely." -f (Get-Date).ToUniversalTime().ToString("o")) -Encoding UTF8
+  if ((Test-Path -LiteralPath $backupPath -PathType Leaf) -and (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+    Copy-Item -LiteralPath $backupPath -Destination $launcherPath -Force -ErrorAction SilentlyContinue
+  }
+  exit 1
+}
+'@
+    Set-Content -LiteralPath $UpdateHelperPath -Value $updateHelper -Encoding UTF8
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $task = Get-ScheduledTask -TaskName $ScheduledTaskName -ErrorAction SilentlyContinue
     if ($null -ne $task -and [string]$task.Principal.UserId -ieq $identity) {
@@ -698,14 +744,12 @@ function Install-LauncherUpdate($Update, [string]$BaseUrl) {
     $expectedVersionLine = '$HelperVersion = "' + [string]$Update.version + '"'
     if (-not (Select-String -LiteralPath $pendingPath -SimpleMatch $expectedVersionLine -Quiet)) { throw "version marker missing" }
     if ([IO.Path]::GetExtension($PSCommandPath) -ne ".ps1") { throw "unsupported launch path" }
-    if (-not (Test-Path -LiteralPath $RestartWrapperPath -PathType Leaf)) {
-      throw "hidden restart helper missing"
+    if (-not (Test-Path -LiteralPath $RestartWrapperPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $UpdateHelperPath -PathType Leaf)) {
+      throw "hidden update helpers missing"
     }
     Set-LauncherPhase "automatic-update-install"
-    $backupPath = "$PSCommandPath.bak"
-    Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
-    [IO.File]::Replace($pendingPath, $PSCommandPath, $backupPath, $true)
-    Write-SafeLog "Launcher update installed after exact SHA-256 verification."
+    Write-SafeLog "Launcher update verified by exact SHA-256 and handed to the detached installer."
     $wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
     Start-Process -FilePath $wscriptPath -ArgumentList @("//B", "//Nologo", "`"$RestartWrapperPath`"", "$PID", "`"$([string]$Update.version)`"") -WindowStyle Hidden
     return $true

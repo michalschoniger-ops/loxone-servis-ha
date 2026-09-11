@@ -1,17 +1,17 @@
 # Changelog
 
-## 3.0.70
+## 3.0.71
 
-- Windows Launcher 3.0.0.14 opravuje distribuční identitu funkce stahování Configu: starší skript označený jako 3.0.0.13 se nyní povinně aktualizuje a nemůže úlohu stažení omylem zpracovat jako připojení Miniserveru.
+- Windows Launcher 3.0.0.15 přesouvá vlastní přepis do odděleného procesu, který počká na ukončení běžícího Launcheru; odstraňuje tak blokaci souboru, kvůli které se 3.0.0.13 nedokázal automaticky aktualizovat.
 - Stable, Beta a Alpha balíček se stahuje přímo přes HTTPS do složky Stažené soubory ve Windows; Edge se nespouští. Launcher před zveřejněním souboru dál ověří doménu LOXONE, velikost a ZIP signaturu.
-- Synchronizace Partner Portálu po změně datového schématu sama zneplatní starý přehled a načte konkrétní řádky školení, kartu Partner Coache s fotografií a aktuální fakturační pole. Faktury se zobrazí jen tehdy, když je Portál účtu skutečně zpřístupní.
-- Zachovává Evora Smart Menu 3.0.47, ruční Miniservery, Partner Coache, databázové schéma 27 a veškerá stávající data i šifrované přístupy.
+- Synchronizace Partner Portálu po změně datového schématu sama zneplatní starý přehled a načte konkrétní řádky školení, Partner Coache s fotografií a aktuální fakturační pole. Menu 3.0.48 vkládá fotografii, jméno, roli a přímé kontakty Coache přímo do panelu LOXONE Portálu místo další boční podnabídky. Faktury se zobrazí jen tehdy, když je Portál účtu skutečně zpřístupní.
+- Zachovává Evora Smart Menu 3.0.48, ruční Miniservery, Partner Coache, databázové schéma 27 a veškerá stávající data i šifrované přístupy.
 
 ## 3.0.69
 
 - Osobní macOS Menu může ručně přidat Miniserver přímo do Hubu; endpoint přijímá jen validované SN, popis a úplnou náhradu přístupu, heslo ukládá šifrovaně a nikdy ho nevrací v odpovědi ani auditu.
 - Po přidání Hub automaticky zařadí kontrolu připojení a načtení `LoxAPP3`. `msInfo.miniserverType` mapuje podle oficiální dokumentace LOXONE a teprve ověřený typ určí fotografii zařízení.
-- Evora Smart Menu 3.0.47 nabízí alternativní uložení pouze do macOS Klíčenky, pozdější synchronizaci do Hubu, lokální aktualizaci přístupu, opakované ověření typu a bezpečné odstranění jen z daného Macu.
+- Evora Smart Menu 3.0.48 nabízí alternativní uložení pouze do macOS Klíčenky, pozdější synchronizaci do Hubu, lokální aktualizaci přístupu, opakované ověření typu a bezpečné odstranění jen z daného Macu.
 - Instalátor Menu bezpečně předává oprávnění Klíčenky mezi po sobě jdoucími ad-hoc podepsanými binárkami přes krátkodobou legacy položku a anonymní pipe; po ověřeném převzetí ji ihned odstraní.
 - Karta Partner Coache zůstává s velkou kulatou fotografií vycentrovanou nahoře a kontakty pod ní.
 
@@ -143,7 +143,7 @@
 - Evora Smart Menu 3.0.31 ztmavuje skutečný podklad dočasného nativního `NSMenu` okna, nejen vlastní profilovou kartu. Největší veřejný `NSVisualEffectView` používá tmavý HUD materiál s mícháním uvnitř vlastního téměř černého podkladu, takže bílý obsah Safari pod nabídkou už celý systémový povrch nezesvětluje.
 - Oprava zachovává běžné nativní řádky, hover, klávesnici i kaskády a neaktivuje Evora aplikaci. `Parkoviště a brána`, Milesight a Loxone Builder zůstávají skryté; Hub zachovává schéma 23 a H.264/fMP4 HLS cestu z 3.0.46.
 
-## 3.0.47
+## 3.0.48
 
 - Evora Smart Menu 3.0.30 na výslovné přání odstraňuje z kořene celou položku `Parkoviště a brána`; živé menu nevytváří kamerový AVPlayer, neotevírá podnabídku brány a při otevření nepředehřívá HLS. Serverová kamera i brána zůstávají beze změny dostupné v Evora Smart Hubu.
 - Skryté stavy kamery, NVR, brány a Builderu už nejsou součástí strukturálního podpisu macOS Menu, takže jejich obnova nemůže sama přestavět celý strom. Vlastní karty mají tmavší neutrální povrch a významovou barvu dál používají pouze ikony. Hub zachovává schéma 23 a H.264/fMP4 HLS cestu z 3.0.46.

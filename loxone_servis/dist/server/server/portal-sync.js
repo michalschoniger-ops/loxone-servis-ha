@@ -467,7 +467,7 @@ function normalizePortalOverview(partnerPayload, openOrdersPayload, ledgerPayloa
         turnover12Months: portalNumber(partner, ["12_month_turnover", "twelve_month_turnover", "turnover12Months"]),
         openAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["overall_open_amount", "overallOpenAmount", "total_amount_open", "totalAmountOpen", "open_amount_total", "openAmount"]) : null,
         dueAmount: ledgerPayload ? recursiveNumber(ledgerPayload, ["overall_due_amount", "overallDueAmount", "total_amount_due", "totalAmountDue", "due_amount_total", "dueAmount"]) : null,
-        accountBalance: ledgerPayload ? recursiveNumber(ledgerPayload, ["saldo", "balance", "account_balance", "accountBalance", "overall_open_amount", "overallOpenAmount"]) : null,
+        accountBalance: ledgerPayload ? recursiveNumber(ledgerPayload, ["saldo", "balance", "account_balance", "accountBalance"]) : null,
         openOrderCount: openOrdersPayload
             ? recursiveNumber(openOrdersPayload, ["overall_count", "overallCount", "count", "total"]) ?? openOrders.length
             : 0,

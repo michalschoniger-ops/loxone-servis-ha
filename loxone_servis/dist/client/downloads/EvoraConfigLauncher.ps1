@@ -14,7 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$HelperVersion = "3.0.0.16"
+$HelperVersion = "3.0.0.17"
 $AppDirectory = Join-Path $env:LOCALAPPDATA "EvoraSmartHub\ConfigLauncher"
 $ConfigPath = Join-Path $AppDirectory "config.json"
 $LogPath = Join-Path $AppDirectory "launcher.log"
@@ -1154,6 +1154,7 @@ public static class EvoraWin32 {
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr SetActiveWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
@@ -1184,7 +1185,9 @@ public static class EvoraWin32 {
     uint currentThread = GetCurrentThreadId();
     if (foregroundThread != 0) AttachThreadInput(currentThread, foregroundThread, true);
     if (targetThread != 0 && targetThread != foregroundThread) AttachThreadInput(currentThread, targetThread, true);
-    ShowWindowAsync(target, 9);
+    // SW_RESTORE also unmaximizes visible windows. Restore only a minimized
+    // window; activating an open window must retain its size and position.
+    if (IsIconic(target)) ShowWindowAsync(target, 9);
     BringWindowToTop(target);
     SetForegroundWindow(target);
     SetActiveWindow(target);
@@ -1259,11 +1262,24 @@ public static class EvoraWin32 {
 
   $openHomeAndFindAction = {
     param($SearchRoot)
-    $alreadyAvailable = & $findManualAction $SearchRoot
-    if ($null -ne $alreadyAvailable) { return $alreadyAvailable }
     $homeId = "QApplication.MainWindow.CentralWidget.CLxTitleBar.CTitleBarTabs.CTitleBarTabs::CHomeButton"
-    $homeButton = Get-AutomationElementById $SearchRoot $homeId
-    if ($null -eq $homeButton -or -not $homeButton.Current.IsEnabled -or $homeButton.Current.IsOffscreen) {
+    $homeButton = $null
+    $readyTimer = [Diagnostics.Stopwatch]::StartNew()
+    Set-LauncherPhase "manual-connect-wait-home"
+    do {
+      $currentRoot = Get-ConfigAutomationRoot $Process
+      if ($null -ne $currentRoot) {
+        $alreadyAvailable = & $findManualAction $currentRoot
+        if ($null -ne $alreadyAvailable) { return $alreadyAvailable }
+        $candidateHome = Get-AutomationElementById $currentRoot $homeId
+        if ($null -ne $candidateHome -and $candidateHome.Current.IsEnabled -and -not $candidateHome.Current.IsOffscreen) {
+          $homeButton = $candidateHome
+          break
+        }
+      }
+      Start-Sleep -Milliseconds 250
+    } while ($readyTimer.Elapsed.TotalSeconds -lt 20)
+    if ($null -eq $homeButton) {
       throw (New-LauncherFailure "CONFIG_HOME_NOT_FOUND" "The verified Home action was not found.")
     }
     Set-LauncherPhase "manual-connect-open-home"
@@ -1310,11 +1326,32 @@ public static class EvoraWin32 {
   }
 
   Set-LauncherPhase "manual-connect-open-dialog"
-  # Qt's InvokePattern can block synchronously until the modal closes. The
-  # physical click is therefore the primary and only action here; it still
-  # targets the uniquely verified live UIA element and never fixed coordinates.
-  Click-AutomationElementCenter $manualAction
-  $dialog = Find-ConnectDialog $Process.Id 10
+  # Qt can ignore a click while finishing a page/layout transition. Poll the
+  # exact dialog and re-read the uniquely identified action before a retry.
+  # Never retry after a modal appears or invoke its blocking InvokePattern.
+  $dialogTimer = [Diagnostics.Stopwatch]::StartNew()
+  $clickCount = 0
+  $nextClickAt = 0.0
+  $dialog = $null
+  do {
+    $dialog = Find-ConnectDialog $Process.Id 0
+    if ($null -ne $dialog) { return $dialog }
+    if ($clickCount -lt 3 -and $dialogTimer.Elapsed.TotalSeconds -ge $nextClickAt) {
+      if ($null -ne (Find-ConfigMessageDialog $Process.Id)) { break }
+      $currentRoot = Get-ConfigAutomationRoot $Process
+      $manualAction = if ($null -ne $currentRoot) { & $findManualAction $currentRoot } else { $null }
+      if ($null -ne $manualAction) {
+        # Re-check immediately before clicking: a delayed modal must not be
+        # mistaken for the still-visible background Home page.
+        $dialog = Find-ConnectDialog $Process.Id 0
+        if ($null -ne $dialog) { return $dialog }
+        Click-AutomationElementCenter $manualAction
+        $clickCount++
+        $nextClickAt = $dialogTimer.Elapsed.TotalSeconds + 5
+      }
+    }
+  } while ($dialogTimer.Elapsed.TotalSeconds -lt 30)
+  $dialogTimer.Stop()
   if ($null -eq $dialog) { throw (New-LauncherFailure "CONNECT_DIALOG_TIMEOUT" "Manual connect dialog did not open.") }
   return $dialog
 }

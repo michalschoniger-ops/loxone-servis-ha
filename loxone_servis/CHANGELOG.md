@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.78
+
+- Evora Smart Menu 3.0.54 správně umístí levou i pravou nabídku pod systémovou lištu také při obrácených souřadnicích macOS tlačítka. Oprava byla ověřena na skutečně otevřených nabídkách.
+- Windows Launcher 3.0.0.17 zachová velikost, polohu a maximalizaci otevřeného Configu. Při otevření ručního připojení znovu ověřuje dialog a až třikrát zopakuje kliknutí na nově nalezený prvek během nejvýše 30 sekund.
+
 ## 3.0.77
 
 - Evora Smart Menu 3.0.53 ukončí čekání na Windows Launcher nejpozději po 180 sekundách včetně síťových prodlev. Pozdní odpověď po timeoutu už nemůže přepsat výsledek.
